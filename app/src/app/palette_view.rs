@@ -236,10 +236,11 @@ impl TerminalApp {
             // Whatever the command line would do with the query, offered as-is.
             match command::parse(q) {
                 Some(command::Command::Symbol(key)) => v.push(ticker_item(&key)),
-                Some(_) => {
-                    let line = q.to_ascii_uppercase();
-                    v.push(Item::new(Kind::Command, line.clone(), command::hint(q), Target::Run(line)));
+                // Kept as typed: arguments such as paths and titles are case-sensitive.
+                Some(_) if !v.iter().any(|it| matches!(&it.target, Target::Run(l) if l.eq_ignore_ascii_case(q))) => {
+                    v.push(Item::new(Kind::Command, q, command::hint(q), Target::Run(q.into())));
                 }
+                Some(_) => {}
                 None => {}
             }
         }
@@ -277,8 +278,6 @@ impl TerminalApp {
             }
             return;
         }
-        let items = self.palette_items();
-        let results = self.palette.results(&items);
         let (up, down, enter, esc) = ctx.input_mut(|i| {
             let up = i.consume_key(Modifiers::NONE, Key::ArrowUp) || i.consume_key(Modifiers::SHIFT, Key::Tab);
             let down = i.consume_key(Modifiers::NONE, Key::ArrowDown) || i.consume_key(Modifiers::NONE, Key::Tab);
@@ -287,51 +286,23 @@ impl TerminalApp {
             (up, down, enter, esc)
         });
         let keyed = up || down;
-        if up {
-            self.palette.step(-1, results.len());
-        }
-        if down {
-            self.palette.step(1, results.len());
-        }
-        self.palette.selected = self.palette.selected.min(results.len().saturating_sub(1));
-
         let screen = ctx.content_rect();
-        let recents = if self.palette.query.trim().is_empty() { self.palette.recents.len() } else { 0 };
-        let mut picked = enter.then_some(self.palette.selected);
+        let mut picked = None;
         let mut close = esc;
-        egui::Area::new(Id::new("command-palette")).order(egui::Order::Foreground).fixed_pos(screen.min).show(
-            ctx,
-            |ui| {
+        let results = egui::Area::new(Id::new("command-palette"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
                 let (_, bg) = ui.allocate_exact_size(screen.size(), Sense::click());
-                let dark = theme::palette().dark;
-                // Dim everything beneath the card (its own layer, above the panes).
-                ui.ctx()
-                    .layer_painter(egui::LayerId::new(egui::Order::Middle, Id::new("command-palette-dim")))
-                    .rect_filled(screen, 0.0, Color32::from_black_alpha(if dark { 120 } else { 70 }));
-
                 let w = (screen.width() - dp(40.0)).clamp(320.0, 660.0);
-                let rows = results.len().clamp(1, VISIBLE_ROWS);
-                let headers = if recents > 0 { 2.0 * dp(22.0) } else { 0.0 };
-                let list_h = (rows as f32 * dp(ROW_H) + headers).min(VISIBLE_ROWS as f32 * dp(ROW_H));
+                let top = screen.top() + (screen.height() * 0.14).clamp(dp(16.0), dp(160.0));
+                let left = screen.center().x - w / 2.0;
+                let pad = vec2(dp(10.0), dp(6.0));
                 let field_h = dp(46.0);
                 let footer_h = dp(28.0);
-                let h = field_h + list_h + footer_h + dp(12.0);
-                let top = screen.top() + (screen.height() * 0.14).max(dp(36.0));
-                let card = Rect::from_min_size(pos2(screen.center().x - w / 2.0, top), vec2(w, h));
-                if bg.clicked() && bg.interact_pointer_pos().is_some_and(|p| !card.contains(p)) {
-                    close = true;
-                }
-                widgets::card_on(ui.painter(), card, 1.0);
+                let field = Rect::from_min_size(pos2(left, top) + pad, vec2(w - 2.0 * pad.x, field_h));
 
-                let inner = card.shrink2(vec2(dp(10.0), dp(6.0)));
-                let mut child = ui.new_child(UiBuilder::new().max_rect(inner).id_salt("palette-card"));
-                let field = Rect::from_min_size(inner.min, vec2(inner.width(), field_h));
-                widgets::draw_icon(
-                    child.painter(),
-                    Rect::from_center_size(pos2(field.left() + dp(12.0), field.center().y), vec2(16.0, 16.0)),
-                    widgets::Icon::Search,
-                    muted(),
-                );
+                // The query first, so results (and Enter) see this frame's typing.
                 let edit = egui::TextEdit::singleline(&mut self.palette.query)
                     .id(input_id)
                     .font(ui_font(16.0))
@@ -340,7 +311,7 @@ impl TerminalApp {
                     .hint_text("Search commands, tickers, panels, layouts, themes, settings…")
                     .desired_width(field.width() - dp(36.0));
                 let field_rect = Rect::from_min_max(pos2(field.left() + dp(28.0), field.top()), field.max);
-                let resp = child
+                let resp = ui
                     .scope_builder(
                         UiBuilder::new().max_rect(field_rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
                         |ui| ui.add(edit),
@@ -353,11 +324,56 @@ impl TerminalApp {
                 if resp.changed() {
                     self.palette.selected = 0;
                 }
-                child.painter().hline(inner.x_range(), field.bottom(), Stroke::new(1.0, theme::border()));
+
+                let items = self.palette_items();
+                let results = self.palette.results(&items);
+                let recents = if self.palette.query.trim().is_empty() {
+                    crate::palette::live_recents(&items, &self.palette.recents).len()
+                } else {
+                    0
+                };
+                if up {
+                    self.palette.step(-1, results.len());
+                }
+                if down {
+                    self.palette.step(1, results.len());
+                }
+                self.palette.selected = self.palette.selected.min(results.len().saturating_sub(1));
+                if enter {
+                    picked = Some(self.palette.selected);
+                }
+
+                // Size the list to the results, but keep the card inside the window.
+                let rows = results.len().clamp(1, VISIBLE_ROWS);
+                let headers = if recents > 0 { 2.0 * dp(22.0) } else { 0.0 };
+                let room = screen.bottom() - dp(12.0) - field.bottom() - footer_h - 2.0 * pad.y;
+                let list_h =
+                    (rows as f32 * dp(ROW_H) + headers).min(VISIBLE_ROWS as f32 * dp(ROW_H)).min(room).max(dp(ROW_H));
+                let card =
+                    Rect::from_min_size(pos2(left, top), vec2(w, field_h + list_h + footer_h + 2.0 * pad.y + dp(4.0)));
+                if bg.clicked() && bg.interact_pointer_pos().is_some_and(|p| !card.contains(p)) {
+                    close = true;
+                }
+                // Dim everything beneath, then the card, on a layer above the panes and
+                // below this one.
+                let under =
+                    ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, Id::new("command-palette-dim")));
+                let dark = theme::palette().dark;
+                under.rect_filled(screen, 0.0, Color32::from_black_alpha(if dark { 120 } else { 70 }));
+                widgets::card_on(&under, card, 1.0);
+
+                let inner = card.shrink2(pad);
+                widgets::draw_icon(
+                    ui.painter(),
+                    Rect::from_center_size(pos2(field.left() + dp(12.0), field.center().y), vec2(16.0, 16.0)),
+                    widgets::Icon::Search,
+                    muted(),
+                );
+                ui.painter().hline(inner.x_range(), field.bottom(), Stroke::new(1.0, theme::border()));
 
                 let list =
                     Rect::from_min_size(pos2(inner.left(), field.bottom() + dp(4.0)), vec2(inner.width(), list_h));
-                let mut list_ui = child.new_child(UiBuilder::new().max_rect(list).id_salt("palette-list"));
+                let mut list_ui = ui.new_child(UiBuilder::new().max_rect(list).id_salt("palette-list"));
                 egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, true]).show(&mut list_ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     if results.is_empty() {
@@ -381,10 +397,10 @@ impl TerminalApp {
                 });
 
                 let foot = Rect::from_min_max(
-                    pos2(inner.left(), card.bottom() - footer_h),
-                    pos2(inner.right(), card.bottom()),
+                    pos2(inner.left(), inner.bottom() - footer_h),
+                    pos2(inner.right(), inner.bottom()),
                 );
-                let p = child.painter();
+                let p = ui.painter();
                 p.hline(inner.x_range(), foot.top(), Stroke::new(1.0, theme::border()));
                 p.text(
                     pos2(foot.left() + dp(4.0), foot.center().y),
@@ -400,8 +416,9 @@ impl TerminalApp {
                     mono(11.0),
                     muted(),
                 );
-            },
-        );
+                results
+            })
+            .inner;
 
         if let Some(item) = picked.and_then(|i| results.get(i)).cloned() {
             self.palette.close();

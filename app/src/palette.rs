@@ -226,10 +226,26 @@ impl Palette {
     }
 }
 
+/// Recent picks refreshed from the live catalogue: a pick still offered shows its current
+/// row (markers, shortcut hints); saved layouts and themes that no longer exist are
+/// dropped. Other picks (a searched ticker, a typed command) are kept as recorded.
+pub fn live_recents(items: &[Item], recents: &[Item]) -> Vec<Item> {
+    recents
+        .iter()
+        .filter_map(|r| match items.iter().find(|it| it.same(r)) {
+            Some(live) => Some(live.clone()),
+            None if matches!(r.target, Target::SwitchLayout(_) | Target::Theme(_)) => None,
+            None => Some(r.clone()),
+        })
+        .collect()
+}
+
 /// Rank `items` for `query`. With no query: recent picks first, then everything in
 /// catalogue order. With a query: best fuzzy matches, recent picks boosted, ties kept
 /// in catalogue order.
 pub fn rank(items: &[Item], recents: &[Item], query: &str) -> Vec<Item> {
+    let recents = live_recents(items, recents);
+    let recents = recents.as_slice();
     let recent_rank = |it: &Item| recents.iter().position(|r| r.same(it));
     if query.trim().is_empty() {
         let mut out: Vec<Item> = recents.to_vec();
@@ -330,6 +346,22 @@ mod tests {
         let msft = Item::new(Kind::Ticker, "MSFT US Equity", "Microsoft", Target::Run("MSFT US Equity".into()));
         let r = rank(&items, std::slice::from_ref(&msft), "msft");
         assert_eq!(titles(&r), ["MSFT US Equity"]);
+    }
+
+    #[test]
+    fn recents_follow_the_live_catalogue() {
+        let theme = |name: &str, sub: &str| Item::new(Kind::Theme, name, sub, Target::Theme(name.into()));
+        let layout = |name: &str| Item::new(Kind::Layout, name, "Saved layout", Target::SwitchLayout(name.into()));
+        let ticker = Item::new(Kind::Ticker, "MSFT US Equity", "Microsoft", Target::Run("MSFT US Equity".into()));
+        let recents =
+            vec![theme("Nord", "Dark theme · current"), layout("Desk"), theme("Gone", "Dark theme"), ticker.clone()];
+        let live = vec![theme("Nord", "Dark theme"), layout("Desk").hotkey(Action::Layout2)];
+        let r = live_recents(&live, &recents);
+        assert_eq!(titles(&r), ["Nord", "Desk", "MSFT US Equity"], "deleted themes and layouts drop out");
+        assert_eq!(r[0].subtitle, "Dark theme", "the current marker follows the live row");
+        assert_eq!(r[1].hotkey, Some(Action::Layout2), "shortcut hints follow the live row");
+        assert_eq!(titles(&rank(&live, &recents, "")), ["Nord", "Desk", "MSFT US Equity"]);
+        assert!(rank(&live, &recents, "gone").is_empty());
     }
 
     #[test]
