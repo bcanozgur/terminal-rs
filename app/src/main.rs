@@ -10,6 +10,7 @@ mod dock;
 mod layout;
 mod layouts;
 mod markets_view;
+mod palette;
 mod prefs;
 mod theme;
 mod themes;

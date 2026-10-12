@@ -24,7 +24,7 @@ pub enum SettingsTab {
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 7] = [
+    pub(super) const ALL: [SettingsTab; 7] = [
         SettingsTab::Appearance,
         SettingsTab::Themes,
         SettingsTab::Hotkeys,
@@ -34,7 +34,7 @@ impl SettingsTab {
         SettingsTab::Trading,
     ];
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             SettingsTab::Appearance => "Appearance",
             SettingsTab::Themes => "Themes",

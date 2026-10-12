@@ -154,6 +154,11 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   read-only or disabled, are marked read-only and cannot preview. An optional maximum order value
   refuses large orders. The sample portfolio simulates fills locally. See
   [Trading](#trading-opt-in).
+- **Command palette** — ⌘K (Ctrl+K on Linux and Windows) opens a centred, theme-matched palette
+  that fuzzy-searches every function code (`PORT`, `POS`, `ORD`, `OMON`, `THEME`, …), tickers
+  (load the quote and chart), new panels, layout presets and saved layouts, themes, Settings tabs
+  and workspace actions (move the sidebar, open Brokerage settings). Each row shows its shortcut;
+  recent picks come first. ↑↓ select, ↵ open, Esc close.
 - **Hotkeys and preferences** — every hotkey is rebindable from a native shortcut table in
   Settings › Hotkeys and Help (click a binding, press the new keys); defaults for new charts and
   order books; everything persists in `prefs.json`.
@@ -254,6 +259,7 @@ Settings › Hotkeys. On Linux and Windows ⌘ is Ctrl and ⌥ is Alt.
 
 | Keys | Action |
 |---|---|
+| ⌘K (Ctrl+K) | command palette: fuzzy search over commands, tickers, panels, layouts, themes, settings and actions |
 | F1 · F2 · F3 · F4 · F5 · F6 · F12 | help · Congress feed · politicians · alerts · watchlist · refresh filings · frame timing |
 | F7 · F8 · F9 | brokerage portfolio · positions · orders |
 | Tab · ⇧Tab | next · previous pane |

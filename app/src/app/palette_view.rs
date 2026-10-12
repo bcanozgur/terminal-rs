@@ -1,0 +1,530 @@
+//! Command palette overlay (⌘K, Ctrl+K elsewhere): the live catalogue of items built
+//! from the app's state, the centred search card, and running the picked item.
+
+use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
+
+use super::TerminalApp;
+use super::settings_view::SettingsTab;
+use crate::command::{self, Function};
+use crate::layout::Layout;
+use crate::palette::{Item, Kind, Target};
+use crate::prefs::Action;
+use crate::theme::{self, dp, mono, muted, text, ui_font};
+use crate::widgets;
+
+const INPUT_ID: &str = "command-palette-input";
+const ROW_H: f32 = 34.0;
+const VISIBLE_ROWS: usize = 10;
+
+/// Function codes offered by the palette: code, description (empty uses the command
+/// line's own hint), extra search words, and the action whose shortcut is shown.
+const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
+    ("PORT", "", "portfolio prtu brokerage holdings value", Some(Action::Portfolio)),
+    ("ACCT", "", "accounts balances brokerage", None),
+    ("POS", "", "positions holdings brokerage", Some(Action::Positions)),
+    ("ORD", "", "orders blotter brokerage", Some(Action::Orders)),
+    ("ACTV", "", "activity transactions dividends brokerage", None),
+    ("TRADE", "", "order ticket buy sell emsx", None),
+    ("PORT REFRESH", "", "brokerage sync reload", None),
+    ("PORT CONNECT", "", "brokerage link snaptrade", None),
+    ("OMON", "", "options chain calls puts greeks", Some(Action::NewOptions)),
+    ("CONG", "Congressional trades feed", "congress disclosures", Some(Action::Congress)),
+    ("POL", "Politicians", "congress members profile", Some(Action::Politicians)),
+    ("ALRT", "", "alerts tracked filings", Some(Action::Alerts)),
+    ("REFRESH", "", "congress disclosures sync", Some(Action::Refresh)),
+    ("WL", "", "watchlist monitor", Some(Action::Watchlist)),
+    ("N", "", "news headlines", None),
+    ("OB", "", "order book depth dom", None),
+    ("WEI", "", "world equity indices markets", None),
+    ("GC", "", "yield curve treasury rates", None),
+    ("SECF", "Security search", "search find", None),
+    ("LAYOUTS", "", "saved layouts workspaces", None),
+    ("LAYOUT NEW", "Start a new saved layout", "workspace", None),
+    ("SPLIT", "", "split right pane", Some(Action::SplitRight)),
+    ("SPLIT DOWN", "", "split below pane", Some(Action::SplitDown)),
+    ("POP", "", "pop out window undock", Some(Action::PopOut)),
+    ("CLOSE", "", "close pane", Some(Action::ClosePane)),
+    ("LINK OFF", "", "unlink colour group", None),
+    ("THEME NEXT", "Cycle to the next theme", "appearance", Some(Action::NextTheme)),
+    ("THEME LIGHT", "Use the light theme", "appearance", None),
+    ("THEME DARK", "Use the dark theme", "appearance", None),
+    ("THEME SYSTEM", "Follow the OS appearance", "appearance auto", None),
+    ("THEME COMPACT", "Compact density", "appearance spacing", None),
+    ("THEME COMFORTABLE", "Comfortable density", "appearance spacing", None),
+    ("SIDEBAR LEFT", "Sidebar on the left", "dock side", None),
+    ("SIDEBAR RIGHT", "Sidebar on the right", "dock side", None),
+    ("PREFS", "", "settings preferences config", Some(Action::Settings)),
+    ("HELP", "", "help functions reference", Some(Action::Help)),
+    ("CANDLE", "", "chart type candlesticks", None),
+    ("BAR", "", "chart type ohlc", None),
+    ("LINE", "", "chart type", None),
+    ("AREA", "", "chart type mountain", None),
+    ("LOG", "", "log scale chart", Some(Action::LogScale)),
+    ("RSI", "", "indicator oscillator", None),
+    ("MACD", "", "indicator oscillator", None),
+    ("BB", "", "bollinger bands indicator", None),
+    ("SMA 50", "", "moving average indicator", None),
+    ("SMA 200", "", "moving average indicator", None),
+    ("EMA 20", "", "moving average indicator", None),
+    ("VWAP", "", "indicator volume weighted", None),
+    ("CLEAR", "", "indicators remove", None),
+    ("CMP", "", "compare comparison remove", None),
+    ("TL", "", "trendline draw", Some(Action::DrawTrendline)),
+    ("HL", "", "horizontal line draw", Some(Action::DrawHorizontal)),
+    ("VL", "", "vertical line draw", Some(Action::DrawVertical)),
+    ("FIB", "", "fibonacci retracement draw", Some(Action::DrawFib)),
+    ("MAGNET", "", "snap ohlc drawings", Some(Action::Magnet)),
+    ("CLEAR DRAW", "", "drawings remove", None),
+    ("1", "", "interval timeframe minute", None),
+    ("5", "", "interval timeframe minutes", None),
+    ("15", "", "interval timeframe minutes", None),
+    ("1H", "", "interval timeframe hour", None),
+    ("4H", "", "interval timeframe hours", None),
+    ("1D", "", "interval timeframe daily", None),
+    ("1W", "", "interval timeframe weekly", None),
+    ("1M", "", "interval timeframe monthly", None),
+    ("RANGE 5D", "", "quick range history", None),
+    ("RANGE 1M", "", "quick range history month", None),
+    ("RANGE 3M", "", "quick range history months", None),
+    ("RANGE 6M", "", "quick range history months", None),
+    ("YTD", "", "quick range year to date", None),
+    ("RANGE 1Y", "", "quick range history year", None),
+    ("RANGE 5Y", "", "quick range history years", None),
+    ("RANGE ALL", "", "quick range full history", None),
+];
+
+/// Workspace actions run through their hotkey handler, with extra search words.
+const ACTIONS: &[(Action, &str)] = &[
+    (Action::ToggleSidebar, "show hide sidebar"),
+    (Action::SwapSidebarSide, "swap flip sidebar side left right"),
+    (Action::NextPane, "focus cycle"),
+    (Action::PrevPane, "focus cycle"),
+    (Action::NewTab, "chart tab"),
+    (Action::SaveLayout, "layout workspace"),
+    (Action::ResetView, "chart zoom fit"),
+    (Action::FrameTiming, "fps performance perf"),
+];
+
+fn settings_blurb(tab: SettingsTab) -> &'static str {
+    match tab {
+        SettingsTab::Appearance => "Theme, light and dark choices, sidebar, vibrancy",
+        SettingsTab::Themes => "Edit, duplicate, import and export themes",
+        SettingsTab::Hotkeys => "Rebind keyboard shortcuts",
+        SettingsTab::Panels => "Defaults for new charts and order books",
+        SettingsTab::Layouts => "Saved layouts and presets",
+        SettingsTab::Brokerage => "SnapTrade keys and connected brokerages",
+        SettingsTab::Trading => "Enable trading, order limits and confirmations",
+    }
+}
+
+/// The static part of the catalogue: commands, panels, actions, presets and settings tabs.
+pub(super) fn static_items() -> Vec<Item> {
+    let mut v = Vec::new();
+    for &(code, desc, words, hotkey) in COMMANDS {
+        let subtitle = if desc.is_empty() { command::hint(code) } else { desc.to_string() };
+        let mut it = Item::new(Kind::Command, code, subtitle, Target::Run(code.into())).keywords(words);
+        it.hotkey = hotkey;
+        v.push(it);
+    }
+    for a in Action::ALL {
+        if let Some(spec) = a.panel_spec() {
+            let it = Item::new(Kind::Panel, a.label(), format!("NEW {spec}"), Target::Run(format!("NEW {spec}")));
+            v.push(it.keywords("panel pane add open").hotkey(a));
+        }
+    }
+    v.push(
+        Item::new(Kind::Panel, "New Portfolio pane", "NEW PORT", Target::Run("NEW PORT".into()))
+            .keywords("panel pane brokerage"),
+    );
+    v.push(
+        Item::new(
+            Kind::Action,
+            "Open Brokerage settings",
+            "BROKER · SnapTrade keys and connections",
+            Target::Run("BROKER".into()),
+        )
+        .keywords("snaptrade keys connect broker"),
+    );
+    for &(a, words) in ACTIONS {
+        v.push(Item::new(Kind::Action, a.label(), a.category(), Target::Hotkey(a)).keywords(words).hotkey(a));
+    }
+    for l in Layout::ALL {
+        let n = l.slots();
+        v.push(
+            Item::new(
+                Kind::Layout,
+                format!("Grid preset {}", l.label()),
+                format!("{n} pane{} · LAYOUT {}", if n == 1 { "" } else { "s" }, l.label()),
+                Target::Run(format!("LAYOUT {}", l.label())),
+            )
+            .keywords("grid arrange panes"),
+        );
+    }
+    for tab in SettingsTab::ALL {
+        v.push(
+            Item::new(
+                Kind::Settings,
+                format!("Settings › {}", tab.label()),
+                settings_blurb(tab),
+                Target::Settings(tab.label().into()),
+            )
+            .keywords("settings preferences"),
+        );
+    }
+    v
+}
+
+fn ticker_item(key: &str) -> Item {
+    let name = tr_core::Security::parse(key).and_then(|s| s.name()).unwrap_or("");
+    Item::new(
+        Kind::Ticker,
+        key,
+        if name.is_empty() { "Load in the focused chart" } else { name },
+        Target::Run(key.into()),
+    )
+    .keywords(name)
+}
+
+fn kind_color(k: Kind) -> Color32 {
+    match k {
+        Kind::Command => theme::amber(),
+        Kind::Ticker => theme::cyan(),
+        Kind::Panel => theme::accent(),
+        Kind::Layout => theme::series(2),
+        Kind::Theme => theme::series(4),
+        Kind::Settings => theme::muted(),
+        Kind::Action => theme::up(),
+    }
+}
+
+impl TerminalApp {
+    /// Every item the palette can find right now, including tickers for the query.
+    pub(super) fn palette_items(&self) -> Vec<Item> {
+        let mut v = static_items();
+        for (i, name) in self.layout_names.iter().enumerate() {
+            let current = name.eq_ignore_ascii_case(&self.layout_name);
+            let mut it = Item::new(
+                Kind::Layout,
+                name.clone(),
+                if current { "Saved layout · current" } else { "Saved layout" },
+                Target::SwitchLayout(name.clone()),
+            )
+            .keywords("layout workspace switch");
+            it.hotkey = Action::ALL.into_iter().find(|a| a.layout_slot() == Some(i));
+            v.push(it);
+        }
+        for name in self.theme_choices() {
+            let mut sub = match crate::themes::find(&self.themes, &name) {
+                _ if name.eq_ignore_ascii_case(crate::themes::SYSTEM) => "Follow the OS appearance".to_string(),
+                Some(t) if t.dark => "Dark theme".into(),
+                Some(_) => "Light theme".into(),
+                None => "Theme".into(),
+            };
+            if name.eq_ignore_ascii_case(&self.prefs.appearance.theme) {
+                sub.push_str(" · current");
+            }
+            v.push(Item::new(Kind::Theme, name.clone(), sub, Target::Theme(name)).keywords("theme appearance colours"));
+        }
+        for key in &self.watchlist {
+            v.push(ticker_item(key).keywords("watchlist"));
+        }
+        let q = self.palette.query.trim();
+        if !q.is_empty() {
+            for l in tr_core::catalog::search(q, 12) {
+                v.push(ticker_item(&l.key()));
+            }
+            // Whatever the command line would do with the query, offered as-is.
+            match command::parse(q) {
+                Some(command::Command::Symbol(key)) => v.push(ticker_item(&key)),
+                Some(_) => {
+                    let line = q.to_ascii_uppercase();
+                    v.push(Item::new(Kind::Command, line.clone(), command::hint(q), Target::Run(line)));
+                }
+                None => {}
+            }
+        }
+        v
+    }
+
+    /// Run a picked item.
+    fn run_palette_target(&mut self, t: Target) {
+        match t {
+            Target::Run(line) => self.execute(&line),
+            Target::Hotkey(a) => self.run_hotkey(a),
+            Target::Settings(label) => {
+                if let Some(tab) = SettingsTab::ALL.into_iter().find(|t| t.label() == label) {
+                    self.settings_tab = tab;
+                }
+                self.apply(Function::Settings);
+            }
+            Target::SwitchLayout(name) => self.switch_layout(&name),
+            Target::Theme(name) => {
+                if !self.select_theme(&name) {
+                    self.status = format!("No theme {name:?}");
+                }
+            }
+        }
+    }
+
+    /// Keyboard handling, the overlay, and running the pick. Runs before the panes so
+    /// arrows, Enter and Esc go to the palette while it is open.
+    pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
+        let input_id = Id::new(INPUT_ID);
+        if !self.palette.open {
+            // Give the keyboard back once closed (by ⌘K, a pick or Esc).
+            if ctx.memory(|m| m.has_focus(input_id)) {
+                ctx.memory_mut(|m| m.surrender_focus(input_id));
+            }
+            return;
+        }
+        let items = self.palette_items();
+        let results = self.palette.results(&items);
+        let (up, down, enter, esc) = ctx.input_mut(|i| {
+            let up = i.consume_key(Modifiers::NONE, Key::ArrowUp) || i.consume_key(Modifiers::SHIFT, Key::Tab);
+            let down = i.consume_key(Modifiers::NONE, Key::ArrowDown) || i.consume_key(Modifiers::NONE, Key::Tab);
+            let enter = i.consume_key(Modifiers::NONE, Key::Enter);
+            let esc = i.consume_key(Modifiers::NONE, Key::Escape);
+            (up, down, enter, esc)
+        });
+        let keyed = up || down;
+        if up {
+            self.palette.step(-1, results.len());
+        }
+        if down {
+            self.palette.step(1, results.len());
+        }
+        self.palette.selected = self.palette.selected.min(results.len().saturating_sub(1));
+
+        let screen = ctx.content_rect();
+        let recents = if self.palette.query.trim().is_empty() { self.palette.recents.len() } else { 0 };
+        let mut picked = enter.then_some(self.palette.selected);
+        let mut close = esc;
+        egui::Area::new(Id::new("command-palette")).order(egui::Order::Foreground).fixed_pos(screen.min).show(
+            ctx,
+            |ui| {
+                let (_, bg) = ui.allocate_exact_size(screen.size(), Sense::click());
+                let dark = theme::palette().dark;
+                // Dim everything beneath the card (its own layer, above the panes).
+                ui.ctx()
+                    .layer_painter(egui::LayerId::new(egui::Order::Middle, Id::new("command-palette-dim")))
+                    .rect_filled(screen, 0.0, Color32::from_black_alpha(if dark { 120 } else { 70 }));
+
+                let w = (screen.width() - dp(40.0)).clamp(320.0, 660.0);
+                let rows = results.len().clamp(1, VISIBLE_ROWS);
+                let headers = if recents > 0 { 2.0 * dp(22.0) } else { 0.0 };
+                let list_h = (rows as f32 * dp(ROW_H) + headers).min(VISIBLE_ROWS as f32 * dp(ROW_H));
+                let field_h = dp(46.0);
+                let footer_h = dp(28.0);
+                let h = field_h + list_h + footer_h + dp(12.0);
+                let top = screen.top() + (screen.height() * 0.14).max(dp(36.0));
+                let card = Rect::from_min_size(pos2(screen.center().x - w / 2.0, top), vec2(w, h));
+                if bg.clicked() && bg.interact_pointer_pos().is_some_and(|p| !card.contains(p)) {
+                    close = true;
+                }
+                widgets::card_on(ui.painter(), card, 1.0);
+
+                let inner = card.shrink2(vec2(dp(10.0), dp(6.0)));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(inner).id_salt("palette-card"));
+                let field = Rect::from_min_size(inner.min, vec2(inner.width(), field_h));
+                widgets::draw_icon(
+                    child.painter(),
+                    Rect::from_center_size(pos2(field.left() + dp(12.0), field.center().y), vec2(16.0, 16.0)),
+                    widgets::Icon::Search,
+                    muted(),
+                );
+                let edit = egui::TextEdit::singleline(&mut self.palette.query)
+                    .id(input_id)
+                    .font(ui_font(16.0))
+                    .frame(egui::Frame::NONE)
+                    .text_color(text())
+                    .hint_text("Search commands, tickers, panels, layouts, themes, settings…")
+                    .desired_width(field.width() - dp(36.0));
+                let field_rect = Rect::from_min_max(pos2(field.left() + dp(28.0), field.top()), field.max);
+                let resp = child
+                    .scope_builder(
+                        UiBuilder::new().max_rect(field_rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        |ui| ui.add(edit),
+                    )
+                    .inner;
+                if self.palette.just_opened || !resp.has_focus() {
+                    resp.request_focus();
+                    self.palette.just_opened = false;
+                }
+                if resp.changed() {
+                    self.palette.selected = 0;
+                }
+                child.painter().hline(inner.x_range(), field.bottom(), Stroke::new(1.0, theme::border()));
+
+                let list =
+                    Rect::from_min_size(pos2(inner.left(), field.bottom() + dp(4.0)), vec2(inner.width(), list_h));
+                let mut list_ui = child.new_child(UiBuilder::new().max_rect(list).id_salt("palette-list"));
+                egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, true]).show(&mut list_ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    if results.is_empty() {
+                        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), dp(ROW_H)), Sense::hover());
+                        ui.painter().text(
+                            pos2(r.left() + dp(10.0), r.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            "No matches. Enter runs it as a command if it parses.",
+                            ui_font(13.0),
+                            muted(),
+                        );
+                    }
+                    for (i, it) in results.iter().enumerate() {
+                        if recents > 0 && (i == 0 || i == recents) {
+                            section_header(ui, if i == 0 { "Recent" } else { "All" });
+                        }
+                        if self.palette_row(ui, it, i == self.palette.selected, keyed) {
+                            picked = Some(i);
+                        }
+                    }
+                });
+
+                let foot = Rect::from_min_max(
+                    pos2(inner.left(), card.bottom() - footer_h),
+                    pos2(inner.right(), card.bottom()),
+                );
+                let p = child.painter();
+                p.hline(inner.x_range(), foot.top(), Stroke::new(1.0, theme::border()));
+                p.text(
+                    pos2(foot.left() + dp(4.0), foot.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "↑↓ select   ↵ open   esc close",
+                    mono(11.0),
+                    muted(),
+                );
+                p.text(
+                    pos2(foot.right() - dp(4.0), foot.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    format!("{} result{}", results.len(), if results.len() == 1 { "" } else { "s" }),
+                    mono(11.0),
+                    muted(),
+                );
+            },
+        );
+
+        if let Some(item) = picked.and_then(|i| results.get(i)).cloned() {
+            self.palette.close();
+            self.palette.record(&item);
+            self.run_palette_target(item.target);
+        } else if picked.is_some() && !self.palette.query.trim().is_empty() {
+            // Nothing matched: behave like the command line.
+            let line = self.palette.query.trim().to_string();
+            self.palette.close();
+            self.execute(&line);
+        } else if close {
+            self.palette.close();
+        }
+        if !self.palette.open {
+            ctx.memory_mut(|m| m.surrender_focus(input_id));
+        }
+    }
+
+    /// One result row: kind badge, title, subtitle and shortcut caps. Returns whether it
+    /// was clicked.
+    fn palette_row(&self, ui: &mut Ui, it: &Item, selected: bool, keyed: bool) -> bool {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), dp(ROW_H)), Sense::click());
+        if selected && keyed {
+            resp.scroll_to_me(None);
+        }
+        widgets::hover_wash(ui, r, &resp, selected);
+        let p = ui.painter();
+        let cy = r.center().y;
+
+        // Kind badge.
+        let kc = kind_color(it.kind);
+        let badge_g = p.layout_no_wrap(it.kind.label().to_string(), mono(9.5), kc);
+        let badge = Rect::from_min_size(pos2(r.left() + dp(8.0), cy - 9.0), vec2(dp(64.0), 18.0));
+        p.rect_filled(badge, 4.0, kc.gamma_multiply(0.14));
+        p.rect_stroke(badge, 4.0, Stroke::new(1.0, kc.gamma_multiply(0.5)), StrokeKind::Inside);
+        p.galley(pos2(badge.center().x - badge_g.size().x / 2.0, cy - badge_g.size().y / 2.0), badge_g, kc);
+
+        // Shortcut hint on the right.
+        let mut right = r.right() - dp(8.0);
+        if let Some(chord) = it.hotkey.and_then(|a| self.prefs.hotkeys.chord(a)) {
+            right -= super::hotkeys_view::paint_key_caps(p, right, cy, &chord.tokens()) + dp(10.0);
+        }
+
+        // Title then subtitle, clipped before the shortcut.
+        let x = badge.right() + dp(12.0);
+        let clip = Rect::from_min_max(pos2(x, r.top()), pos2(right.max(x), r.bottom()));
+        let p = p.with_clip_rect(clip.intersect(p.clip_rect()));
+        let title_font = if it.kind == Kind::Command { mono(13.0) } else { ui_font(13.5) };
+        let title = p.layout_no_wrap(it.title.clone(), title_font, text());
+        let tw = title.size().x;
+        p.galley(pos2(x, cy - title.size().y / 2.0), title, text());
+        if !it.subtitle.is_empty() {
+            p.text(pos2(x + tw + dp(10.0), cy), egui::Align2::LEFT_CENTER, &it.subtitle, ui_font(12.0), muted());
+        }
+        resp.clicked()
+    }
+}
+
+fn section_header(ui: &mut Ui, label: &str) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), dp(22.0)), Sense::hover());
+    ui.painter().text(
+        pos2(r.left() + dp(8.0), r.center().y + 2.0),
+        egui::Align2::LEFT_CENTER,
+        label.to_uppercase(),
+        mono(10.0),
+        muted(),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::palette::rank;
+
+    #[test]
+    fn every_palette_command_parses() {
+        for &(code, ..) in COMMANDS {
+            assert!(command::parse(code).is_some(), "{code} does not parse");
+        }
+        for it in static_items() {
+            if let Target::Run(line) = &it.target {
+                assert!(command::parse(line).is_some(), "{line} does not parse");
+            }
+        }
+    }
+
+    #[test]
+    fn catalogue_covers_commands_panels_actions_and_settings() {
+        let items = static_items();
+        let has = |kind: Kind, title: &str| items.iter().any(|i| i.kind == kind && i.title == title);
+        for code in ["PORT", "POS", "ORD", "OMON", "THEME NEXT", "CONG", "WEI", "GC", "HELP"] {
+            assert!(has(Kind::Command, code), "{code}");
+        }
+        assert!(has(Kind::Panel, "New Options chain pane"));
+        assert!(has(Kind::Action, "Move sidebar to the other side"));
+        assert!(has(Kind::Action, "Open Brokerage settings"));
+        assert!(has(Kind::Layout, "Grid preset 4"));
+        for tab in SettingsTab::ALL {
+            assert!(has(Kind::Settings, &format!("Settings › {}", tab.label())));
+        }
+        assert!(
+            items.iter().all(|i| i.target != Target::Hotkey(Action::CommandPalette)),
+            "the palette does not list itself"
+        );
+        // Function codes and their shortcuts.
+        let pos = items.iter().find(|i| i.title == "POS").unwrap();
+        assert_eq!(pos.hotkey, Some(Action::Positions));
+        assert!(pos.subtitle.contains("positions"), "{}", pos.subtitle);
+    }
+
+    #[test]
+    fn typical_queries_find_their_item() {
+        let items = static_items();
+        let top = |q: &str| rank(&items, &[], q).first().map(|i| i.title.clone()).unwrap_or_default();
+        assert_eq!(top("omon"), "OMON");
+        assert_eq!(top("port"), "PORT");
+        assert_eq!(top("swap sidebar"), "Move sidebar to the other side");
+        assert_eq!(top("hotkeys"), "Settings › Hotkeys");
+        assert_eq!(top("theme"), "THEME NEXT");
+        let best2 = |q: &str| rank(&items, &[], q).into_iter().take(2).map(|i| i.title).collect::<Vec<_>>();
+        let b = best2("brokerage settings");
+        assert!(b.contains(&"Open Brokerage settings".to_string()) && b.contains(&"Settings › Brokerage".to_string()));
+        let b = best2("yield curve");
+        assert!(b.contains(&"GC".to_string()), "{b:?}");
+    }
+}

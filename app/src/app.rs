@@ -8,6 +8,7 @@ mod broker;
 mod chrome;
 mod hotkeys_view;
 mod options_view;
+mod palette_view;
 mod panels;
 mod portfolio_view;
 mod settings_view;
@@ -504,6 +505,8 @@ pub struct TerminalApp {
     broker: broker::BrokerState,
     /// Order ticket and trading dialogs.
     trading: trading::TradingState,
+    /// ⌘K command palette.
+    palette: crate::palette::Palette,
 }
 
 /// Resolve a run of words (`BTCUSD CRNCY AAPL US EQUITY MSFT`) into market keys.
@@ -629,6 +632,7 @@ impl TerminalApp {
             vibrancy: false,
             chrome: None,
             last_chrome_poll: None,
+            palette: crate::palette::Palette::load(&data_dir().join("palette.json")),
         };
         let mut doc = None;
         if let Some(s) = &settings {
@@ -1122,6 +1126,18 @@ impl TerminalApp {
             }
             return;
         }
+        // ⌘K (Ctrl+K) opens and closes the palette from anywhere, even from a text field.
+        if let Some(&(key, m)) =
+            presses.iter().find(|(k, m)| self.prefs.hotkeys.action_for(*k, *m) == Some(prefs::Action::CommandPalette))
+        {
+            ctx.input_mut(|i| i.consume_key(m, key));
+            self.palette.toggle();
+            return;
+        }
+        // While it is open, the palette owns the keyboard.
+        if self.palette.open {
+            return;
+        }
         let cmd_id = egui::Id::new("command-line");
         let focused = ctx.memory(|m| m.focused());
         let cmd_focused = focused == Some(cmd_id);
@@ -1247,6 +1263,7 @@ impl TerminalApp {
                 self.status = format!("Saved layout {:?}", self.layout_name);
             }
             A::Settings => self.apply(Function::Settings),
+            A::CommandPalette => self.palette.toggle(),
             A::DrawTrendline => self.with_chart(|c, _| c.start_tool(Tool::Trendline)),
             A::DrawHorizontal => self.with_chart(|c, _| c.start_tool(Tool::Horizontal)),
             A::DrawVertical => self.with_chart(|c, _| c.start_tool(Tool::Vertical)),
@@ -1435,6 +1452,7 @@ impl eframe::App for TerminalApp {
         );
 
         self.hotkeys(&ctx);
+        self.command_palette(&ctx);
         let mut sidebar_cmds = Vec::new();
         if sb_w >= 1.0 {
             // The sidebar slides in from its edge.

@@ -231,6 +231,7 @@ pub enum Action {
     PopOut,
     SaveLayout,
     Settings,
+    CommandPalette,
     NewChart,
     NewWatchlist,
     NewNews,
@@ -261,7 +262,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 49] = [
+    pub const ALL: [Action; 50] = [
         Action::Help,
         Action::Congress,
         Action::Politicians,
@@ -284,6 +285,7 @@ impl Action {
         Action::PopOut,
         Action::SaveLayout,
         Action::Settings,
+        Action::CommandPalette,
         Action::NewChart,
         Action::NewWatchlist,
         Action::NewNews,
@@ -337,6 +339,7 @@ impl Action {
             Action::PopOut => "Pop out pane".into(),
             Action::SaveLayout => "Save layout".into(),
             Action::Settings => "Settings".into(),
+            Action::CommandPalette => "Command palette".into(),
             Action::NewChart => "New Chart pane".into(),
             Action::NewWatchlist => "New Watchlist pane".into(),
             Action::NewNews => "New News pane".into(),
@@ -375,7 +378,8 @@ impl Action {
             | A::NewTab
             | A::ClosePane
             | A::PopOut
-            | A::Settings => "Workspace",
+            | A::Settings
+            | A::CommandPalette => "Workspace",
             a if a.layout_slot().is_some() || a == A::SaveLayout => "Layouts",
             A::DrawTrendline
             | A::DrawHorizontal
@@ -568,6 +572,8 @@ impl Default for Keymap {
         bind(Action::PopOut, "Cmd+Shift+P");
         bind(Action::SaveLayout, "Cmd+S");
         bind(Action::Settings, "Cmd+Comma");
+        // ⌘K on macOS, Ctrl+K elsewhere (`Cmd` is the platform command key).
+        bind(Action::CommandPalette, "Cmd+K");
         bind(Action::DrawTrendline, "Alt+T");
         bind(Action::DrawHorizontal, "Alt+H");
         bind(Action::DrawVertical, "Alt+V");
@@ -763,6 +769,7 @@ mod tests {
         assert_eq!(k.action_for(Key::Num1, Modifiers::COMMAND), Some(Action::NewChart));
         assert_eq!(k.action_for(Key::Num0, Modifiers::COMMAND), Some(Action::NewSearch));
         assert_eq!(k.action_for(Key::Num3, Modifiers::ALT), Some(Action::Layout3));
+        assert_eq!(k.action_for(Key::K, Modifiers::COMMAND), Some(Action::CommandPalette));
         // Every action has a default binding, and no two share one.
         let chords: Vec<Chord> = Action::ALL.iter().filter_map(|a| k.chord(*a)).collect();
         assert_eq!(chords.len(), Action::ALL.len());
