@@ -5,7 +5,8 @@ Bloomberg Terminal look (dense tiled panes, monospace numbers, a command line li
 across **stocks, ETFs, indices, FX, crypto, US Treasuries, futures/commodities and options**,
 plus **congressional trade tracking ingested directly from the official STOCK Act disclosure
 systems** and **your own brokerage accounts through [SnapTrade](https://snaptrade.com)**
-(read-only by default, with opt-in order entry). Native compact UI, themes from Bloomberg amber to Solarized, and a fully dockable
+(read-only by default, with opt-in order entry). Native compact UI, themes from Bloomberg amber
+to Solarized, and a fully dockable
 workspace with saved layouts.
 
 ![terminal-rs: AAPL chart with congress trade markers and RSI, the Congress trades feed, world markets and a multi-asset watchlist](docs/img/overview.png)
