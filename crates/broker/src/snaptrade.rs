@@ -113,6 +113,23 @@ pub fn signature(consumer_key: &str, path: &str, query: &str, body: Option<&Valu
     base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
 }
 
+/// SnapTrade answered with an error status. Displays as the readable message, so callers that
+/// only show errors are unaffected; order entry inspects `status` to tell a rejection from an
+/// unknown outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiError {
+    pub status: u16,
+    pub message: String,
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ApiError {}
+
 /// A readable message from a SnapTrade error body (`detail`, `message`, `code`), without
 /// echoing anything from the request.
 fn error_message(status: reqwest::StatusCode, body: &str) -> String {
@@ -197,7 +214,7 @@ impl SnapTrade {
         let status = resp.status();
         let text = resp.text().await.map_err(|e| anyhow!("reading SnapTrade response: {}", e.without_url()))?;
         if !status.is_success() {
-            bail!(error_message(status, &text));
+            return Err(ApiError { status: status.as_u16(), message: error_message(status, &text) }.into());
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);

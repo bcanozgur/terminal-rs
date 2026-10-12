@@ -234,6 +234,9 @@ that confirmed orders are real. Then:
 3. **Place Order…** opens the confirmation dialog. **Confirm** places exactly the previewed trade
    (`POST /trade/{tradeId}`). Editing the ticket after previewing, or waiting past the preview's
    validity (SnapTrade expires it after five minutes), requires a new preview.
+   A preview is used up when it is sent. If the answer is lost (network error, timeout, 5xx),
+   the ticket reports the status as **unknown** and opens `ORD`, because the broker may have
+   accepted the order; only a 4xx is reported as a rejection.
 
 Which order types a broker accepts varies and SnapTrade does not publish it per broker, so the
 preview is where unsupported combinations are rejected. Dollar amounts work only for market/day

@@ -465,6 +465,45 @@ pub fn parse_capabilities(accounts: &Value, authorizations: &Value) -> std::coll
         .collect()
 }
 
+/// Why a placement did not clearly succeed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceError {
+    /// Refused before anything was sent.
+    NotSent(String),
+    /// SnapTrade or the broker rejected the order (4xx): nothing was placed.
+    Rejected(String),
+    /// The request may have reached the broker but no clear answer came back: the order may
+    /// exist. Check open orders before placing again.
+    Unknown(String),
+}
+
+impl PlaceError {
+    pub fn uncertain(&self) -> bool {
+        matches!(self, PlaceError::Unknown(_))
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            PlaceError::NotSent(m) | PlaceError::Rejected(m) | PlaceError::Unknown(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for PlaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+/// Only a client error (4xx) is a definite "not placed"; everything else after sending is unknown.
+pub fn classify_place_error(e: anyhow::Error) -> PlaceError {
+    let msg = format!("{e:#}");
+    match e.downcast_ref::<crate::snaptrade::ApiError>() {
+        Some(api) if (400..500).contains(&api.status) => PlaceError::Rejected(msg),
+        _ => PlaceError::Unknown(msg),
+    }
+}
+
 /// Validate a path segment before it is interpolated into a URL.
 fn segment<'a>(what: &str, id: &'a str) -> Result<&'a str> {
     if valid_id(id) { Ok(id) } else { Err(anyhow!("invalid {what}")) }
@@ -497,19 +536,26 @@ impl SnapTrade {
         parse_impact(req, symbol, &v, Utc::now())
     }
 
-    /// Place a previewed order. Refuses previews that have expired.
-    pub async fn place_previewed(&self, preview: &OrderPreview) -> Result<Option<Order>> {
+    /// Place a previewed order. Refuses previews that have expired or are simulated.
+    ///
+    /// Once the request has gone out, only a 4xx answer is a definite rejection. A transport
+    /// error, a lost or unreadable response, or a 5xx may hide an order the broker accepted, so
+    /// those come back as [`PlaceError::Unknown`] and must not be retried blindly.
+    pub async fn place_previewed(&self, preview: &OrderPreview) -> Result<Option<Order>, PlaceError> {
         if preview.simulated {
-            bail!("a simulated preview cannot be placed with a broker");
+            return Err(PlaceError::NotSent("a simulated preview cannot be placed with a broker".into()));
         }
         if preview.expired(Utc::now()) {
-            bail!("the preview expired; preview the order again");
+            return Err(PlaceError::NotSent("the preview expired; preview the order again".into()));
         }
-        let id = segment("trade id", &preview.trade_id)?;
-        let v = self
+        let id = segment("trade id", &preview.trade_id).map_err(|e| PlaceError::NotSent(e.to_string()))?;
+        match self
             .call(Method::POST, &format!("/trade/{id}"), &[], Some(json!({ "wait_to_confirm": true })), true)
-            .await?;
-        Ok(parse_placed(&preview.request.account_id, &v))
+            .await
+        {
+            Ok(v) => Ok(parse_placed(&preview.request.account_id, &v)),
+            Err(e) => Err(classify_place_error(e)),
+        }
     }
 
     /// Cancel an open order.
@@ -628,6 +674,7 @@ pub fn simulate_place(pf: &mut Portfolio, preview: &OrderPreview, now: DateTime<
         let signed = if req.side == Side::Buy { units } else { -units };
         if let Some(a) = pf.accounts.iter_mut().find(|a| a.id == req.account_id) {
             a.cash = a.cash.map(|c| c - signed * px);
+            a.buying_power = a.buying_power.map(|b| b - signed * px);
         }
         apply_fill(pf, &req.account_id, &req.symbol, signed, px);
     }
@@ -849,6 +896,7 @@ mod tests {
         let mut pf = crate::sample::portfolio();
         let now = Utc::now();
         let cash0 = pf.account("sim-brokerage").unwrap().cash.unwrap();
+        let bp0 = pf.account("sim-brokerage").unwrap().buying_power.unwrap();
         let p = simulate_preview(&pf, &req(), Some(100.0), now).unwrap();
         assert!(p.simulated);
         assert_eq!(p.estimated_total(None), Some(1000.0));
@@ -856,6 +904,7 @@ mod tests {
         let o = simulate_place(&mut pf, &p, now).unwrap();
         assert_eq!((o.status.as_str(), o.execution_price), ("EXECUTED", Some(100.0)));
         assert_eq!(pf.account("sim-brokerage").unwrap().cash, Some(cash0 - 1000.0));
+        assert_eq!(pf.account("sim-brokerage").unwrap().buying_power, Some(bp0 - 1000.0), "buying power follows");
         let aapl = pf.positions.iter().find(|p| p.account_id == "sim-brokerage" && p.symbol == "AAPL").unwrap();
         assert_eq!(aapl.units, 130.0, "the fill adds to the position");
         assert!((aapl.cost_basis.unwrap() - (187.40 * 120.0 + 1000.0) / 130.0).abs() < 1e-9);

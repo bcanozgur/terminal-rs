@@ -18,7 +18,9 @@
 use std::time::{Duration, Instant};
 
 use egui::{Color32, RichText, Ui};
-use tr_broker::trading::{self, Amount, Capability, OrderPreview, OrderRequest, OrderType, Side, TimeInForce};
+use tr_broker::trading::{
+    self, Amount, Capability, OrderPreview, OrderRequest, OrderType, PlaceError, Side, TimeInForce,
+};
 use tr_broker::{Account, InstrumentKind, Order};
 
 use super::TerminalApp;
@@ -188,11 +190,18 @@ pub struct TradingState {
     /// Per-account trading capability (live connections), and when it was requested.
     pub caps: Option<std::collections::HashMap<String, Capability>>,
     caps_requested: Option<Instant>,
+    /// `Portfolio::fetched` when capabilities were last requested: a newer portfolio (after
+    /// reconnecting, say) makes them stale.
+    caps_for: Option<chrono::DateTime<chrono::Utc>>,
     pub caps_error: Option<String>,
+    /// Simulated orders were placed or cancelled: keep the sample portfolio across refreshes.
+    pub sim_trades: bool,
 }
 
 /// How often capabilities are re-read while trading UI is open.
 const CAPS_TTL: Duration = Duration::from_secs(300);
+/// Faster re-reads while the user may be reconnecting with trading access.
+const CAPS_CONNECTING: Duration = Duration::from_secs(20);
 
 /// Add a hint to errors that usually mean the connection is read-only.
 fn explain(e: &str) -> String {
@@ -230,14 +239,40 @@ impl TerminalApp {
         }
     }
 
-    /// Re-read capabilities when stale (live connections only).
+    /// Re-read capabilities when stale (live connections only): after [`CAPS_TTL`], every
+    /// [`CAPS_CONNECTING`] while the user may be reconnecting in the browser, and whenever a
+    /// newer portfolio has loaded since the last read.
     pub(super) fn ensure_capabilities(&mut self, force: bool) {
         if self.broker.mode() != BrokerMode::Live {
             return;
         }
-        if force || self.trading.caps_requested.is_none_or(|t| t.elapsed() > CAPS_TTL) {
+        let connecting = self.broker.connecting_since.is_some_and(|t| t.elapsed() < Duration::from_secs(300));
+        let ttl = if connecting { CAPS_CONNECTING } else { CAPS_TTL };
+        let fetched = self.broker.portfolio.as_ref().and_then(|p| p.fetched);
+        let newer_portfolio = fetched.is_some() && fetched != self.trading.caps_for;
+        let stale = self.trading.caps_requested.is_none_or(|t| t.elapsed() > ttl);
+        // Never more than one request every few seconds, whatever triggers it.
+        let recent = self.trading.caps_requested.is_some_and(|t| t.elapsed() < Duration::from_secs(5));
+        if force || stale || (newer_portfolio && !recent) {
             self.trading.caps_requested = Some(Instant::now());
+            self.trading.caps_for = fetched;
             self.worker.send(Request::Trade(TradeRequest::Capabilities { creds: self.broker.creds.clone() }));
+        }
+    }
+
+    /// A portfolio load finished. In sample mode with simulated trades, keep the session's
+    /// portfolio instead of the fresh sample so a refresh does not undo them.
+    pub(super) fn keep_simulated_trades(
+        &self,
+        result: Result<Box<tr_broker::Portfolio>, String>,
+    ) -> Result<Box<tr_broker::Portfolio>, String> {
+        match (&result, self.broker.portfolio.as_ref()) {
+            (Ok(fresh), Some(cur)) if self.trading.sim_trades && fresh.simulated && cur.simulated => {
+                let mut kept = cur.clone();
+                kept.fetched = fresh.fetched;
+                Ok(kept)
+            }
+            _ => result,
         }
     }
 
@@ -293,6 +328,10 @@ impl TerminalApp {
 
     /// Keep the ticket's quote fresh and its expiry countdown ticking.
     pub(super) fn trading_periodic(&mut self, ctx: &egui::Context) {
+        if self.trading.ticket.is_none() {
+            return;
+        }
+        self.ensure_capabilities(false);
         let Some(t) = &self.trading.ticket else { return };
         if t.preview.is_some() {
             ctx.request_repaint_after(Duration::from_secs(1));
@@ -424,9 +463,13 @@ impl TerminalApp {
         let id = t.id;
         if preview.simulated {
             let result = match self.broker.portfolio.as_deref_mut() {
-                Some(pf) if pf.simulated => trading::simulate_place(pf, &preview, chrono::Utc::now()).map(Some),
+                Some(pf) if pf.simulated => {
+                    self.trading.sim_trades = true;
+                    trading::simulate_place(pf, &preview, chrono::Utc::now()).map(Some)
+                }
                 _ => Err("The sample portfolio is not loaded.".into()),
-            };
+            }
+            .map_err(PlaceError::NotSent);
             return self.on_trade(TradeResponse::Placed {
                 ticket: id,
                 preview,
@@ -439,6 +482,9 @@ impl TerminalApp {
         let t = self.trading.ticket.as_mut().expect("checked above");
         t.placing = true;
         t.error = None;
+        // Consume the preview as it is sent: whatever the outcome, this trade id is never sent
+        // again from the ticket.
+        t.preview = None;
         self.status = format!("Sending order: {}", preview.request.summary());
         self.worker.send(Request::Trade(TradeRequest::Place { creds: self.broker.creds.clone(), preview, ticket: id }));
     }
@@ -482,6 +528,7 @@ impl TerminalApp {
         }
         let simulated = self.broker.portfolio.as_ref().is_some_and(|p| p.simulated);
         if simulated {
+            self.trading.sim_trades = true;
             let pf = self.broker.portfolio.as_deref_mut().expect("checked above");
             let result = trading::simulate_cancel(pf, &account, &order);
             self.on_trade(TradeResponse::Cancelled { account, order, result });
@@ -521,17 +568,23 @@ impl TerminalApp {
                         if o.id.is_empty() { String::new() } else { format!(" (#{})", o.id) }
                     ),
                     Ok(None) => format!("Order sent: {summary}"),
-                    Err(e) => format!("Order failed: {summary}: {}", explain(e)),
+                    Err(e) if e.uncertain() => format!(
+                        "Order status unknown: {summary}: {}. It may have reached your broker; check ORD before placing it again.",
+                        e.message()
+                    ),
+                    Err(PlaceError::NotSent(e)) => format!("Order not sent: {summary}: {e}"),
+                    Err(e) => format!("Order rejected: {summary}: {}", explain(e.message())),
                 };
                 tracing::info!("trade: {msg}");
                 self.status = msg.clone();
                 self.toasts.push((format!("{TOAST_PREFIX}{msg}"), Instant::now()));
+                let uncertain = result.as_ref().err().is_some_and(PlaceError::uncertain);
                 if let Some(t) = self.trading.ticket.as_mut().filter(|t| t.id == ticket) {
                     t.placing = false;
+                    // A sent preview is never offered again, whatever the answer.
+                    t.preview = None;
                     match result {
                         Ok(_) => {
-                            // A placed preview can never be sent twice.
-                            t.preview = None;
                             t.done = Some(msg);
                             t.error = None;
                         }
@@ -540,6 +593,10 @@ impl TerminalApp {
                 }
                 if !preview.simulated {
                     self.refresh_portfolio();
+                    if uncertain {
+                        // Open the orders view so the user can see whether it went through.
+                        self.portfolio_command(crate::command::PortView::Orders, "", None);
+                    }
                 }
             }
             TradeResponse::Cancelled { account, order, result } => {
@@ -585,7 +642,6 @@ impl TerminalApp {
                     Ok(url) => match open_external(&url) {
                         Ok(()) => {
                             self.broker.connecting_since = Some(Instant::now());
-                            self.trading.caps_requested = None;
                             ("Connection Portal opened: reconnect your broker and allow trading.".into(), false)
                         }
                         Err(e) => (format!("Could not open a browser ({e})."), true),

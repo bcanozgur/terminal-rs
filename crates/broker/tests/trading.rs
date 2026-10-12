@@ -88,6 +88,11 @@ async fn mock(seen: Log, failures: Log) -> String {
                 }
                 seen.lock().unwrap().push(entry);
                 let b = body.unwrap_or(Value::Null);
+                if path == "/trade/dropped-trade" {
+                    // The broker got the order but the answer never arrives.
+                    let _ = sock.shutdown().await;
+                    return;
+                }
                 let (status, out) = match (method.as_str(), path) {
                     ("POST", p) if p == format!("/accounts/{ACCT}/symbols") => (
                         200,
@@ -110,6 +115,10 @@ async fn mock(seen: Log, failures: Log) -> String {
                         }),
                     ),
                     ("POST", "/trade/impact") => (400, json!({"detail": "Unknown symbol", "code": "1019"})),
+                    ("POST", "/trade/rejected-trade") => {
+                        (400, json!({"detail": "Insufficient buying power", "code": "1068"}))
+                    }
+                    ("POST", "/trade/flaky-trade") => (503, json!({"detail": "Upstream timeout"})),
                     ("POST", p) if p == format!("/trade/{TRADE_ID}") => (
                         200,
                         json!({
@@ -225,6 +234,31 @@ async fn reads_trading_capabilities() {
     assert_eq!(caps[ACCT].brokerage, "Wealthsimple");
     assert!(failures.lock().unwrap().is_empty());
     assert!(seen.lock().unwrap().iter().all(|s| s.method == "GET"), "reading capabilities sends no orders");
+}
+
+#[tokio::test]
+async fn placement_errors_separate_rejections_from_unknown_outcomes() {
+    use tr_broker::trading::PlaceError;
+    let (seen, failures): (Log, Log) = Default::default();
+    let base = mock(seen, failures).await;
+    let c = client(&base);
+    let preview = c.order_impact(&limit_buy()).await.unwrap();
+    let with_id = |id: &str| {
+        let mut p = preview.clone();
+        p.trade_id = id.into();
+        p
+    };
+    match c.place_previewed(&with_id("rejected-trade")).await {
+        Err(PlaceError::Rejected(m)) => assert!(m.contains("Insufficient buying power"), "{m}"),
+        other => panic!("a 4xx is a definite rejection: {other:?}"),
+    }
+    let flaky = c.place_previewed(&with_id("flaky-trade")).await.unwrap_err();
+    assert!(flaky.uncertain(), "a 5xx may hide an accepted order: {flaky:?}");
+    let dropped = c.place_previewed(&with_id("dropped-trade")).await.unwrap_err();
+    assert!(dropped.uncertain(), "a lost response may hide an accepted order: {dropped:?}");
+    let mut old = preview.clone();
+    old.created -= chrono::Duration::seconds(tr_broker::trading::PREVIEW_TTL_SECS);
+    assert!(matches!(c.place_previewed(&old).await, Err(PlaceError::NotSent(_))));
 }
 
 #[tokio::test]

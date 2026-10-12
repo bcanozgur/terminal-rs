@@ -162,7 +162,7 @@ pub enum TradeResponse {
     Placed {
         ticket: u64,
         preview: Box<tr_broker::trading::OrderPreview>,
-        result: Result<Option<Box<tr_broker::Order>>, String>,
+        result: Result<Option<Box<tr_broker::Order>>, tr_broker::trading::PlaceError>,
     },
     Cancelled {
         account: String,
@@ -710,8 +710,8 @@ async fn trade(t: TradeRequest) -> TradeResponse {
         }
         TradeRequest::Place { creds, preview, ticket } => {
             let result = match client(creds) {
-                Ok(c) => c.place_previewed(&preview).await.map(|o| o.map(Box::new)).map_err(err),
-                Err(e) => Err(e),
+                Ok(c) => c.place_previewed(&preview).await.map(|o| o.map(Box::new)),
+                Err(e) => Err(tr_broker::trading::PlaceError::NotSent(e)),
             };
             TradeResponse::Placed { ticket, preview, result }
         }
