@@ -5,7 +5,7 @@ Bloomberg Terminal look (dense tiled panes, monospace numbers, a command line li
 across **stocks, ETFs, indices, FX, crypto, US Treasuries, futures/commodities and options**,
 plus **congressional trade tracking ingested directly from the official STOCK Act disclosure
 systems** and **your own brokerage accounts through [SnapTrade](https://snaptrade.com)**
-(read-only). Native compact UI, themes from Bloomberg amber to Solarized, and a fully dockable
+(read-only by default, with opt-in order entry). Native compact UI, themes from Bloomberg amber to Solarized, and a fully dockable
 workspace with saved layouts.
 
 ![terminal-rs: AAPL chart with congress trade markers and RSI, the Congress trades feed, world markets and a multi-asset watchlist](docs/img/overview.png)
@@ -129,7 +129,7 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   numbers, segmented controls, spring animations, hover states and context menus. The System
   theme follows the OS appearance and accent colour; charts render at native retina scale with
   4x MSAA.
-- **Brokerage accounts (SnapTrade, read-only)** — connect your brokers once through SnapTrade's
+- **Brokerage accounts (SnapTrade)** — connect your brokers once through SnapTrade's
   Connection Portal (opened in your browser) and the terminal shows real accounts and balances
   (`ACCT`), positions with unrealised P&L (`POS`), orders from the last 30 days (`ORD`), activity
   such as trades, dividends, interest and transfers (`ACTV`) and a portfolio summary with
@@ -137,10 +137,22 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   position, order or activity row charts it, and right-click offers the option chain, news,
   Congress trades and watchlist. `AAPL POS` / `AAPL ORD` filter to one security, the account picker
   to one account. Stocks, ETFs, funds, crypto and options (OCC symbols shown as `AAPL 350C`) are
-  supported. Nothing can place, change or cancel orders, and the portal requests read-only
+  supported. Read-only unless you turn on trading (below); Connect Brokerage requests read-only
   access. Without credentials the panes show a setup screen; offline (`TR_PROVIDER=sample` or
   `TR_BROKER=sample`) they show a clearly labelled simulated portfolio. See
   [Brokerage setup](#brokerage-setup-snaptrade).
+- **Trading (opt-in)** — off by default; Settings › Trading enables it after an explicit
+  warning. `BUY AAPL 10`, `SELL MSFT 5 LMT 410`, `SELL TSLA 3 STP 250 LMT 245`, `BUY NVDA $500`,
+  `TRADE` (or `AAPL BUY`) open an order ticket, as do Buy/Sell on watchlist quotes and positions.
+  The ticket has an account picker, buy/sell, market, limit, stop and stop-limit, shares or a
+  dollar amount, and Day/GTC/FOK/IOC. **Preview** runs SnapTrade's order-impact check at your
+  broker (estimated price, cost, commission, cash after); only that preview, unchanged and
+  unexpired, can be placed, and only through a confirmation dialog showing account, symbol, side,
+  quantity and estimated cost. Open orders cancel from `ORD` (right-click › Cancel Order, also
+  confirmed). Accounts whose brokerage does not trade through SnapTrade, or whose connection is
+  read-only or disabled, are marked read-only and cannot preview. An optional maximum order value
+  refuses large orders. The sample portfolio simulates fills locally. See
+  [Trading](#trading-opt-in).
 - **Hotkeys and preferences** — every hotkey is rebindable from a native shortcut table in
   Settings › Hotkeys and Help (click a binding, press the new keys); defaults for new charts and
   order books; everything persists in `prefs.json`.
@@ -204,6 +216,33 @@ visible (every 20 s for five minutes after opening the portal); `PORT REFRESH` r
 Brokerage data can be delayed or cached by SnapTrade depending on your plan, which is why holdings
 are repriced with the terminal's live quotes where a market key exists.
 
+## Trading (opt-in)
+
+Trading is **off** until you enable it in **Settings › Trading**, which asks you to acknowledge
+that confirmed orders are real. Then:
+
+1. Make sure the connection allows trading. Connections made with **Connect Brokerage** are
+   read-only; **Reconnect with Trading Access…** in Settings › Trading opens the Connection Portal
+   asking for trading access where the broker supports it (`trade-if-available`). Settings ›
+   Trading lists, per brokerage, whether trading is available, from SnapTrade's
+   `allows_trading` flag and each connection's access type.
+2. Open a ticket (`BUY AAPL 10`, right-click a position › Sell …), pick the account and order type,
+   and click **Preview**. The broker checks the order through SnapTrade's
+   [order impact](https://docs.snaptrade.com/reference/Trading/Trading_getOrderImpact) endpoint;
+   nothing is placed.
+3. **Place Order…** opens the confirmation dialog. **Confirm** places exactly the previewed trade
+   (`POST /trade/{tradeId}`). Editing the ticket after previewing, or waiting past the preview's
+   validity (SnapTrade expires it after five minutes), requires a new preview.
+
+Which order types a broker accepts varies and SnapTrade does not publish it per broker, so the
+preview is where unsupported combinations are rejected. Dollar amounts work only for market/day
+orders at brokers that support notional orders; fractional share quantities are refused up front
+at brokers SnapTrade reports as not supporting them. Settings › Trading also has an optional
+**maximum order value** and a default account.
+
+Tests never place real orders: the trading client is exercised only against a local mock server,
+and the app's flows against the simulated portfolio.
+
 ## Keyboard shortcuts and commands
 
 Press **F1** (or type `HELP`) for the full, searchable list; every hotkey can be rebound in
@@ -237,6 +276,7 @@ Settings › Hotkeys. On Linux and Windows ⌘ is Ctrl and ⌥ is Alt.
 | `THEME BLOOMBERG` · `THEME NEXT` · `THEME SYSTEM` · `THEME EDIT` · `THEME COMPACT` · `LAYOUT THEME ON` | themes |
 | `PORT` · `ACCT` · `POS` · `ORD` · `ACTV` · `AAPL POS` · `AAPL ORD` | brokerage portfolio · accounts and balances · positions · orders · activity · one security |
 | `PORT REFRESH` · `PORT CONNECT` · `PORT SETUP` (`BROKER`) | reload accounts · connect a broker in the browser · SnapTrade keys |
+| `BUY AAPL 10` · `SELL MSFT 5 LMT 410` · `SELL TSLA 3 STP 250 LMT 245` · `BUY NVDA $500` · `TRADE` | order ticket, prefilled (trading must be enabled; preview and confirm before anything is sent) |
 | `SIDEBAR RIGHT` · `SIDEBAR` · `PREFS` · `HELP` | sidebar side or visibility · settings · help |
 | right-click chart / watchlist / feed row / sidebar toggle | context menu (chart type, indicators, draw, add to watchlist, who traded it, View menu) |
 
@@ -256,7 +296,8 @@ crates/data     MarketData trait; per-class router (Binance/Coinbase, Treasury.g
 crates/chart    wgpu renderer, LOD pyramids, viewport math, axes, drawings, egui paint callback
 crates/congress Senate eFD + House Clerk parsers, rosters, SQLite store, refresh, alerts, performance
 crates/broker   SnapTrade client (request signing, accounts, balances, positions, orders, activity),
-                portfolio model and P&L, Keychain / owner-only credential store, simulated sample
+                order entry (impact preview, place, cancel, capabilities), portfolio model and P&L,
+                Keychain / owner-only credential store, simulated sample and order simulator
 docs/analysis   REA research notes on TradingView chart UX
 ```
 
@@ -335,6 +376,11 @@ cargo bench -p tr-core && cargo bench -p tr-chart
   string and numeric decimals, a failing account); P&L for longs, shorts and option multipliers;
   market-key mapping; OCC symbols; credential storage permissions and redaction; errors never
   echo the user secret; every portfolio view renders.
+- Trading: order validation (prices per order type, stop-limit direction, notional rules,
+  path-safe ids); a mock SnapTrade trading server checks the signed symbol lookup, order impact,
+  placement of the previewed trade, cancel and portal requests; expired or simulated previews are
+  never sent; per-account capabilities from brokerage and connection; `BUY`/`SELL`/`TRADE`
+  parsing; edited tickets invalidate their preview; the simulator fills, rests and cancels orders.
 - The chart renders real frames offscreen on whatever adapter is present and checks pixels.
 
 ## Platform notes and limitations

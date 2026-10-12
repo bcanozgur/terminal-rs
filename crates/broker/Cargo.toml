@@ -1,6 +1,6 @@
 [package]
 name = "tr-broker"
-description = "Read-only brokerage accounts through SnapTrade: signed API client, portfolio model and credential storage"
+description = "Brokerage accounts through SnapTrade: signed API client, portfolio model, order entry and credential storage"
 version.workspace = true
 edition.workspace = true
 

@@ -840,7 +840,12 @@ impl TerminalApp {
                 Icon::Bell,
                 amber(),
             );
-            p.text(pos2(r.left() + 42.0, r.top() + 15.0), Align2::LEFT_CENTER, "Congress Alert", ui_font(12.5), text());
+            // Order entry prefixes its toasts; everything else is a Congress alert.
+            let (title, msg) = match msg.strip_prefix(super::trading::TOAST_PREFIX) {
+                Some(rest) => ("Trading", rest),
+                None => ("Congress Alert", msg.as_str()),
+            };
+            p.text(pos2(r.left() + 42.0, r.top() + 15.0), Align2::LEFT_CENTER, title, ui_font(12.5), text());
             p.text(pos2(r.left() + 42.0, r.top() + 33.0), Align2::LEFT_CENTER, msg, ui_font(11.5), muted());
         }
     }

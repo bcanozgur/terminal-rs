@@ -259,7 +259,7 @@ impl TerminalApp {
                 ],
             );
 
-            section(ui, "Brokerage (SnapTrade, read-only)");
+            section(ui, "Brokerage (SnapTrade)");
             command_table(
                 ui,
                 "help-broker",
@@ -273,6 +273,19 @@ impl TerminalApp {
                         &["PORT REFRESH", "PORT CONNECT", "PORT SETUP"],
                         "Reload · connect a broker in the browser · keys",
                     ),
+                ],
+            );
+
+            section(ui, "Trading (off until enabled in Settings › Trading)");
+            command_table(
+                ui,
+                "help-trading",
+                &[
+                    (&["BUY AAPL 10", "SELL MSFT 5"], "Order ticket, prefilled (preview and confirm before sending)"),
+                    (&["BUY AAPL 10 LMT 190", "@190"], "Limit order"),
+                    (&["SELL TSLA 3 STP 250 LMT 245"], "Stop or stop-limit order"),
+                    (&["BUY NVDA $500"], "Dollar amount (market, day; broker permitting)"),
+                    (&["TRADE", "AAPL BUY"], "Open the ticket"),
                 ],
             );
 

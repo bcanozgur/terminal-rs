@@ -1,7 +1,7 @@
 //! Brokerage accounts through SnapTrade: credential lifecycle (Keychain / private file,
 //! environment overrides), user registration, the read-only Connection Portal, portfolio
-//! refresh scheduling and the `PORT`/`ACCT`/`POS`/`ORD`/`ACTV` commands. Read-only: nothing
-//! here can place or change orders.
+//! refresh scheduling and the `PORT`/`ACCT`/`POS`/`ORD`/`ACTV` commands. Order entry is in
+//! `trading`.
 
 use std::time::{Duration, Instant};
 
@@ -470,6 +470,7 @@ impl TerminalApp {
         }
         let busy = self.broker.busy.is_some() || self.broker.disconnecting.is_some();
 
+        let access_note = self.brokerage_access_note();
         // ---- status card ----
         ui.add_space(dp(4.0));
         // A snapshot (small, and only while this tab is open) so the UI below can mutate state.
@@ -551,11 +552,7 @@ impl TerminalApp {
             if mode == BrokerMode::Simulated {
                 note(ui, "Until then the portfolio panes show a simulated sample portfolio.");
             }
-            note(
-                ui,
-                "Read-only: terminal-rs reads accounts, balances, positions, orders and activity through SnapTrade. \
-                 It cannot place, change or cancel orders.",
-            );
+            note(ui, &access_note);
         });
         if let Some((m, err)) = &self.broker.message {
             ui.label(RichText::new(m).font(ui_font(12.0)).color(if *err { theme::down() } else { theme::up() }));

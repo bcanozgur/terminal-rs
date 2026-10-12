@@ -194,6 +194,18 @@ impl Default for PanelDefaults {
     }
 }
 
+/// Order entry. Disabled by default; enabling it in Settings › Trading takes an explicit
+/// acknowledgement that orders are real.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TradingPrefs {
+    pub enabled: bool,
+    /// Refuse orders whose estimated value exceeds this (`None` = no limit).
+    pub max_order_value: Option<f64>,
+    /// Account the ticket preselects.
+    pub default_account: Option<String>,
+}
+
 /// Every rebindable action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Action {
@@ -621,6 +633,8 @@ pub struct Prefs {
     pub appearance: Appearance,
     pub hotkeys: Keymap,
     pub panels: PanelDefaults,
+    /// Order entry through SnapTrade (off unless the user turns it on).
+    pub trading: TradingPrefs,
     /// A custom theme built from v2 appearance overrides, for the app to save.
     #[serde(skip)]
     pub migrated_theme: Option<crate::themes::Theme>,
@@ -633,6 +647,7 @@ impl Default for Prefs {
             appearance: Appearance::default(),
             hotkeys: Keymap::default(),
             panels: PanelDefaults::default(),
+            trading: TradingPrefs::default(),
             migrated_theme: None,
         }
     }

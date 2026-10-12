@@ -121,6 +121,56 @@ pub enum Request {
     Forget(PaneId),
     YieldCurves,
     Search(String),
+    /// Order entry (see `app::trading`); only sent once trading is enabled.
+    Trade(TradeRequest),
+}
+
+/// A trading call through SnapTrade. Previews never place anything; placing takes a preview
+/// the user confirmed.
+pub enum TradeRequest {
+    Preview {
+        creds: tr_broker::Credentials,
+        req: tr_broker::trading::OrderRequest,
+        ticket: u64,
+    },
+    Place {
+        creds: tr_broker::Credentials,
+        preview: Box<tr_broker::trading::OrderPreview>,
+        ticket: u64,
+    },
+    Cancel {
+        creds: tr_broker::Credentials,
+        account: String,
+        order: String,
+    },
+    /// Connection Portal link requesting trading access.
+    Portal {
+        creds: tr_broker::Credentials,
+        dark: bool,
+    },
+    /// Which accounts can trade (brokerage support and connection access).
+    Capabilities {
+        creds: tr_broker::Credentials,
+    },
+}
+
+pub enum TradeResponse {
+    Preview {
+        ticket: u64,
+        result: Result<Box<tr_broker::trading::OrderPreview>, String>,
+    },
+    Placed {
+        ticket: u64,
+        preview: Box<tr_broker::trading::OrderPreview>,
+        result: Result<Option<Box<tr_broker::Order>>, String>,
+    },
+    Cancelled {
+        account: String,
+        order: String,
+        result: Result<(), String>,
+    },
+    Portal(Result<String, String>),
+    Capabilities(Result<std::collections::HashMap<String, tr_broker::trading::Capability>, String>),
 }
 
 pub struct BuiltIndicator {
@@ -215,6 +265,7 @@ pub enum Response {
         query: String,
         hits: Vec<SearchHit>,
     },
+    Trade(Box<TradeResponse>),
 }
 
 pub struct Worker {
@@ -642,6 +693,43 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             let hits = s.provider.search(&query).await.unwrap_or_default();
             s.send(Response::SearchHits { query, hits });
         }
+        Request::Trade(t) => s.send(Response::Trade(Box::new(trade(t).await))),
+    }
+}
+
+async fn trade(t: TradeRequest) -> TradeResponse {
+    let err = |e: anyhow::Error| format!("{e:#}");
+    let client = |creds| tr_broker::SnapTrade::new(creds).map_err(err);
+    match t {
+        TradeRequest::Preview { creds, req, ticket } => {
+            let result = match client(creds) {
+                Ok(c) => c.order_impact(&req).await.map(Box::new).map_err(err),
+                Err(e) => Err(e),
+            };
+            TradeResponse::Preview { ticket, result }
+        }
+        TradeRequest::Place { creds, preview, ticket } => {
+            let result = match client(creds) {
+                Ok(c) => c.place_previewed(&preview).await.map(|o| o.map(Box::new)).map_err(err),
+                Err(e) => Err(e),
+            };
+            TradeResponse::Placed { ticket, preview, result }
+        }
+        TradeRequest::Cancel { creds, account, order } => {
+            let result = match client(creds) {
+                Ok(c) => c.cancel_order(&account, &order).await.map_err(err),
+                Err(e) => Err(e),
+            };
+            TradeResponse::Cancelled { account, order, result }
+        }
+        TradeRequest::Portal { creds, dark } => TradeResponse::Portal(match client(creds) {
+            Ok(c) => c.trading_portal_url(dark).await.map_err(err),
+            Err(e) => Err(e),
+        }),
+        TradeRequest::Capabilities { creds } => TradeResponse::Capabilities(match client(creds) {
+            Ok(c) => c.capabilities().await.map_err(err),
+            Err(e) => Err(e),
+        }),
     }
 }
 

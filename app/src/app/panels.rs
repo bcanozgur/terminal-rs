@@ -90,6 +90,16 @@ impl TerminalApp {
                         P::Setup => actions.push(Action::Command("PORT SETUP".into())),
                         P::Options(k) => actions.push(Action::Command(format!("{k} OMON"))),
                         P::News(k) => actions.push(Action::Command(format!("{k} CN"))),
+                        P::Trade { key, buy, account, units } => self.open_ticket(
+                            crate::command::TradeArgs {
+                                buy: Some(buy),
+                                symbol: Some(key),
+                                units,
+                                ..Default::default()
+                            },
+                            account,
+                        ),
+                        P::CancelOrder { account, id } => self.request_cancel(&account, &id),
                         P::Open(url) => {
                             if let Err(e) = super::broker::open_external(url) {
                                 self.status = format!("Could not open {url}: {e}");
@@ -174,6 +184,15 @@ impl TerminalApp {
                     out.push(Action::OpenChart(s.clone()));
                 }
                 resp.context_menu(|ui| {
+                    if matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf) {
+                        for (label, side) in [("Buy", "BUY"), ("Sell", "SELL")] {
+                            if ui.button(format!("{label} {}…", sec.ticker)).clicked() {
+                                out.push(Action::Command(format!("{side} {s}")));
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                    }
                     if ui.button("Open Chart").clicked() {
                         out.push(Action::OpenChart(s.clone()));
                         ui.close();

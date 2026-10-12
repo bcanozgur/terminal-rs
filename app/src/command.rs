@@ -83,6 +83,70 @@ impl PortView {
     }
 }
 
+/// `BUY AAPL 10`, `SELL 5 MSFT LMT 410`, `BUY NVDA $500`, `TRADE AAPL`: fields for the order
+/// ticket. A command only fills the ticket; orders are placed from the ticket after a preview
+/// and a confirmation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TradeArgs {
+    /// `Some(true)` buy, `Some(false)` sell, `None` the ticket's default.
+    pub buy: Option<bool>,
+    /// Market key (`AAPL US Equity`) of the security, when one was given.
+    pub symbol: Option<String>,
+    pub units: Option<f64>,
+    /// Dollar amount (`$500`).
+    pub notional: Option<f64>,
+    pub limit: Option<f64>,
+    pub stop: Option<f64>,
+}
+
+impl TradeArgs {
+    /// Parse the words after `BUY`/`SELL`/`TRADE`. Unknown words make the command invalid so
+    /// a typo never fills the ticket with something unintended.
+    fn parse(buy: Option<bool>, rest: &[&str]) -> Option<TradeArgs> {
+        let mut t = TradeArgs { buy, ..Default::default() };
+        let price =
+            |s: &str| s.trim_start_matches(['@', '$']).replace(',', "").parse::<f64>().ok().filter(|x| *x > 0.0);
+        let mut words = Vec::new();
+        let mut i = 0;
+        while i < rest.len() {
+            let w = rest[i];
+            let up = w.to_ascii_uppercase();
+            match up.as_str() {
+                "LMT" | "LIMIT" | "@" => {
+                    t.limit = Some(price(rest.get(i + 1)?)?);
+                    i += 1;
+                }
+                "STP" | "STOP" => {
+                    t.stop = Some(price(rest.get(i + 1)?)?);
+                    i += 1;
+                }
+                "MKT" | "MARKET" | "SHARES" | "SHS" | "SH" => {}
+                _ if up.starts_with('@') => t.limit = Some(price(&up)?),
+                _ if up.starts_with('$') => t.notional = Some(price(&up)?),
+                _ if up.chars().next().is_some_and(|c| c.is_ascii_digit() || c == '.') => {
+                    if t.units.is_some() {
+                        return None;
+                    }
+                    t.units = Some(price(&up)?);
+                }
+                _ => words.push(w),
+            }
+            i += 1;
+        }
+        if t.units.is_some() && t.notional.is_some() {
+            return None;
+        }
+        if !words.is_empty() {
+            let (sec, used) = Security::resolve_tokens(&words)?;
+            if used != words.len() {
+                return None;
+            }
+            t.symbol = Some(sec.key());
+        }
+        Some(t)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// A market key, e.g. `BTCUSD Curncy`.
@@ -221,6 +285,8 @@ pub enum Function {
     Search(String),
     /// Brokerage portfolio view, with an optional subcommand (`REFRESH`, `CONNECT`, `SETUP`).
     Portfolio(PortView, String),
+    /// Open the order ticket (`BUY`, `SELL`, `TRADE`).
+    Trade(TradeArgs),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -306,6 +372,9 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ORD" | "ORDERS" | "BLTR" => Function::Portfolio(PortView::Orders, words().join(" ")),
         "ACTV" | "ACTIVITY" | "TXNS" | "TRANSACTIONS" => Function::Portfolio(PortView::Activity, words().join(" ")),
         "BROKER" | "BROKERAGE" | "SNAPTRADE" => Function::Portfolio(PortView::Summary, "SETUP".into()),
+        "BUY" => Function::Trade(TradeArgs::parse(Some(true), rest)?),
+        "SELL" => Function::Trade(TradeArgs::parse(Some(false), rest)?),
+        "TRADE" | "TICKET" | "EMSX" => Function::Trade(TradeArgs::parse(None, rest)?),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         // Timeframes win where spellings overlap (`1D`, `1M`); otherwise try a range (`5D`, `YTD`).
         _ => {
@@ -427,6 +496,30 @@ fn describe(f: &Function) -> String {
             "CONNECT" | "LINK" => "Connect a brokerage in your browser (SnapTrade, read-only)".into(),
             _ => "Brokerage connection settings".into(),
         },
+        Function::Trade(t) => {
+            let side = match t.buy {
+                Some(true) => "Buy",
+                Some(false) => "Sell",
+                None => "Trade",
+            };
+            let mut s = format!("Order ticket: {side}");
+            if let Some(u) = t.units {
+                s += &format!(" {}", tr_broker::trading::fmt_units(u));
+            }
+            if let Some(n) = t.notional {
+                s += &format!(" ${n:.2} of");
+            }
+            if let Some(k) = &t.symbol {
+                s += &format!(" {}", Security::parse(k).map_or(k.clone(), |x| x.ticker));
+            }
+            if let Some(p) = t.stop {
+                s += &format!(" stop {p}");
+            }
+            if let Some(p) = t.limit {
+                s += &format!(" limit {p}");
+            }
+            s + " (preview and confirm before anything is sent)"
+        }
     }
 }
 
@@ -530,6 +623,44 @@ mod tests {
         for v in PortView::ALL {
             assert_eq!(parse(v.code()), f(v, ""), "{} round-trips", v.code());
         }
+    }
+
+    #[test]
+    fn trade_commands() {
+        let t = |s: &str| match parse(s) {
+            Some(Command::Function(Function::Trade(t))) => Some(t),
+            Some(Command::SymbolFunction(k, Function::Trade(mut t))) => {
+                t.symbol = Some(k);
+                Some(t)
+            }
+            _ => None,
+        };
+        let aapl = Some("AAPL US Equity".to_string());
+        assert_eq!(
+            t("BUY AAPL 10"),
+            Some(TradeArgs { buy: Some(true), symbol: aapl.clone(), units: Some(10.0), ..Default::default() })
+        );
+        assert_eq!(t("buy 10 aapl"), t("BUY AAPL 10"), "quantity and symbol in either order");
+        assert_eq!(t("AAPL BUY 10"), t("BUY AAPL 10"), "after a security");
+        assert_eq!(t("AAPL US EQUITY BUY 10"), t("BUY AAPL 10"));
+        let s = t("SELL MSFT 5 LMT 410.50").unwrap();
+        assert_eq!((s.buy, s.units, s.limit), (Some(false), Some(5.0), Some(410.5)));
+        assert_eq!(t("SELL MSFT 5 @410.5").unwrap().limit, Some(410.5));
+        let st = t("SELL TSLA 3 STP 250 LMT 245").unwrap();
+        assert_eq!((st.stop, st.limit), (Some(250.0), Some(245.0)));
+        let n = t("BUY NVDA $1,500").unwrap();
+        assert_eq!((n.notional, n.units), (Some(1500.0), None));
+        assert_eq!(t("BUY 0.5 BRK/B").unwrap().symbol.as_deref(), Some("BRK.B US Equity"));
+        let open = t("TRADE").unwrap();
+        assert_eq!((open.buy, open.symbol), (None, None));
+        assert_eq!(t("TRADE AAPL").unwrap().symbol, aapl);
+        assert_eq!(t("BUY").unwrap().buy, Some(true));
+        // Ambiguous or malformed orders are rejected rather than guessed.
+        assert_eq!(t("BUY AAPL 10 20"), None);
+        assert_eq!(t("BUY AAPL 10 $500"), None);
+        assert_eq!(t("BUY AAPL LMT"), None);
+        assert_eq!(t("BUY AAPL LMT -5"), None);
+        assert!(hint("BUY AAPL 10 LMT 150").contains("Buy 10 AAPL limit 150"));
     }
 
     #[test]

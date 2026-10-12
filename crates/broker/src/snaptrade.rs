@@ -1,4 +1,4 @@
-//! SnapTrade REST client (read-only).
+//! SnapTrade REST client.
 //!
 //! Every partner request carries `clientId` and a Unix `timestamp` in the query string and a
 //! `Signature` header: base64(HMAC-SHA256(consumerKey, canonical JSON of
@@ -7,9 +7,8 @@
 //! (omitted for personal API keys). Requests use the canonical root paths on
 //! `https://api.snaptrade.com` (the `/api/v1` prefix is deprecated).
 //!
-//! Only reads are implemented, plus registering a user, generating a read-only Connection
-//! Portal link and deleting a connection on explicit request; nothing here can place, change
-//! or cancel orders.
+//! This module holds the reads, user registration, the read-only Connection Portal link and
+//! deleting a connection on explicit request; order entry lives in [`crate::trading`].
 
 use std::time::Duration;
 
@@ -178,7 +177,7 @@ impl SnapTrade {
         url
     }
 
-    async fn call(
+    pub(crate) async fn call(
         &self,
         method: Method,
         path: &str,

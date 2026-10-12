@@ -24,6 +24,18 @@ pub enum PortAction {
     /// `OMON` for a market key.
     Options(String),
     News(String),
+    /// Open the order ticket for a market key, optionally in an account with a quantity.
+    Trade {
+        key: String,
+        buy: bool,
+        account: Option<String>,
+        units: Option<f64>,
+    },
+    /// Ask to cancel an open order (confirmed in a dialog).
+    CancelOrder {
+        account: String,
+        id: String,
+    },
 }
 
 // ---- formatting ---------------------------------------------------------------------------
@@ -210,6 +222,29 @@ fn note(ui: &mut Ui, s: impl Into<String>) {
     ui.label(RichText::new(s.into()).font(ui_font(11.5)).color(muted()));
 }
 
+/// Buy/Sell items for a security row (the ticket says whether trading is enabled).
+fn trade_items(ui: &mut Ui, key: &str, account: Option<&str>, held: Option<f64>, out: &mut Vec<PortAction>) {
+    let sec = tr_data::security(key);
+    if !matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf) {
+        return;
+    }
+    let account = account.map(str::to_string);
+    if ui.button(format!("Buy {}…", sec.ticker)).clicked() {
+        out.push(PortAction::Trade { key: key.to_string(), buy: true, account: account.clone(), units: None });
+        ui.close();
+    }
+    let units = held.filter(|u| *u > 0.0);
+    let sell = match units {
+        Some(u) => format!("Sell {} {}…", qty(u), sec.ticker),
+        None => format!("Sell {}…", sec.ticker),
+    };
+    if ui.button(sell).clicked() {
+        out.push(PortAction::Trade { key: key.to_string(), buy: false, account, units });
+        ui.close();
+    }
+    ui.separator();
+}
+
 /// Right-click menu for a security row.
 fn security_menu(ui: &mut Ui, key: &str, symbol: &str, out: &mut Vec<PortAction>) {
     if ui.button("Open Chart").clicked() {
@@ -386,8 +421,8 @@ fn setup_screen(ui: &mut Ui, b: &BrokerState, out: &mut Vec<PortAction>) {
     ui.add_space(dp(4.0));
     note(
         ui,
-        "terminal-rs reads accounts, balances, positions, orders and activity through SnapTrade. Access is read-only: \
-         nothing here can place or change orders.",
+        "terminal-rs reads accounts, balances, positions, orders and activity through SnapTrade. Access is read-only \
+         unless you turn on trading in Settings › Trading.",
     );
     ui.add_space(dp(8.0));
     let step = |ui: &mut Ui, n: &str, title: &str, body: &str, done: bool| {
@@ -664,7 +699,12 @@ fn position_row(
         if resp.clicked() {
             out.push(PortAction::Core(Action::OpenChart(k.clone())));
         }
-        resp.context_menu(|ui| security_menu(ui, k, &p.symbol, out));
+        resp.context_menu(|ui| {
+            if p.kind != tr_broker::InstrumentKind::Option {
+                trade_items(ui, k, Some(&p.account_id), Some(p.units), out);
+            }
+            security_menu(ui, k, &p.symbol, out)
+        });
     }
 }
 
@@ -839,7 +879,7 @@ fn orders(ui: &mut Ui, pane: &mut PortfolioPane, pf: &Portfolio, out: &mut Vec<P
         if let Some(i) = widgets::segmented(ui, "port-orders", &["Open", "All"], sel, 20.0) {
             pane.open_only = i == 0;
         }
-        note(ui, format!("Last {} days · read-only", tr_broker::snaptrade::ORDER_DAYS));
+        note(ui, format!("Last {} days · right-click an open order to cancel it", tr_broker::snaptrade::ORDER_DAYS));
     });
     let sel = selected(pane);
     let list: Vec<_> = pf
@@ -911,11 +951,26 @@ fn orders(ui: &mut Ui, pane: &mut PortfolioPane, pf: &Portfolio, out: &mut Vec<P
                     muted(),
                 );
             }
-            if let Some(k) = o.market_key() {
-                if resp.clicked() {
-                    out.push(PortAction::Core(Action::OpenChart(k.clone())));
-                }
-                resp.context_menu(|ui| security_menu(ui, &k, &o.symbol, out));
+            let key = o.market_key();
+            if let Some(k) = &key
+                && resp.clicked()
+            {
+                out.push(PortAction::Core(Action::OpenChart(k.clone())));
+            }
+            let cancellable = o.is_open() && !o.id.is_empty();
+            if cancellable || key.is_some() {
+                resp.context_menu(|ui| {
+                    if cancellable {
+                        if ui.button(RichText::new("Cancel Order…").color(theme::down())).clicked() {
+                            out.push(PortAction::CancelOrder { account: o.account_id.clone(), id: o.id.clone() });
+                            ui.close();
+                        }
+                        ui.separator();
+                    }
+                    if let Some(k) = &key {
+                        security_menu(ui, k, &o.symbol, out);
+                    }
+                });
             }
         }
     });

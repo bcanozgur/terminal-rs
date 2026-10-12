@@ -12,6 +12,7 @@ mod panels;
 mod portfolio_view;
 mod settings_view;
 mod theming;
+mod trading;
 mod workspace;
 
 pub use broker::PosSort;
@@ -501,6 +502,8 @@ pub struct TerminalApp {
     last_chrome_poll: Option<Instant>,
     /// Brokerage integration (SnapTrade credentials and the loaded portfolio).
     broker: broker::BrokerState,
+    /// Order ticket and trading dialogs.
+    trading: trading::TradingState,
 }
 
 /// Resolve a run of words (`BTCUSD CRNCY AAPL US EQUITY MSFT`) into market keys.
@@ -558,6 +561,7 @@ impl TerminalApp {
         let broker = broker::BrokerState::load(provider.eq_ignore_ascii_case("sample"));
         let mut app = Self {
             broker,
+            trading: Default::default(),
             worker,
             provider,
             panes: Vec::new(),
@@ -743,6 +747,10 @@ impl TerminalApp {
                 self.status = format!("{s}: option chain");
             }
             Command::SymbolFunction(s, Function::Portfolio(view, arg)) => self.portfolio_command(view, &arg, Some(s)),
+            Command::SymbolFunction(s, Function::Trade(mut t)) => {
+                t.symbol = Some(s);
+                self.open_ticket(t, None);
+            }
             Command::SymbolFunction(s, f @ (Function::NewPanel(_) | Function::Split { .. })) => {
                 self.apply_with_symbol(f, Some(s));
             }
@@ -875,6 +883,7 @@ impl TerminalApp {
                 self.open_panel(PaneKind::Search { query: q });
             }
             Function::Portfolio(view, arg) => self.portfolio_command(view, &arg, None),
+            Function::Trade(t) => self.open_ticket(t, None),
         }
     }
 
@@ -1023,6 +1032,7 @@ impl TerminalApp {
                 Response::Status(s) => self.status = s,
                 Response::Curves(c) => self.curves = Some(c),
                 Response::SearchHits { query, hits } => self.net_hits = (query, hits),
+                Response::Trade(r) => self.on_trade(*r),
                 Response::CongressRefreshed(summary) => {
                     self.congress_status = summary.to_string();
                     self.congress_checked = Some(chrono::Local::now());
@@ -1453,6 +1463,7 @@ impl eframe::App for TerminalApp {
         actions.extend(self.render_dock(ui, area, gap));
         actions.extend(self.render_windows(&ctx));
         self.run_actions(actions);
+        self.trading_windows(&ctx);
         self.toasts(&ctx);
 
         // TR_SMOKE_SECS=N: render for N seconds, log frame stats and quit (CI smoke test).
