@@ -215,6 +215,7 @@ pub fn portfolio() -> Portfolio {
         fetched: Some(now),
         warnings: Vec::new(),
         simulated: true,
+        demo: false,
     }
 }
 

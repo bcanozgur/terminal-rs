@@ -145,6 +145,35 @@ pub(super) fn static_items() -> Vec<Item> {
         )
         .keywords("snaptrade keys connect broker"),
     );
+    for (a, words) in
+        [(Action::Buy, "trade order ticket purchase long"), (Action::Sell, "trade order ticket close exit")]
+    {
+        v.push(
+            Item::new(Kind::Action, a.label(), "Trading · order ticket", Target::Hotkey(a)).keywords(words).hotkey(a),
+        );
+    }
+    v.push(
+        Item::new(
+            Kind::Action,
+            "Switch to the demo account",
+            "DEMO · paper trading, virtual cash",
+            Target::Run("DEMO".into()),
+        )
+        .keywords("paper practice simulated trading account mode"),
+    );
+    v.push(
+        Item::new(
+            Kind::Action,
+            "Switch to live accounts",
+            "MODE LIVE · real brokerage accounts (asks first)",
+            Target::Run("MODE LIVE".into()),
+        )
+        .keywords("real money brokerage snaptrade trading account mode"),
+    );
+    v.push(
+        Item::new(Kind::Action, "Reset the demo account", "Settings › Trading", Target::Settings("Trading".into()))
+            .keywords("paper demo restart cash"),
+    );
     for &(a, words) in ACTIONS {
         v.push(Item::new(Kind::Action, a.label(), a.category(), Target::Hotkey(a)).keywords(words).hotkey(a));
     }
@@ -235,7 +264,46 @@ impl TerminalApp {
             }
             // Whatever the command line would do with the query, offered as-is.
             match command::parse(q) {
-                Some(command::Command::Symbol(key)) => v.push(ticker_item(&key)),
+                Some(command::Command::Symbol(key)) => {
+                    v.push(ticker_item(&key));
+                    let sec = tr_data::security(&key);
+                    if matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf) {
+                        let t = &sec.ticker;
+                        let mode = if self.demo_mode() { "demo" } else { "LIVE" };
+                        v.push(
+                            Item::new(
+                                Kind::Command,
+                                format!("Buy {t}"),
+                                format!("Order ticket · {mode}"),
+                                Target::Run(format!("BUY {key}")),
+                            )
+                            .keywords("trade order"),
+                        );
+                        v.push(
+                            Item::new(
+                                Kind::Command,
+                                format!("Sell {t}"),
+                                format!("Order ticket · {mode}"),
+                                Target::Run(format!("SELL {key}")),
+                            )
+                            .keywords("trade order"),
+                        );
+                        let held = self.shown_portfolio().is_some_and(|pf| {
+                            pf.positions.iter().any(|p| p.units > 0.0 && p.symbol.eq_ignore_ascii_case(t))
+                        });
+                        if held {
+                            v.push(
+                                Item::new(
+                                    Kind::Command,
+                                    format!("Sell all {t}"),
+                                    format!("Close the whole position · {mode}"),
+                                    Target::Run(format!("SELL ALL {key}")),
+                                )
+                                .keywords("close exit position"),
+                            );
+                        }
+                    }
+                }
                 // Kept as typed: arguments such as paths and titles are case-sensitive.
                 Some(_) if !v.iter().any(|it| matches!(&it.target, Target::Run(l) if l.eq_ignore_ascii_case(q))) => {
                     v.push(Item::new(Kind::Command, q, command::hint(q), Target::Run(q.into())));
@@ -515,6 +583,7 @@ mod tests {
         assert!(has(Kind::Panel, "New Options chain pane"));
         assert!(has(Kind::Action, "Move sidebar to the other side"));
         assert!(has(Kind::Action, "Open Brokerage settings"));
+        assert!(has(Kind::Action, "Buy the current security") && has(Kind::Action, "Switch to live accounts"));
         assert!(has(Kind::Layout, "Grid preset 4"));
         for tab in SettingsTab::ALL {
             assert!(has(Kind::Settings, &format!("Settings › {}", tab.label())));

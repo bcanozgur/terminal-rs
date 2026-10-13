@@ -331,6 +331,9 @@ pub struct Portfolio {
     pub warnings: Vec<String>,
     /// Offline sample data, not a real brokerage.
     pub simulated: bool,
+    /// The local paper-trading account ([`crate::demo`]), not a brokerage.
+    #[serde(default)]
+    pub demo: bool,
 }
 
 /// Totals for a set of accounts, in the first account's currency.

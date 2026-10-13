@@ -97,6 +97,8 @@ pub struct TradeArgs {
     pub notional: Option<f64>,
     pub limit: Option<f64>,
     pub stop: Option<f64>,
+    /// `SELL ALL TSLA`: the whole position.
+    pub all: bool,
 }
 
 impl TradeArgs {
@@ -135,6 +137,18 @@ impl TradeArgs {
         }
         if t.units.is_some() && t.notional.is_some() {
             return None;
+        }
+        // `ALL` means the whole position when another word names the security (`ALL` alone
+        // is Allstate's ticker).
+        if words.len() > 1
+            && let Some(i) = words.iter().position(|w| w.eq_ignore_ascii_case("ALL"))
+        {
+            if t.buy == Some(true) || t.units.is_some() || t.notional.is_some() {
+                return None;
+            }
+            words.remove(i);
+            t.all = true;
+            t.buy = Some(false);
         }
         if !words.is_empty() {
             let (sec, used) = Security::resolve_tokens(&words)?;
@@ -287,6 +301,8 @@ pub enum Function {
     Portfolio(PortView, String),
     /// Open the order ticket (`BUY`, `SELL`, `TRADE`).
     Trade(TradeArgs),
+    /// Switch between the demo account and live accounts (`DEMO`, `MODE LIVE`); `true` = live.
+    AccountMode(bool),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -375,6 +391,12 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "BUY" => Function::Trade(TradeArgs::parse(Some(true), rest)?),
         "SELL" => Function::Trade(TradeArgs::parse(Some(false), rest)?),
         "TRADE" | "TICKET" | "EMSX" => Function::Trade(TradeArgs::parse(None, rest)?),
+        "DEMO" | "PAPER" if rest.is_empty() => Function::AccountMode(false),
+        "MODE" => match words().join(" ").as_str() {
+            "DEMO" | "PAPER" => Function::AccountMode(false),
+            "LIVE" | "REAL" => Function::AccountMode(true),
+            _ => return None,
+        },
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         // Timeframes win where spellings overlap (`1D`, `1M`); otherwise try a range (`5D`, `YTD`).
         _ => {
@@ -403,6 +425,21 @@ pub fn parse(input: &str) -> Option<Command> {
     let (sec, used) = Security::resolve_tokens(&tokens)?;
     match tokens[used..].split_first() {
         None => Some(Command::Symbol(sec.key())),
+        // `TSLA SELL ALL`: the security is already named, so `ALL` is the whole position.
+        Some((&f, args))
+            if ["SELL", "TRADE"].iter().any(|h| f.eq_ignore_ascii_case(h))
+                && args.iter().any(|a| a.eq_ignore_ascii_case("ALL")) =>
+        {
+            let rest: Vec<&str> = args.iter().copied().filter(|a| !a.eq_ignore_ascii_case("ALL")).collect();
+            match parse_function(f, &rest)? {
+                Function::Trade(mut t) if t.symbol.is_none() && t.units.is_none() && t.notional.is_none() => {
+                    t.all = true;
+                    t.buy = Some(false);
+                    Some(Command::SymbolFunction(sec.key(), Function::Trade(t)))
+                }
+                _ => None,
+            }
+        }
         Some((&f, args)) => parse_function(f, args).map(|func| Command::SymbolFunction(sec.key(), func)),
     }
 }
@@ -518,8 +555,13 @@ fn describe(f: &Function) -> String {
             if let Some(p) = t.limit {
                 s += &format!(" limit {p}");
             }
-            s + " (preview and confirm before anything is sent)"
+            if t.all {
+                s += " (whole position)";
+            }
+            s
         }
+        Function::AccountMode(false) => "Switch to the DEMO account (paper trading)".into(),
+        Function::AccountMode(true) => "Switch to LIVE brokerage accounts (asks first)".into(),
     }
 }
 
@@ -661,6 +703,15 @@ mod tests {
         assert_eq!(t("BUY AAPL LMT"), None);
         assert_eq!(t("BUY AAPL LMT -5"), None);
         assert!(hint("BUY AAPL 10 LMT 150").contains("Buy 10 AAPL limit 150"));
+        let all = t("SELL ALL TSLA").unwrap();
+        assert_eq!((all.buy, all.all, all.symbol.as_deref()), (Some(false), true, Some("TSLA US Equity")));
+        assert_eq!(t("sell tsla all"), t("SELL ALL TSLA"));
+        assert_eq!(t("TSLA SELL ALL").map(|a| a.all), Some(true));
+        assert!(!t("SELL ALL").unwrap().all, "ALL alone is Allstate");
+        assert_eq!(t("BUY ALL TSLA"), None);
+        assert_eq!(t("SELL ALL TSLA 5"), None);
+        assert_eq!(parse("DEMO"), Some(Command::Function(Function::AccountMode(false))));
+        assert_eq!(parse("MODE LIVE"), Some(Command::Function(Function::AccountMode(true))));
     }
 
     #[test]

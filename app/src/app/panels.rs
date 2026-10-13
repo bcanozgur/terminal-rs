@@ -81,7 +81,9 @@ impl TerminalApp {
                 }
             }
             PaneKind::Portfolio(pp) => {
-                for a in super::portfolio_view::portfolio(ui, pp, &self.broker, &self.quotes) {
+                let demo =
+                    (self.prefs.trading.account_mode == crate::prefs::AccountMode::Demo).then_some(&*self.demo.pf);
+                for a in super::portfolio_view::portfolio(ui, pp, &self.broker, demo, &self.quotes) {
                     use super::portfolio_view::PortAction as P;
                     match a {
                         P::Core(a) => actions.push(a),
@@ -100,6 +102,11 @@ impl TerminalApp {
                             account,
                         ),
                         P::CancelOrder { account, id } => self.request_cancel(&account, &id),
+                        P::ClosePosition { account, key } => self.close_position(&account, &key),
+                        P::TradingSettings => {
+                            self.settings_tab = super::settings_view::SettingsTab::Trading;
+                            self.open_panel(PaneKind::Settings);
+                        }
                         P::Open(url) => {
                             if let Err(e) = super::broker::open_external(url) {
                                 self.status = format!("Could not open {url}: {e}");
@@ -180,11 +187,17 @@ impl TerminalApp {
                         p.text(pos2(col(r, 4), r.center().y), Align2::RIGHT_CENTER, "…", mono(12.5), muted());
                     }
                 }
-                if resp.clicked() {
-                    out.push(Action::OpenChart(s.clone()));
+                let tradable = matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf);
+                let pills = if tradable { widgets::buy_sell_pills().to_vec() } else { Vec::new() };
+                let tips = [format!("Buy {} (⇧B)", sec.ticker), format!("Sell {} (⇧S)", sec.ticker)];
+                let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
+                match widgets::row_pills(ui, r, ("wl-pills", s), &pills, &tips) {
+                    Some(i) => out.push(Action::Command(format!("{} {s}", if i == 0 { "BUY" } else { "SELL" }))),
+                    None if resp.clicked() => out.push(Action::OpenChart(s.clone())),
+                    None => {}
                 }
                 resp.context_menu(|ui| {
-                    if matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf) {
+                    if tradable {
                         for (label, side) in [("Buy", "BUY"), ("Sell", "SELL")] {
                             if ui.button(format!("{label} {}…", sec.ticker)).clicked() {
                                 out.push(Action::Command(format!("{side} {s}")));

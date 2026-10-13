@@ -10,7 +10,8 @@
 //! This module holds the reads, user registration, the read-only Connection Portal link and
 //! deleting a connection on explicit request; order entry lives in [`crate::trading`].
 
-use std::time::Duration;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -31,6 +32,20 @@ pub const DOCS_URL: &str = "https://docs.snaptrade.com";
 pub const ORDER_DAYS: u32 = 30;
 pub const ACTIVITY_DAYS: i64 = 90;
 pub const ACTIVITY_LIMIT: u32 = 100;
+
+/// At most this many SnapTrade requests are in flight at once, across every client in the
+/// process. SnapTrade rate-limits per key, and loading many accounts at once (four requests
+/// per account) is what trips it.
+pub const MAX_CONCURRENT: usize = 4;
+/// A throttled read is retried this many times.
+pub const MAX_RETRIES: u32 = 3;
+/// Longest `Retry-After` honoured inside one call; longer waits go back to the caller.
+pub const MAX_INLINE_WAIT: Duration = Duration::from_secs(20);
+
+static IN_FLIGHT: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| tokio::sync::Semaphore::new(MAX_CONCURRENT));
+/// After a throttled answer nothing is sent until this instant, so one `Retry-After` pauses
+/// every request rather than each finding out on its own.
+static COOLDOWN: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub struct SnapTrade {
     http: reqwest::Client,
@@ -120,6 +135,49 @@ pub fn signature(consumer_key: &str, path: &str, query: &str, body: Option<&Valu
 pub struct ApiError {
     pub status: u16,
     pub message: String,
+    /// Seconds to wait before trying again, from `Retry-After` or the throttle message.
+    pub retry_after: Option<u64>,
+}
+
+impl ApiError {
+    /// SnapTrade (or the broker behind it) refused the request for rate limiting.
+    pub fn throttled(&self) -> bool {
+        self.status == 429
+    }
+}
+
+/// The error is a SnapTrade rate limit, and how long to wait if SnapTrade said.
+pub fn throttle(e: &anyhow::Error) -> Option<Option<Duration>> {
+    let api = e.downcast_ref::<ApiError>().filter(|a| a.throttled())?;
+    Some(api.retry_after.map(Duration::from_secs))
+}
+
+/// `Retry-After` in seconds (the HTTP-date form is not used by SnapTrade).
+fn retry_after_header(h: &reqwest::header::HeaderMap) -> Option<u64> {
+    h.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim().parse::<u64>().ok()
+}
+
+/// DRF's throttle text: `Request was throttled. Expected available in 37 seconds.`
+fn throttle_text(body: &str) -> Option<Option<u64>> {
+    let l = body.to_ascii_lowercase();
+    if !l.contains("throttled") && !l.contains("rate limit") && !l.contains("too many requests") {
+        return None;
+    }
+    let secs = l.split("available in").nth(1).and_then(|rest| {
+        rest.split(|c: char| !c.is_ascii_digit() && c != '.').find(|w| !w.is_empty())?.parse::<f64>().ok()
+    });
+    Some(secs.map(|s| s.ceil().max(1.0) as u64))
+}
+
+/// A short, friendly line for a rate limit; never SnapTrade's raw text.
+pub fn throttle_message(retry_after: Option<u64>) -> String {
+    match retry_after {
+        Some(s) if s > 90 => {
+            format!("SnapTrade is rate-limiting requests; trying again in about {} minutes", s.div_ceil(60))
+        }
+        Some(s) => format!("SnapTrade is rate-limiting requests; trying again in about {s} s"),
+        None => "SnapTrade is rate-limiting requests; trying again shortly".into(),
+    }
 }
 
 impl std::fmt::Display for ApiError {
@@ -140,13 +198,27 @@ fn error_message(status: reqwest::StatusCode, body: &str) -> String {
         401 => " (check the client ID and consumer key)",
         403 => " (the key may not allow this, or the user secret is wrong)",
         404 => " (unknown user or account)",
-        429 => " (rate limited; try again shortly)",
         _ => "",
     };
     match (detail.is_empty(), code.is_empty()) {
         (true, _) => format!("SnapTrade returned HTTP {}{hint}", status.as_u16()),
         (false, true) => format!("SnapTrade: {detail}{hint}"),
         (false, false) => format!("SnapTrade: {detail} [{code}]{hint}"),
+    }
+}
+
+async fn wait_for_cooldown() {
+    let until = *COOLDOWN.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(t) = until.filter(|t| *t > Instant::now()) {
+        tokio::time::sleep(t - Instant::now()).await;
+    }
+}
+
+fn start_cooldown(wait: Duration) {
+    let until = Instant::now() + wait.min(MAX_INLINE_WAIT);
+    let mut c = COOLDOWN.lock().unwrap_or_else(|p| p.into_inner());
+    if c.is_none_or(|t| t < until) {
+        *c = Some(until);
     }
 }
 
@@ -194,7 +266,39 @@ impl SnapTrade {
         url
     }
 
+    /// One API call. At most [`MAX_CONCURRENT`] run at once; a throttled read (GET) waits as
+    /// SnapTrade asks (or backs off exponentially) and is retried up to [`MAX_RETRIES`]
+    /// times. Writes are never retried here: a throttled order is reported, not resent.
     pub(crate) async fn call(
+        &self,
+        method: Method,
+        path: &str,
+        params: &[(&str, String)],
+        body: Option<Value>,
+        user: bool,
+    ) -> Result<Value> {
+        let retry = method == Method::GET;
+        let mut attempt = 0;
+        loop {
+            let result = {
+                let _permit = IN_FLIGHT.acquire().await.expect("the limiter is never closed");
+                wait_for_cooldown().await;
+                self.call_once(method.clone(), path, params, body.clone(), user).await
+            };
+            let Err(e) = result else { return result };
+            let Some(after) = throttle(&e) else { return Err(e) };
+            let wait = after.unwrap_or(Duration::from_millis(1000 << attempt.min(5)));
+            start_cooldown(wait);
+            if !retry || attempt >= MAX_RETRIES || wait > MAX_INLINE_WAIT {
+                return Err(e);
+            }
+            attempt += 1;
+            tracing::debug!("SnapTrade throttled {path}; retry {attempt} in {wait:?}");
+            tokio::time::sleep(wait).await;
+        }
+    }
+
+    async fn call_once(
         &self,
         method: Method,
         path: &str,
@@ -212,9 +316,20 @@ impl SnapTrade {
         // `without_url`: the URL carries the user secret and must never reach logs or the UI.
         let resp = req.send().await.map_err(|e| anyhow!("SnapTrade request failed: {}", e.without_url()))?;
         let status = resp.status();
+        let header_wait = retry_after_header(resp.headers());
         let text = resp.text().await.map_err(|e| anyhow!("reading SnapTrade response: {}", e.without_url()))?;
         if !status.is_success() {
-            return Err(ApiError { status: status.as_u16(), message: error_message(status, &text) }.into());
+            // Some throttles arrive with another status but DRF's "Request was throttled" text.
+            let throttled =
+                if status.as_u16() == 429 { Some(throttle_text(&text).flatten()) } else { throttle_text(&text) };
+            return Err(match throttled {
+                Some(text_wait) => {
+                    let retry_after = header_wait.or(text_wait);
+                    ApiError { status: 429, message: throttle_message(retry_after), retry_after }
+                }
+                None => ApiError { status: status.as_u16(), message: error_message(status, &text), retry_after: None },
+            }
+            .into());
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);
@@ -399,5 +514,20 @@ mod tests {
         );
         assert_eq!(m, "SnapTrade: Unable to verify signature sent [1076] (check the client ID and consumer key)");
         assert_eq!(error_message(reqwest::StatusCode::BAD_GATEWAY, "<html>"), "SnapTrade returned HTTP 502");
+    }
+
+    #[test]
+    fn throttle_messages_are_parsed_and_friendly() {
+        assert_eq!(
+            throttle_text(r#"{"detail":"Request was throttled. Expected available in 37 seconds."}"#),
+            Some(Some(37))
+        );
+        assert_eq!(throttle_text(r#"{"detail":"Request was throttled."}"#), Some(None));
+        assert_eq!(throttle_text(r#"{"detail":"Unknown symbol"}"#), None);
+        assert_eq!(throttle_message(Some(30)), "SnapTrade is rate-limiting requests; trying again in about 30 s");
+        assert!(throttle_message(Some(600)).contains("10 minutes"));
+        let e: anyhow::Error = ApiError { status: 429, message: throttle_message(None), retry_after: Some(5) }.into();
+        assert_eq!(throttle(&e), Some(Some(Duration::from_secs(5))));
+        assert_eq!(throttle(&anyhow!("other")), None);
     }
 }

@@ -826,8 +826,36 @@ impl ChartState {
             }
         }
         self.paint_legend(ui, price_rect, hovered_bar.unwrap_or(len.saturating_sub(1)), &sub_rects);
+        if matches!(self.sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf) {
+            clicked |= self.trade_buttons(ui, plot_all);
+        }
 
         let _ = focused; // the surrounding card shows focus
+        clicked
+    }
+
+    /// Buy / Sell buttons in the plot's top-right corner: they open the order ticket.
+    fn trade_buttons(&mut self, ui: &mut Ui, plot: Rect) -> bool {
+        let h = 20.0;
+        let mut x = plot.right() - 8.0;
+        let mut clicked = false;
+        for (label, cmd, color, tip) in
+            [("SELL", "SELL", theme::down(), "Sell (⇧S)"), ("BUY", "BUY", theme::up(), "Buy (⇧B)")]
+        {
+            let g = ui.painter().layout_no_wrap(label.into(), mono(11.0), Color32::WHITE);
+            let w = g.size().x + 18.0;
+            let r = Rect::from_min_size(pos2(x - w, plot.top() + 6.0), vec2(w, h));
+            x -= w + 6.0;
+            let resp = ui.interact(r, ui.id().with((self.id, "trade", label)), Sense::click()).on_hover_text(tip);
+            let fill = if resp.hovered() { color } else { color.gamma_multiply(0.8) };
+            let p = ui.painter();
+            p.rect_filled(r, h / 2.0, fill);
+            p.galley(r.center() - g.size() / 2.0, g, Color32::WHITE);
+            if resp.clicked() {
+                self.actions.push(Action::Command(format!("{cmd} {}", self.symbol)));
+                clicked = true;
+            }
+        }
         clicked
     }
 

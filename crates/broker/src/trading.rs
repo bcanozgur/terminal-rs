@@ -427,10 +427,11 @@ impl Capability {
     }
 }
 
-/// Per-account capabilities from `/accounts` (each account names its `brokerage_authorization`)
-/// and `/authorizations` (each connection carries its brokerage and access type).
-pub fn parse_capabilities(accounts: &Value, authorizations: &Value) -> std::collections::HashMap<String, Capability> {
-    let conns: std::collections::HashMap<String, Capability> = authorizations
+/// Capabilities per brokerage connection (SnapTrade authorization id) from `/authorizations`,
+/// where each connection carries its brokerage and access type. Accounts map onto these
+/// through [`crate::Account::connection_id`], so one request covers every account.
+pub fn parse_connection_capabilities(authorizations: &Value) -> std::collections::HashMap<String, Capability> {
+    authorizations
         .as_array()
         .into_iter()
         .flatten()
@@ -452,7 +453,13 @@ pub fn parse_capabilities(accounts: &Value, authorizations: &Value) -> std::coll
                 },
             ))
         })
-        .collect();
+        .collect()
+}
+
+/// Per-account capabilities from `/accounts` (each account names its `brokerage_authorization`)
+/// and `/authorizations`.
+pub fn parse_capabilities(accounts: &Value, authorizations: &Value) -> std::collections::HashMap<String, Capability> {
+    let conns = parse_connection_capabilities(authorizations);
     accounts
         .as_array()
         .into_iter()
@@ -564,6 +571,11 @@ impl SnapTrade {
         let order = segment("order id", brokerage_order_id)?;
         let body = json!({ "brokerage_order_id": order });
         self.call(Method::POST, &format!("/accounts/{acct}/trading/cancel"), &[], Some(body), true).await.map(|_| ())
+    }
+
+    /// What each brokerage connection can do, in one request however many accounts it holds.
+    pub async fn connection_capabilities(&self) -> Result<std::collections::HashMap<String, Capability>> {
+        Ok(parse_connection_capabilities(&self.call(Method::GET, "/authorizations", &[], None, true).await?))
     }
 
     /// What each account can do: brokerage support for trading and the connection's access.

@@ -108,7 +108,31 @@ impl TerminalApp {
         p.circle_filled(pos2(chip.left() + 8.0, cy), 3.0, if live { theme::up() } else { amber() });
         p.galley(pos2(chip.left() + 14.0, cy - chip_text.size().y / 2.0), chip_text, muted());
         ui.interact(chip, Id::new("source-chip"), Sense::hover()).on_hover_text(self.provider_label());
-        x = chip.right() + 10.0;
+        x = chip.right() + 8.0;
+
+        // Which account trades: DEMO (paper) or LIVE (real money, in red). Click to switch.
+        let live_mode = !self.demo_mode();
+        let (label, fill) = if live_mode { ("LIVE", theme::down()) } else { ("DEMO", theme::accent()) };
+        let badge_text = p.layout_no_wrap(label.into(), mono(11.0), Color32::WHITE);
+        let badge = Rect::from_min_size(pos2(x, cy - 10.0), vec2(badge_text.size().x + 18.0, 20.0));
+        let resp = ui.interact(badge, Id::new("account-mode-badge"), Sense::click());
+        let fill = if resp.hovered() { fill } else { fill.gamma_multiply(0.9) };
+        p.rect_filled(badge, 10.0, fill);
+        p.galley(badge.center() - badge_text.size() / 2.0, badge_text, Color32::WHITE);
+        let tip = if live_mode {
+            "LIVE: portfolio panes and orders use your real brokerage accounts. Click to switch to the demo account."
+        } else {
+            "DEMO: paper trading with virtual cash. Click to switch to your live brokerage accounts."
+        };
+        if resp.on_hover_text(tip).clicked() {
+            let next = if live_mode { crate::prefs::AccountMode::Demo } else { crate::prefs::AccountMode::Live };
+            self.set_account_mode(next, false);
+        }
+        if live_mode {
+            // A red rule along the toolbar so live mode is never mistaken for the demo.
+            p.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(2.0, theme::down()));
+        }
+        x = badge.right() + 10.0;
 
         // Right-hand cluster, laid out from the right edge: one-line clock (UTC on hover).
         let now = chrono::Local::now();
@@ -373,8 +397,12 @@ impl TerminalApp {
                 None => {}
             }
             self.cmd_hist_pos = None;
-            // The command line stays live, Bloomberg-style.
-            self.focus_cmd = true;
+            // The command line stays live, Bloomberg-style, unless the command opened the
+            // order ticket, which takes the keyboard for its quantity.
+            self.focus_cmd = !self.trading.ticket.as_ref().is_some_and(|t| t.focus_qty > 0);
+            if !self.focus_cmd {
+                resp.surrender_focus();
+            }
         } else if had_focus && esc {
             self.cmd.clear();
             resp.surrender_focus();
@@ -600,7 +628,7 @@ impl TerminalApp {
                 PaneKind::Portfolio(pp) => Some(pp.view),
                 _ => None,
             });
-            let pf = self.broker.portfolio.as_deref();
+            let pf = self.shown_portfolio();
             let value_badge = pf.filter(|p| !p.accounts.is_empty()).map(|p| {
                 let t = p.totals(None, |pos| self.broker.live_price(&self.quotes, pos));
                 compact_money(t.value)
@@ -834,17 +862,23 @@ impl TerminalApp {
                 vec2(420.0, 50.0),
             );
             widgets::card_on(&p, r, 0.0);
+            // Order entry prefixes its toasts (`+` filled/ok, `!` rejected); everything else
+            // is a Congress alert.
+            let (title, msg, color) = match msg.strip_prefix(super::trading::TOAST_PREFIX) {
+                Some(rest) => match rest.split_at_checked(1) {
+                    Some(("+", m)) => ("Trading", m, theme::up()),
+                    Some(("!", m)) => ("Trading · not done", m, theme::down()),
+                    _ => ("Trading", rest, amber()),
+                },
+                None => ("Congress Alert", msg.as_str(), amber()),
+            };
+            p.rect_filled(Rect::from_min_size(r.min + vec2(1.0, 6.0), vec2(3.0, r.height() - 12.0)), 1.5, color);
             widgets::draw_icon(
                 &p,
                 Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(18.0, 18.0)),
                 Icon::Bell,
-                amber(),
+                color,
             );
-            // Order entry prefixes its toasts; everything else is a Congress alert.
-            let (title, msg) = match msg.strip_prefix(super::trading::TOAST_PREFIX) {
-                Some(rest) => ("Trading", rest),
-                None => ("Congress Alert", msg.as_str()),
-            };
             p.text(pos2(r.left() + 42.0, r.top() + 15.0), Align2::LEFT_CENTER, title, ui_font(12.5), text());
             p.text(pos2(r.left() + 42.0, r.top() + 33.0), Align2::LEFT_CENTER, msg, ui_font(11.5), muted());
         }

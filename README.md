@@ -142,17 +142,15 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   access. Without credentials the panes show a setup screen; offline (`TR_PROVIDER=sample` or
   `TR_BROKER=sample`) they show a clearly labelled simulated portfolio. See
   [Brokerage setup](#brokerage-setup-snaptrade).
-- **Trading (opt-in)** — off by default; Settings › Trading enables it after an explicit
-  warning. `BUY AAPL 10`, `SELL MSFT 5 LMT 410`, `SELL TSLA 3 STP 250 LMT 245`, `BUY NVDA $500`,
-  `TRADE` (or `AAPL BUY`) open an order ticket, as do Buy/Sell on watchlist quotes and positions.
-  The ticket has an account picker, buy/sell, market, limit, stop and stop-limit, shares or a
-  dollar amount, and Day/GTC/FOK/IOC. **Preview** runs SnapTrade's order-impact check at your
-  broker (estimated price, cost, commission, cash after); only that preview, unchanged and
-  unexpired, can be placed, and only through a confirmation dialog showing account, symbol, side,
-  quantity and estimated cost. Open orders cancel from `ORD` (right-click › Cancel Order, also
-  confirmed). Accounts whose brokerage does not trade through SnapTrade, or whose connection is
-  read-only or disabled, are marked read-only and cannot preview. An optional maximum order value
-  refuses large orders. The sample portfolio simulates fills locally. See
+- **Demo account and easy trading** — a **DEMO** paper-trading account ($100,000 virtual cash) is
+  selected by default; the toolbar badge shows DEMO or a red **LIVE** and switches between them
+  (switching to live asks first and is remembered). Buy/Sell buttons sit on charts, watchlist rows
+  and positions (plus **Close**), ⇧B / ⇧S trade the security in focus, and `BUY AAPL 10`,
+  `SELL ALL TSLA`, `BUY NVDA $500`, `SELL MSFT 5 LMT 410` work from the command line or ⌘K. One
+  compact ticket: side, shares or dollars, market/limit (stops under More), live estimated cost
+  against buying power. Demo orders fill in one click at the live quote (limits and stops when
+  the quote crosses) and persist in the app data folder; Settings › Trading resets the account.
+  Live orders stay opt-in and go through SnapTrade's preview and a single confirmation. See
   [Trading](#trading-opt-in).
 - **Command palette** — ⌘K (Ctrl+K on Linux and Windows) opens a centred, theme-matched palette
   that fuzzy-searches every function code (`PORT`, `POS`, `ORD`, `OMON`, `THEME`, …), tickers
@@ -224,19 +222,24 @@ are repriced with the terminal's live quotes where a market key exists.
 
 ## Trading (opt-in)
 
-Trading is **off** until you enable it in **Settings › Trading**, which asks you to acknowledge
-that confirmed orders are real. Then:
+The **demo account** needs no setup: it is a local paper-trading account (`demo-account.json` in
+the app data folder) with no commissions, no short selling and Day orders expiring at the 4 p.m.
+New York close. Switch to your brokerage accounts with the toolbar badge, `MODE LIVE`, or
+Settings › Trading (`DEMO` switches back).
+
+Live trading is **off** until you enable it in **Settings › Trading**, which asks you to
+acknowledge that confirmed orders are real. Then:
 
 1. Make sure the connection allows trading. Connections made with **Connect Brokerage** are
    read-only; **Reconnect with Trading Access…** in Settings › Trading opens the Connection Portal
    asking for trading access where the broker supports it (`trade-if-available`). Settings ›
    Trading lists, per brokerage, whether trading is available, from SnapTrade's
    `allows_trading` flag and each connection's access type.
-2. Open a ticket (`BUY AAPL 10`, right-click a position › Sell …), pick the account and order type,
-   and click **Preview**. The broker checks the order through SnapTrade's
+2. Open a ticket (`BUY AAPL 10`, a Buy/Sell button, ⇧B / ⇧S), pick the account and order type,
+   and click **Review**. The broker checks the order through SnapTrade's
    [order impact](https://docs.snaptrade.com/reference/Trading/Trading_getOrderImpact) endpoint;
    nothing is placed.
-3. **Place Order…** opens the confirmation dialog. **Confirm** places exactly the previewed trade
+3. The broker's estimate opens one confirmation dialog. **Send** places exactly the previewed trade
    (`POST /trade/{tradeId}`). Editing the ticket after previewing, or waiting past the preview's
    validity (SnapTrade expires it after five minutes), requires a new preview.
    A preview is used up when it is sent. If the answer is lost (network error, timeout, 5xx),
@@ -249,8 +252,13 @@ orders at brokers that support notional orders; fractional share quantities are 
 at brokers SnapTrade reports as not supporting them. Settings › Trading also has an optional
 **maximum order value** and a default account.
 
+Trading access is read once per brokerage connection (`/authorizations`), cached for an hour (on
+disk too) with a **Refresh** button. SnapTrade requests are limited to four at a time; a
+rate-limited read waits for `Retry-After` and retries, and a rate limit is shown as a quiet
+"retrying" note rather than an error. Orders are never retried automatically.
+
 Tests never place real orders: the trading client is exercised only against a local mock server,
-and the app's flows against the simulated portfolio.
+and the app's flows against the simulated portfolio and the demo account.
 
 ## Keyboard shortcuts and commands
 
@@ -286,7 +294,8 @@ Settings › Hotkeys. On Linux and Windows ⌘ is Ctrl and ⌥ is Alt.
 | `THEME BLOOMBERG` · `THEME NEXT` · `THEME SYSTEM` · `THEME EDIT` · `THEME COMPACT` · `LAYOUT THEME ON` | themes |
 | `PORT` · `ACCT` · `POS` · `ORD` · `ACTV` · `AAPL POS` · `AAPL ORD` | brokerage portfolio · accounts and balances · positions · orders · activity · one security |
 | `PORT REFRESH` · `PORT CONNECT` · `PORT SETUP` (`BROKER`) | reload accounts · connect a broker in the browser · SnapTrade keys |
-| `BUY AAPL 10` · `SELL MSFT 5 LMT 410` · `SELL TSLA 3 STP 250 LMT 245` · `BUY NVDA $500` · `TRADE` | order ticket, prefilled (trading must be enabled; preview and confirm before anything is sent) |
+| `BUY AAPL 10` · `SELL ALL TSLA` · `SELL MSFT 5 LMT 410` · `SELL TSLA 3 STP 250 LMT 245` · `BUY NVDA $500` · `TRADE` | order ticket, prefilled (demo: one click; live: review and confirm) |
+| `DEMO` · `MODE LIVE` · ⇧B · ⇧S | switch account mode · buy / sell the security in focus |
 | `SIDEBAR RIGHT` · `SIDEBAR` · `PREFS` · `HELP` | sidebar side or visibility · settings · help |
 | right-click chart / watchlist / feed row / sidebar toggle | context menu (chart type, indicators, draw, add to watchlist, who traded it, View menu) |
 

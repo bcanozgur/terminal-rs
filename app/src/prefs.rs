@@ -194,11 +194,23 @@ impl Default for PanelDefaults {
     }
 }
 
-/// Order entry. Disabled by default; enabling it in Settings › Trading takes an explicit
-/// acknowledgement that orders are real.
+/// Which account the terminal trades and shows: the local paper-trading demo account, or
+/// the real brokerage accounts connected through SnapTrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AccountMode {
+    #[default]
+    Demo,
+    Live,
+}
+
+/// Order entry. The demo account is selected by default and trades without any setup;
+/// switching to live accounts is an explicit choice that is remembered. Sending live orders
+/// additionally needs `enabled`, which takes an explicit acknowledgement that orders are real.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TradingPrefs {
+    pub account_mode: AccountMode,
+    /// Live orders may be sent (Settings › Trading).
     pub enabled: bool,
     /// Refuse orders whose estimated value exceeds this (`None` = no limit).
     pub max_order_value: Option<f64>,
@@ -219,6 +231,8 @@ pub enum Action {
     Portfolio,
     Positions,
     Orders,
+    Buy,
+    Sell,
     NextPane,
     PrevPane,
     ToggleSidebar,
@@ -262,7 +276,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 50] = [
+    pub const ALL: [Action; 52] = [
         Action::Help,
         Action::Congress,
         Action::Politicians,
@@ -273,6 +287,8 @@ impl Action {
         Action::Portfolio,
         Action::Positions,
         Action::Orders,
+        Action::Buy,
+        Action::Sell,
         Action::NextPane,
         Action::PrevPane,
         Action::ToggleSidebar,
@@ -327,6 +343,8 @@ impl Action {
             Action::Portfolio => "Brokerage portfolio".into(),
             Action::Positions => "Brokerage positions".into(),
             Action::Orders => "Brokerage orders".into(),
+            Action::Buy => "Buy the current security".into(),
+            Action::Sell => "Sell the current security".into(),
             Action::NextPane => "Next pane".into(),
             Action::PrevPane => "Previous pane".into(),
             Action::ToggleSidebar => "Toggle sidebar".into(),
@@ -388,11 +406,13 @@ impl Action {
             | A::ResetView
             | A::LogScale
             | A::Magnet => "Chart",
+            A::Buy | A::Sell => "Trading",
             _ => "Panels and data",
         }
     }
 
-    pub const CATEGORIES: [&'static str; 5] = ["New panels", "Panels and data", "Workspace", "Layouts", "Chart"];
+    pub const CATEGORIES: [&'static str; 6] =
+        ["New panels", "Panels and data", "Trading", "Workspace", "Layouts", "Chart"];
 
     /// The panel command word for `New…` actions.
     pub fn panel_spec(self) -> Option<&'static str> {
@@ -562,6 +582,9 @@ impl Default for Keymap {
         bind(Action::Portfolio, "F7");
         bind(Action::Positions, "F8");
         bind(Action::Orders, "F9");
+        // Shift keeps plain typing free for the type-anywhere command line.
+        bind(Action::Buy, "Shift+B");
+        bind(Action::Sell, "Shift+S");
         bind(Action::NextPane, "Tab");
         bind(Action::PrevPane, "Shift+Tab");
         bind(Action::ToggleSidebar, if mac { "Ctrl+Cmd+S" } else { "Ctrl+Shift+S" });

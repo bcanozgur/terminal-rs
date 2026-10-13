@@ -198,11 +198,13 @@ impl TerminalApp {
         let b = &self.broker;
         let connecting = b.connecting_since.is_some_and(|t| t.elapsed() < CONNECT_WINDOW);
         let every = if connecting { CONNECT_POLL } else { REFRESH };
-        if !b.loading && b.mode() != BrokerMode::Setup && b.fetched.is_none_or(|t| t.elapsed() > every) {
+        // The demo account is local: live accounts load only while they are shown.
+        let live = !self.demo_mode();
+        if live && !b.loading && b.mode() != BrokerMode::Setup && b.fetched.is_none_or(|t| t.elapsed() > every) {
             self.refresh_portfolio();
         }
         // Reprice holdings with the terminal's own quotes.
-        if let Some(pf) = &self.broker.portfolio
+        if let Some(pf) = self.shown_portfolio()
             && self.broker.last_quotes.is_none_or(|t| t.elapsed() > Duration::from_secs(20))
         {
             let mut keys: Vec<String> = pf
@@ -421,7 +423,10 @@ impl TerminalApp {
     pub(super) fn portfolio_command(&mut self, view: PortView, arg: &str, symbol: Option<String>) {
         match arg.trim() {
             "REFRESH" | "SYNC" | "RELOAD" => {
-                if self.broker.mode() == BrokerMode::Setup {
+                if self.demo_mode() {
+                    self.status =
+                        "The demo account is local and always current (MODE LIVE for brokerage accounts)".into();
+                } else if self.broker.mode() == BrokerMode::Setup {
                     self.status = "Brokerage not set up: PORT SETUP".into();
                 } else {
                     self.refresh_portfolio();
@@ -437,7 +442,7 @@ impl TerminalApp {
         let mut pane = PortfolioPane::new(view);
         pane.symbol = symbol;
         self.open_panel(PaneKind::Portfolio(Box::new(pane)));
-        if self.broker.portfolio.is_none() && !self.broker.loading {
+        if !self.demo_mode() && self.broker.portfolio.is_none() && !self.broker.loading {
             self.refresh_portfolio();
         }
     }

@@ -275,6 +275,57 @@ pub fn hover_wash(ui: &Ui, rect: Rect, resp: &Response, selected: bool) {
     }
 }
 
+/// A small action pill: label, fill and label colour.
+pub type Pill<'a> = (&'a str, Color32, Color32);
+
+/// Buy / Sell / Close pills over the right end of a table row while the pointer is on it,
+/// on a backdrop so they never overlap the row's text. Returns the index clicked.
+pub fn row_pills(
+    ui: &mut Ui,
+    row: Rect,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    pills: &[Pill<'_>],
+    tips: &[&str],
+) -> Option<usize> {
+    if !ui.rect_contains_pointer(row) || pills.is_empty() {
+        return None;
+    }
+    let h = (row.height() - 6.0).clamp(14.0, 18.0);
+    let font = ui_font(10.5);
+    let galleys: Vec<_> =
+        pills.iter().map(|(l, _, c)| ui.painter().layout_no_wrap((*l).to_string(), font.clone(), *c)).collect();
+    let total: f32 = galleys.iter().map(|g| g.size().x + 14.0).sum::<f32>() + 4.0 * (pills.len() - 1) as f32;
+    let strip = Rect::from_min_max(
+        pos2(row.right() - total - 12.0, row.top() + 1.0),
+        pos2(row.right() - 1.0, row.bottom() - 1.0),
+    );
+    ui.painter().rect_filled(strip, theme::CONTROL_RADIUS, theme::card());
+    let mut x = strip.left() + 6.0;
+    let mut clicked = None;
+    let base = ui.id().with(id);
+    for (i, ((_, fill, _), g)) in pills.iter().zip(galleys).enumerate() {
+        let w = g.size().x + 14.0;
+        let r = Rect::from_min_size(pos2(x, row.center().y - h / 2.0), vec2(w, h));
+        x += w + 4.0;
+        let mut resp = ui.interact(r, base.with(i), Sense::click());
+        let fill = if resp.hovered() { *fill } else { fill.gamma_multiply(0.82) };
+        ui.painter().rect_filled(r, h / 2.0, fill);
+        ui.painter().galley(r.center() - g.size() / 2.0, g, Color32::WHITE);
+        if let Some(t) = tips.get(i) {
+            resp = resp.on_hover_text(*t);
+        }
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
+/// The usual Buy / Sell pills.
+pub fn buy_sell_pills() -> [Pill<'static>; 2] {
+    [("B", theme::up(), Color32::WHITE), ("S", theme::down(), Color32::WHITE)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -148,7 +148,8 @@ pub enum TradeRequest {
         creds: tr_broker::Credentials,
         dark: bool,
     },
-    /// Which accounts can trade (brokerage support and connection access).
+    /// Which brokerage connections can trade (brokerage support and connection access): one
+    /// `/authorizations` request, however many accounts there are.
     Capabilities {
         creds: tr_broker::Credentials,
     },
@@ -170,7 +171,17 @@ pub enum TradeResponse {
         result: Result<(), String>,
     },
     Portal(Result<String, String>),
-    Capabilities(Result<std::collections::HashMap<String, tr_broker::trading::Capability>, String>),
+    /// Capabilities by connection (SnapTrade authorization) id.
+    Capabilities(Result<std::collections::HashMap<String, tr_broker::trading::Capability>, CapsError>),
+}
+
+/// Why trading access could not be read. A rate limit is reported apart from real errors so
+/// the app can back off quietly instead of showing an error.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapsError {
+    pub message: String,
+    pub throttled: bool,
+    pub retry_after: Option<Duration>,
 }
 
 pub struct BuiltIndicator {
@@ -727,8 +738,11 @@ async fn trade(t: TradeRequest) -> TradeResponse {
             Err(e) => Err(e),
         }),
         TradeRequest::Capabilities { creds } => TradeResponse::Capabilities(match client(creds) {
-            Ok(c) => c.capabilities().await.map_err(err),
-            Err(e) => Err(e),
+            Ok(c) => c.connection_capabilities().await.map_err(|e| {
+                let throttle = tr_broker::snaptrade::throttle(&e);
+                CapsError { message: err(e), throttled: throttle.is_some(), retry_after: throttle.flatten() }
+            }),
+            Err(message) => Err(CapsError { message, throttled: false, retry_after: None }),
         }),
     }
 }

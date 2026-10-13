@@ -6,6 +6,7 @@
 
 mod broker;
 mod chrome;
+mod demo;
 mod hotkeys_view;
 mod options_view;
 mod palette_view;
@@ -505,6 +506,8 @@ pub struct TerminalApp {
     broker: broker::BrokerState,
     /// Order ticket and trading dialogs.
     trading: trading::TradingState,
+    /// The paper-trading demo account (selected by default).
+    demo: demo::DemoState,
     /// ⌘K command palette.
     palette: crate::palette::Palette,
 }
@@ -562,9 +565,11 @@ impl TerminalApp {
         let settings: Option<Settings> =
             std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let broker = broker::BrokerState::load(provider.eq_ignore_ascii_case("sample"));
+        let (demo, demo_note) = demo::DemoState::load(demo::demo_path());
         let mut app = Self {
             broker,
             trading: Default::default(),
+            demo,
             worker,
             provider,
             panes: Vec::new(),
@@ -663,6 +668,9 @@ impl TerminalApp {
         app.worker.send(Request::Latest { limit: 2_000 });
         app.worker.send(Request::SearchPoliticians(String::new()));
         app.worker.send(Request::Alerts);
+        if let Some(note) = demo_note {
+            app.trade_toast(note, false);
+        }
         app
     }
 
@@ -888,6 +896,13 @@ impl TerminalApp {
             }
             Function::Portfolio(view, arg) => self.portfolio_command(view, &arg, None),
             Function::Trade(t) => self.open_ticket(t, None),
+            Function::AccountMode(live) => {
+                let mode = if live { prefs::AccountMode::Live } else { prefs::AccountMode::Demo };
+                if mode == self.prefs.trading.account_mode {
+                    self.status = format!("Already using the {} account", if live { "LIVE" } else { "DEMO" });
+                }
+                self.set_account_mode(mode, false);
+            }
         }
     }
 
@@ -952,9 +967,11 @@ impl TerminalApp {
                     if q.len() > 20 {
                         self.wei_updated = Some(format!("updated {}", chrono::Local::now().format("%H:%M:%S")));
                     }
+                    let keys: Vec<String> = q.iter().map(|x| x.symbol.clone()).collect();
                     for x in q {
                         self.quotes.insert(x.symbol.clone(), x);
                     }
+                    self.demo_on_quotes(&keys);
                 }
                 Response::Latest(t) => self.latest = t,
                 Response::TickerTrades { pane, symbol, trades } => {
@@ -1146,19 +1163,26 @@ impl TerminalApp {
             return;
         }
         // Chorded bindings (⌘, Ctrl, Alt) work even while the command line has text.
+        let mut swallow_text = false;
         for &(key, m) in &presses {
             let Some(action) = self.prefs.hotkeys.action_for(key, m) else { continue };
             let chorded = m.command || m.ctrl || m.alt;
             if !chorded && !self.cmd.is_empty() {
                 continue;
             }
+            // ⇧B / ⇧S type letters: never while the command line is being typed into.
+            let letter = !chorded && Self::types_text(key);
+            if letter && cmd_focused {
+                continue;
+            }
             if !self.hotkey_applies(action) {
                 continue;
             }
             ctx.input_mut(|i| i.consume_key(m, key));
+            swallow_text |= letter;
             self.run_hotkey(action);
         }
-        if !cmd_focused {
+        if !cmd_focused && !swallow_text {
             // Type-anywhere: capture keystrokes until the command line has focus.
             // Judge modifiers per key event: the Alt release can arrive in the same frame
             // as Alt+T, so the frame-level modifier state is unreliable.
@@ -1216,6 +1240,12 @@ impl TerminalApp {
         }
     }
 
+    /// Keys that also produce text (a bare or shifted letter, digit or symbol).
+    fn types_text(key: Key) -> bool {
+        let n = key.name();
+        n.len() == 1 || matches!(key, Key::Space | Key::Minus | Key::Plus | Key::Equals | Key::Period | Key::Comma)
+    }
+
     fn hotkey_applies(&self, a: prefs::Action) -> bool {
         use prefs::Action as A;
         match a {
@@ -1243,6 +1273,8 @@ impl TerminalApp {
             A::Portfolio => self.apply(Function::Portfolio(command::PortView::Summary, String::new())),
             A::Positions => self.apply(Function::Portfolio(command::PortView::Positions, String::new())),
             A::Orders => self.apply(Function::Portfolio(command::PortView::Orders, String::new())),
+            A::Buy => self.quick_trade(true),
+            A::Sell => self.quick_trade(false),
             A::NextPane => self.cycle_focus(1),
             A::PrevPane => self.cycle_focus(-1),
             A::ToggleSidebar => self.sidebar_open = !self.sidebar_open,
