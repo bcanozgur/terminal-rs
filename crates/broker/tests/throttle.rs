@@ -121,6 +121,20 @@ async fn throttled_reads_retry_and_orders_are_never_resent() {
     assert!(err.message().contains("rate-limiting"));
     assert_eq!(seen.lock().unwrap().iter().filter(|l| l.starts_with("POST /trade/")).count(), 1);
 
+    // A pause that would outlast the preview never sends the order late.
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let base = mock_retry_after(4, seen.clone()).await;
+    let _ = client(&base).connection_capabilities().await; // starts a 4 s pause
+    let mut soon = preview.clone();
+    soon.created = chrono::Utc::now()
+        - chrono::Duration::seconds(tr_broker::trading::PREVIEW_TTL_SECS - tr_broker::trading::PREVIEW_MARGIN_SECS - 2);
+    let start = Instant::now();
+    let e = client(&base).place_previewed(&soon).await.unwrap_err();
+    assert!(start.elapsed().as_secs() < 2, "refused at once, not after the pause");
+    assert!(!e.uncertain(), "{e:?}");
+    assert!(seen.lock().unwrap().iter().all(|l| !l.starts_with("POST /trade/")), "the stale order was never sent");
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+
     // A long Retry-After pauses every request for its whole length, and nothing is sent
     // meanwhile: the call fails at once, unsent, with the time left.
     let seen = Arc::new(Mutex::new(Vec::new()));

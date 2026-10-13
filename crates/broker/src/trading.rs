@@ -505,6 +505,9 @@ impl std::fmt::Display for PlaceError {
 /// Only a client error (4xx) is a definite "not placed"; everything else after sending is unknown.
 pub fn classify_place_error(e: anyhow::Error) -> PlaceError {
     let msg = format!("{e:#}");
+    if e.downcast_ref::<crate::snaptrade::NotSent>().is_some() {
+        return PlaceError::NotSent(msg);
+    }
     match e.downcast_ref::<crate::snaptrade::ApiError>() {
         Some(api) if (400..500).contains(&api.status) => PlaceError::Rejected(msg),
         _ => PlaceError::Unknown(msg),
@@ -556,10 +559,11 @@ impl SnapTrade {
             return Err(PlaceError::NotSent("the preview expired; preview the order again".into()));
         }
         let id = segment("trade id", &preview.trade_id).map_err(|e| PlaceError::NotSent(e.to_string()))?;
-        match self
-            .call(Method::POST, &format!("/trade/{id}"), &[], Some(json!({ "wait_to_confirm": true })), true)
-            .await
-        {
+        // Never sent once the preview has expired, however long a rate-limit pause lasts.
+        let left = (preview.expires() - Utc::now()).to_std().unwrap_or_default();
+        let deadline = Some(std::time::Instant::now() + left);
+        let body = Some(json!({ "wait_to_confirm": true }));
+        match self.call_by(Method::POST, &format!("/trade/{id}"), &[], body, true, deadline).await {
             Ok(v) => Ok(parse_placed(&preview.request.account_id, &v)),
             Err(e) => Err(classify_place_error(e)),
         }

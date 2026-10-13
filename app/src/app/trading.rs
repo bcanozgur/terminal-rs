@@ -494,7 +494,9 @@ impl TerminalApp {
     /// manual edit of the quantity, or switching to Buy, ends it.
     fn sync_sell_all(&mut self) {
         let Some(t) = self.trading.ticket.as_ref().filter(|t| t.all) else { return };
-        if t.side != Side::Sell || t.dollars || (!t.all_qty.is_empty() && t.qty != t.all_qty) {
+        // Any quantity other than the one filled in automatically (including one typed before
+        // an account was chosen) is the user's.
+        if t.side != Side::Sell || t.dollars || t.qty != t.all_qty {
             if let Some(t) = self.trading.ticket.as_mut() {
                 t.all = false;
             }

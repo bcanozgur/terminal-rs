@@ -188,6 +188,18 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+/// The request was not sent at all (for example its deadline passed while waiting).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotSent(pub String);
+
+impl std::fmt::Display for NotSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotSent {}
+
 /// A readable message from a SnapTrade error body (`detail`, `message`, `code`), without
 /// echoing anything from the request.
 fn error_message(status: reqwest::StatusCode, body: &str) -> String {
@@ -213,14 +225,17 @@ fn cooldown_left() -> Option<Duration> {
 }
 
 /// Sleep until the shared cooldown has passed, re-checking after each sleep because another
-/// throttled answer may have extended it meanwhile.
-async fn wait_for_cooldown() {
+/// throttled answer may have extended it meanwhile. Gives up (nothing sent) as soon as the
+/// time left is longer than [`MAX_INLINE_WAIT`], or would run past `deadline`.
+async fn wait_for_cooldown(deadline: Option<Instant>) -> Result<()> {
     loop {
-        let until = *COOLDOWN.lock().unwrap_or_else(|p| p.into_inner());
-        match until.filter(|t| *t > Instant::now()) {
-            Some(t) => tokio::time::sleep(t - Instant::now()).await,
-            None => return,
+        let Some(left) = cooldown_left() else { return Ok(()) };
+        let too_late = deadline.is_some_and(|d| Instant::now() + left >= d);
+        if left > MAX_INLINE_WAIT || too_late {
+            let secs = left.as_secs().max(1);
+            return Err(ApiError { status: 429, message: throttle_message(Some(secs)), retry_after: Some(secs) }.into());
         }
+        tokio::time::sleep(left).await;
     }
 }
 
@@ -289,6 +304,20 @@ impl SnapTrade {
         body: Option<Value>,
         user: bool,
     ) -> Result<Value> {
+        self.call_by(method, path, params, body, user, None).await
+    }
+
+    /// [`Self::call`] that is never sent at or after `deadline` (an order preview's expiry):
+    /// a rate-limit pause that would reach it fails the call unsent.
+    pub(crate) async fn call_by(
+        &self,
+        method: Method,
+        path: &str,
+        params: &[(&str, String)],
+        body: Option<Value>,
+        user: bool,
+        deadline: Option<Instant>,
+    ) -> Result<Value> {
         let retry = method == Method::GET;
         let mut attempt = 0;
         loop {
@@ -296,16 +325,10 @@ impl SnapTrade {
                 let _permit = IN_FLIGHT.acquire().await.expect("the limiter is never closed");
                 // A long pause is reported rather than waited out: nothing was sent, and the
                 // caller (or the user) can try again when it ends.
-                if let Some(left) = cooldown_left().filter(|l| *l > MAX_INLINE_WAIT) {
-                    let secs = left.as_secs().max(1);
-                    return Err(ApiError {
-                        status: 429,
-                        message: throttle_message(Some(secs)),
-                        retry_after: Some(secs),
-                    }
-                    .into());
+                wait_for_cooldown(deadline).await?;
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    anyhow::bail!(NotSent("the order's preview expired before it could be sent".into()));
                 }
-                wait_for_cooldown().await;
                 self.call_once(method.clone(), path, params, body.clone(), user).await
             };
             let Err(e) = result else { return result };
