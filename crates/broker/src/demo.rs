@@ -274,7 +274,8 @@ impl DemoBook {
             .ok_or_else(|| format!("Waiting for a price for {symbol}; try again in a moment or use a limit order."))?;
         let units = match req.amount {
             Amount::Units(u) => u,
-            Amount::Notional(n) => n / price,
+            // Rounded down, so a dollar amount never costs more than it says.
+            Amount::Notional(n) => (n / price * 1e6).floor() / 1e6,
         };
         Ok(Estimate {
             units,
@@ -352,9 +353,11 @@ impl DemoBook {
         if self.orders[i].is_open() && matches!(req.time_in_force, TimeInForce::Ioc | TimeInForce::Fok) {
             self.orders[i].status = CANCELED.into();
         }
+        // Copy the result first: trimming a full history may drop this (finished) order.
+        let placed = self.orders[i].clone();
         self.trim();
         self.updated = Some(now);
-        Ok(self.orders[self.index(&id).expect("kept")].clone())
+        Ok(placed)
     }
 
     fn index(&self, id: &str) -> Option<usize> {
@@ -390,7 +393,8 @@ impl DemoBook {
     }
 
     /// A new price for `symbol`: marks the position and fills or triggers resting orders it
-    /// crosses, oldest first.
+    /// crosses, oldest first. Day orders past their close expire first, so a quote that
+    /// arrives late (after sleep, say) never fills an order that should have expired.
     pub fn on_price(&mut self, symbol: &str, price: f64, now: DateTime<Utc>) -> Vec<Event> {
         if !positive(price) {
             return Vec::new();
@@ -398,7 +402,7 @@ impl DemoBook {
         for p in self.positions.iter_mut().filter(|p| same(&p.symbol, symbol)) {
             p.price = Some(price);
         }
-        let mut events = Vec::new();
+        let mut events = self.expire(now);
         let ids: Vec<String> =
             self.orders.iter().rev().filter(|o| o.is_open() && same(&o.symbol, symbol)).map(|o| o.id.clone()).collect();
         for id in ids {

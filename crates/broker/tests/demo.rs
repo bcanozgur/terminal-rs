@@ -241,3 +241,32 @@ fn history_is_bounded_but_keeps_open_orders() {
     assert!(b.orders.iter().any(|o| o.id == open.id));
     assert!(b.activities.len() <= demo::HISTORY);
 }
+
+#[test]
+fn a_full_history_never_loses_the_order_just_placed() {
+    let mut b = DemoBook::new(t0());
+    for i in 0..demo::HISTORY {
+        b.submit(&limit(Side::Buy, "F", 1.0, 0.01 + i as f64 * 1e-4), Some(1.0), t0()).unwrap();
+    }
+    assert!(b.orders.iter().all(|o| o.is_open()));
+    let o = b.submit(&order(Side::Buy, "F", 1.0), Some(1.0), t0()).unwrap();
+    assert_eq!(o.status, "EXECUTED", "the fill is reported even when trimming drops it from history");
+    assert_eq!(b.held("F"), 1.0);
+}
+
+#[test]
+fn late_quotes_never_fill_expired_day_orders() {
+    let mut b = DemoBook::new(t0());
+    b.submit(&limit(Side::Buy, "AAPL", 10.0, 190.0), Some(200.0), t0()).unwrap();
+    let ev = b.on_price("AAPL", 185.0, t0() + Duration::days(1));
+    assert!(matches!(&ev[..], [Event::Expired(_)]), "{ev:?}");
+    assert_eq!((b.cash, b.held("AAPL")), (STARTING_CASH, 0.0));
+}
+
+#[test]
+fn dollar_amounts_never_cost_more_than_stated() {
+    let mut b = DemoBook::new(t0());
+    let all_in = OrderRequest { amount: Amount::Notional(STARTING_CASH), ..order(Side::Buy, "F", 0.0) };
+    b.submit(&all_in, Some(7.0), t0()).unwrap();
+    assert!(b.cash >= 0.0 && b.cash < 0.01, "{}", b.cash);
+}

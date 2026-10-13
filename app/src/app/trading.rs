@@ -64,6 +64,10 @@ pub struct Ticket {
     pub stop: String,
     /// Stop orders and time in force are shown.
     pub advanced: bool,
+    /// `SELL ALL`: the quantity follows the whole position of whichever account is chosen,
+    /// until the user edits it (`all_qty` is what was filled in automatically).
+    pub all: bool,
+    pub all_qty: String,
     /// Frames left to put the cursor in the quantity field (just opened; the command line
     /// may still hold focus for a frame after running `BUY …`).
     pub focus_qty: u8,
@@ -101,6 +105,8 @@ impl Ticket {
             limit: String::new(),
             stop: String::new(),
             advanced: false,
+            all: false,
+            all_qty: String::new(),
             focus_qty: 0,
             preview: None,
             previewing: false,
@@ -461,23 +467,13 @@ impl TerminalApp {
             .or(ticket.account.filter(|a| known(a)))
             .or(self.prefs.trading.default_account.clone().filter(|a| known(a)))
             .or((accounts.len() == 1).then(|| accounts[0].id.clone()));
-        // `SELL ALL TSLA`, Close: the whole position.
-        if args.all
-            && let Some(acct) = ticket.account.clone()
-        {
-            let units = if acct == demo::ACCOUNT_ID {
-                Some(self.demo.book.available(&ticket.symbol))
-            } else {
-                self.held_units(&acct, &ticket.symbol)
-            };
-            match units.filter(|u| *u > 0.0) {
-                Some(u) => {
-                    ticket.side = Side::Sell;
-                    ticket.dollars = false;
-                    ticket.qty = fmt_input(u);
-                }
-                None => ticket.error = Some(format!("No {} shares to sell in this account.", ticket.symbol)),
-            }
+        // `SELL ALL TSLA`, Close: the whole position (kept in sync with the account choice).
+        ticket.all = args.all;
+        ticket.all_qty.clear();
+        if args.all {
+            ticket.side = Side::Sell;
+            ticket.dollars = false;
+            ticket.qty.clear();
         }
         self.status = match (&args.symbol, self.demo_mode()) {
             (Some(k), true) => format!("Demo order ticket: {} {}", ticket.side.label(), broker_symbol(k)),
@@ -486,10 +482,43 @@ impl TerminalApp {
         };
         ticket.focus_qty = 4;
         self.trading.ticket = Some(ticket);
+        self.sync_sell_all();
         self.trading.last_quote = None;
         self.ensure_capabilities(false);
         if !self.demo_mode() && self.broker.portfolio.is_none() && !self.broker.loading {
             self.refresh_portfolio();
+        }
+    }
+
+    /// Keep a `SELL ALL` ticket's quantity equal to the chosen account's whole position. Any
+    /// manual edit of the quantity, or switching to Buy, ends it.
+    fn sync_sell_all(&mut self) {
+        let Some(t) = self.trading.ticket.as_ref().filter(|t| t.all) else { return };
+        if t.side != Side::Sell || t.dollars || (!t.all_qty.is_empty() && t.qty != t.all_qty) {
+            if let Some(t) = self.trading.ticket.as_mut() {
+                t.all = false;
+            }
+            return;
+        }
+        let (account, symbol) = (t.account.clone(), t.symbol.trim().to_string());
+        let units = account.as_deref().and_then(|a| {
+            if a == demo::ACCOUNT_ID { Some(self.demo.book.available(&symbol)) } else { self.held_units(a, &symbol) }
+        });
+        let Some(t) = self.trading.ticket.as_mut() else { return };
+        match (account, units.filter(|u| *u > 0.0)) {
+            (None, _) => {}
+            (Some(_), Some(u)) => {
+                t.qty = fmt_input(u);
+                t.all_qty = t.qty.clone();
+                if t.error.as_deref().is_some_and(|e| e.starts_with("No ")) {
+                    t.error = None;
+                }
+            }
+            (Some(_), None) => {
+                t.qty.clear();
+                t.all_qty.clear();
+                t.error = Some(format!("No {symbol} shares to sell in this account."));
+            }
         }
     }
 
@@ -913,6 +942,7 @@ impl TerminalApp {
             .default_width(dp(320.0))
             .default_pos(ctx.content_rect().center() - egui::vec2(dp(160.0), dp(220.0)))
             .show(ctx, |ui| act = self.ticket_ui(ui));
+        self.sync_sell_all();
         if !open
             || (ctx.input(|i| i.key_pressed(egui::Key::Escape))
                 && !self.trading.ticket.as_ref().is_some_and(|t| t.confirming))
@@ -963,6 +993,7 @@ impl TerminalApp {
             .and_then(|(a, s)| self.held_units(&a, &s));
         let demo_available = self.trading.ticket.as_ref().map(|t| self.demo.book.available(t.symbol.trim()));
         let demo_bp = self.demo.book.buying_power();
+        let save_error = self.demo.save_error.clone();
         let t = self.trading.ticket.as_mut()?;
         let mut act = None;
         let mut enter = false;
@@ -1319,6 +1350,13 @@ impl TerminalApp {
         }
         if let Some(e) = &t.error {
             ui.label(RichText::new(e).font(ui_font(12.0)).color(theme::down()));
+        }
+        if demo_mode && let Some(e) = &save_error {
+            ui.label(
+                RichText::new(format!("The demo account could not be saved ({e}); retrying."))
+                    .font(ui_font(11.5))
+                    .color(theme::down()),
+            );
         }
         if let Some(d) = &t.done {
             ui.label(RichText::new(d).font(ui_font(12.0)).color(theme::up()));
@@ -1750,6 +1788,13 @@ impl TerminalApp {
         });
         if self.demo.confirm_reset {
             note(ui, "Positions, orders and history in the demo account are deleted. Live accounts are not affected.");
+        }
+        if let Some(e) = &self.demo.save_error {
+            ui.label(
+                RichText::new(format!("Could not save the demo account: {e}. Retrying every few seconds."))
+                    .font(ui_font(12.0))
+                    .color(theme::down()),
+            );
         }
         note(
             ui,

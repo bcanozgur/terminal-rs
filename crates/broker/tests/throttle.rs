@@ -120,4 +120,42 @@ async fn throttled_reads_retry_and_orders_are_never_resent() {
     assert!(matches!(err, PlaceError::Rejected(_)), "{err:?}");
     assert!(err.message().contains("rate-limiting"));
     assert_eq!(seen.lock().unwrap().iter().filter(|l| l.starts_with("POST /trade/")).count(), 1);
+
+    // A long Retry-After pauses every request for its whole length, and nothing is sent
+    // meanwhile: the call fails at once, unsent, with the time left.
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let base = mock_retry_after(120, seen.clone()).await;
+    let e = client(&base).connection_capabilities().await.unwrap_err();
+    assert!(tr_broker::snaptrade::throttle(&e).flatten().is_some_and(|d| d.as_secs() >= 100));
+    let start = Instant::now();
+    let e = client(&base).place_previewed(&preview).await.unwrap_err();
+    assert!(start.elapsed().as_secs() < 5, "an order is never held for minutes");
+    assert!(matches!(e, PlaceError::Rejected(_)) && e.message().contains("minutes"), "{e:?}");
+    assert_eq!(seen.lock().unwrap().len(), 1, "nothing sent during the pause");
+}
+
+/// Answers everything with a 429 asking to wait `secs`.
+async fn mock_retry_after(secs: u64, seen: Arc<Mutex<Vec<String>>>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else { break };
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                seen.lock().unwrap().push(head.lines().next().unwrap_or("").to_string());
+                let body = r#"{"detail":"Request was throttled."}"#;
+                let reply = format!(
+                    "HTTP/1.1 429 X\r\nRetry-After: {secs}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(reply.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    format!("http://{addr}")
 }

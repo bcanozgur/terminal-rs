@@ -29,6 +29,10 @@ pub struct DemoState {
     /// Settings › Trading: the reset confirmation is open, with this starting cash.
     pub confirm_reset: bool,
     pub reset_cash: f64,
+    /// The last save failed (disk full, folder unwritable): shown until a save succeeds,
+    /// and retried periodically and on exit.
+    pub save_error: Option<String>,
+    last_save_try: Option<Instant>,
 }
 
 pub fn demo_path() -> PathBuf {
@@ -63,14 +67,47 @@ impl DemoState {
             }
         };
         let pf = Box::new(book.portfolio());
-        (Self { book, pf, path, last_quotes: None, confirm_reset: false, reset_cash: STARTING_CASH }, note)
+        (
+            Self {
+                book,
+                pf,
+                path,
+                last_quotes: None,
+                confirm_reset: false,
+                reset_cash: STARTING_CASH,
+                save_error: None,
+                last_save_try: None,
+            },
+            note,
+        )
     }
 
     /// The book changed: rebuild the view and save.
     fn changed(&mut self) {
         *self.pf = self.book.portfolio();
-        if let Err(e) = self.book.save(&self.path) {
-            tracing::warn!("saving the demo account: {e:#}");
+        self.save();
+    }
+
+    /// Save now. Returns whether the book is on disk.
+    pub fn save(&mut self) -> bool {
+        self.last_save_try = Some(Instant::now());
+        match self.book.save(&self.path) {
+            Ok(()) => {
+                self.save_error = None;
+                true
+            }
+            Err(e) => {
+                tracing::warn!("saving the demo account: {e:#}");
+                self.save_error = Some(format!("{e:#}"));
+                false
+            }
+        }
+    }
+
+    /// Retry a failed save every few seconds.
+    fn retry_save(&mut self) {
+        if self.save_error.is_some() && self.last_save_try.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
+            self.save();
         }
     }
 }
@@ -87,6 +124,11 @@ impl TerminalApp {
 
     /// Keep quotes coming for demo positions and open orders, and expire Day orders.
     pub(super) fn demo_periodic(&mut self) {
+        let had_error = self.demo.save_error.is_some();
+        self.demo.retry_save();
+        if had_error && self.demo.save_error.is_none() {
+            self.trade_toast("Demo account saved", true);
+        }
         let now = chrono::Utc::now();
         let expired = self.demo.book.expire(now);
         if !expired.is_empty() {
@@ -108,8 +150,9 @@ impl TerminalApp {
     /// New quotes arrived: mark demo positions and fill resting demo orders they cross.
     pub(super) fn demo_on_quotes(&mut self, keys: &[String]) {
         let now = chrono::Utc::now();
-        let mut events = Vec::new();
-        let mut touched = false;
+        // Expire overdue Day orders before any quote can fill them.
+        let mut events = self.demo.book.expire(now);
+        let mut touched = !events.is_empty();
         for sym in self.demo.book.watched() {
             let Some(k) = market_key(&sym).filter(|k| keys.contains(k)) else { continue };
             let Some(q) = self.quotes.get(&k).map(|q| q.last).filter(|x| x.is_finite() && *x > 0.0) else { continue };
@@ -125,8 +168,13 @@ impl TerminalApp {
     fn demo_events(&mut self, events: Vec<Event>) {
         for e in events {
             let ok = matches!(e, Event::Filled(_));
-            self.trade_toast(format!("Demo: {}", e.message()), ok);
+            self.trade_toast(format!("Demo: {}{}", e.message(), self.unsaved_note()), ok);
         }
+    }
+
+    /// ` (not saved yet: …)` while the demo book cannot be written.
+    fn unsaved_note(&self) -> String {
+        self.demo.save_error.as_ref().map_or(String::new(), |e| format!(" — not saved yet ({e}); retrying"))
     }
 
     /// Place a demo order now (one click: no preview, no confirmation).
@@ -140,7 +188,8 @@ impl TerminalApp {
                     "CANCELED" => format!("{} cancelled (not fillable now)", tr_broker::demo::order_line(o)),
                     _ => format!("{} working", tr_broker::demo::order_line(o)),
                 };
-                self.trade_toast(format!("Demo: {msg}"), o.status != "CANCELED");
+                let saved = self.demo.save_error.is_none();
+                self.trade_toast(format!("Demo: {msg}{}", self.unsaved_note()), saved && o.status != "CANCELED");
             }
             Err(e) => self.trade_toast(format!("Demo order not placed: {e}"), false),
         }
@@ -151,7 +200,8 @@ impl TerminalApp {
         match self.demo.book.cancel(id, chrono::Utc::now()) {
             Ok(o) => {
                 self.demo.changed();
-                self.trade_toast(format!("Demo: cancelled {}", tr_broker::demo::order_line(&o)), true);
+                let note = self.unsaved_note();
+                self.trade_toast(format!("Demo: cancelled {}{note}", tr_broker::demo::order_line(&o)), note.is_empty());
             }
             Err(e) => self.trade_toast(format!("Could not cancel: {e}"), false),
         }

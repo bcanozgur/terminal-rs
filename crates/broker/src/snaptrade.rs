@@ -207,15 +207,27 @@ fn error_message(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
+fn cooldown_left() -> Option<Duration> {
+    let until = (*COOLDOWN.lock().unwrap_or_else(|p| p.into_inner()))?;
+    until.checked_duration_since(Instant::now()).filter(|d| !d.is_zero())
+}
+
+/// Sleep until the shared cooldown has passed, re-checking after each sleep because another
+/// throttled answer may have extended it meanwhile.
 async fn wait_for_cooldown() {
-    let until = *COOLDOWN.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(t) = until.filter(|t| *t > Instant::now()) {
-        tokio::time::sleep(t - Instant::now()).await;
+    loop {
+        let until = *COOLDOWN.lock().unwrap_or_else(|p| p.into_inner());
+        match until.filter(|t| *t > Instant::now()) {
+            Some(t) => tokio::time::sleep(t - Instant::now()).await,
+            None => return,
+        }
     }
 }
 
+/// Pause every request for the whole `wait` SnapTrade asked for (only the inline retry is
+/// capped at [`MAX_INLINE_WAIT`], not the pause).
 fn start_cooldown(wait: Duration) {
-    let until = Instant::now() + wait.min(MAX_INLINE_WAIT);
+    let until = Instant::now() + wait;
     let mut c = COOLDOWN.lock().unwrap_or_else(|p| p.into_inner());
     if c.is_none_or(|t| t < until) {
         *c = Some(until);
@@ -282,6 +294,17 @@ impl SnapTrade {
         loop {
             let result = {
                 let _permit = IN_FLIGHT.acquire().await.expect("the limiter is never closed");
+                // A long pause is reported rather than waited out: nothing was sent, and the
+                // caller (or the user) can try again when it ends.
+                if let Some(left) = cooldown_left().filter(|l| *l > MAX_INLINE_WAIT) {
+                    let secs = left.as_secs().max(1);
+                    return Err(ApiError {
+                        status: 429,
+                        message: throttle_message(Some(secs)),
+                        retry_after: Some(secs),
+                    }
+                    .into());
+                }
                 wait_for_cooldown().await;
                 self.call_once(method.clone(), path, params, body.clone(), user).await
             };

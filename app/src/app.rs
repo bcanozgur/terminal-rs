@@ -1551,6 +1551,9 @@ impl eframe::App for TerminalApp {
 
     fn on_exit(&mut self) {
         self.autosave();
+        if self.demo.save_error.is_some() {
+            self.demo.save();
+        }
     }
 }
 
