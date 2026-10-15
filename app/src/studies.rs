@@ -289,14 +289,48 @@ pub fn tooltip_card(ui: &Ui, at: Pos2, body: &str) {
     }
 }
 
-/// The study table in the top-right corner of `area`, starting `top` points down.
-/// Cell tooltips show on hover. Returns the table's rectangle.
-pub fn paint_table(ui: &Ui, area: Rect, top: f32, table: &tr_study::Table, salt: egui::Id) -> Rect {
+/// The study table in the top-right corner of `area`, starting `top` points down, under a
+/// title strip whose button hides and shows it. Cell tooltips show on hover. Returns the
+/// rectangle used and whether the hide/show button was clicked.
+pub fn paint_table(
+    ui: &Ui,
+    area: Rect,
+    top: f32,
+    title: &str,
+    table: &tr_study::Table,
+    hidden: bool,
+    salt: egui::Id,
+) -> (Rect, bool) {
     let font = mono(10.5);
     let p = ui.painter_at(area);
     let cols = table.rows.iter().map(Vec::len).max().unwrap_or(0);
     if cols == 0 {
-        return Rect::NOTHING;
+        return (Rect::NOTHING, false);
+    }
+    let strip_h = 16.0;
+    let button = if hidden { "Show ▸" } else { "Hide ▾" };
+    let title_g = p.layout_no_wrap(title.to_string(), font.clone(), crate::theme::amber());
+    let button_g = p.layout_no_wrap(button.to_string(), font.clone(), muted());
+    let strip_w = title_g.size().x + button_g.size().x + 24.0;
+    let strip =
+        |width: f32| Rect::from_min_size(pos2(area.right() - width - 8.0, area.top() + top), vec2(width, strip_h));
+    let draw_strip = |r: Rect| -> bool {
+        p.rect_filled(r, 3.0, theme::card().gamma_multiply(0.92));
+        p.rect_stroke(r, 3.0, Stroke::new(1.0, theme::border()), StrokeKind::Inside);
+        p.galley(pos2(r.left() + 6.0, r.center().y - title_g.size().y / 2.0), title_g.clone(), crate::theme::amber());
+        let br = Rect::from_min_max(pos2(r.right() - button_g.size().x - 12.0, r.top()), r.max);
+        let resp = ui.interact(br, salt.with("hide"), Sense::click());
+        let c = if resp.hovered() { text() } else { muted() };
+        p.text(br.center(), Align2::CENTER_CENTER, button, font.clone(), c);
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        resp.clicked()
+    };
+    if hidden {
+        let r = strip(strip_w);
+        let clicked = draw_strip(r);
+        return (r, clicked);
     }
     let mut widths = vec![0.0f32; cols];
     let row_h = 15.0;
@@ -319,9 +353,17 @@ pub fn paint_table(ui: &Ui, area: Rect, top: f32, table: &tr_study::Table, salt:
             widths[cols - 1] += need - have;
         }
     }
-    let total_w: f32 = widths.iter().sum();
+    let mut total_w: f32 = widths.iter().sum();
+    if strip_w > total_w {
+        widths[cols - 1] += strip_w - total_w;
+        total_w = strip_w;
+    }
+    let clicked = draw_strip(strip(total_w));
     let total_h = row_h * table.rows.len() as f32;
-    let rect = Rect::from_min_size(pos2(area.right() - total_w - 8.0, area.top() + top), vec2(total_w, total_h));
+    let rect = Rect::from_min_size(
+        pos2(area.right() - total_w - 8.0, area.top() + top + strip_h + 1.0),
+        vec2(total_w, total_h),
+    );
     p.rect_filled(rect, 3.0, theme::card().gamma_multiply(0.92));
     p.rect_stroke(rect, 3.0, Stroke::new(1.0, theme::border()), StrokeKind::Inside);
     let mut hovered: Option<(Pos2, String)> = None;
@@ -353,7 +395,7 @@ pub fn paint_table(ui: &Ui, area: Rect, top: f32, table: &tr_study::Table, salt:
     if let Some((at, tip)) = hovered {
         tooltip_card(ui, at, &tip);
     }
-    rect
+    (rect, clicked)
 }
 
 /// A piece of legend text and its colour.

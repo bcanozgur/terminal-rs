@@ -68,6 +68,8 @@ pub struct ChartState {
     error: Option<String>,
     built: Vec<BuiltIndicator>,
     built_studies: Vec<BuiltStudy>,
+    /// Study tables collapsed to their title strip (per chart; new charts show them).
+    study_tables_hidden: bool,
     compare_line: Option<LineRef>,
     compare_scale: f64,
     markers: Vec<Trade>,
@@ -119,6 +121,7 @@ impl ChartState {
             error: None,
             built: Vec::new(),
             built_studies: Vec::new(),
+            study_tables_hidden: false,
             compare_line: None,
             compare_scale: 1.0,
             markers: Vec::new(),
@@ -920,11 +923,19 @@ impl ChartState {
         }
         // Study tables in the top-right corner, under the Buy/Sell buttons, stacked.
         let mut table_top = if has_trade_buttons { 32.0 } else { 6.0 };
+        let mut toggle = false;
         for (k, b) in self.built_studies.iter().enumerate() {
             if let Some(t) = &b.output.table {
-                let r = studies::paint_table(ui, price_rect, table_top, t, ui.id().with((self.id, "study-table", k)));
+                let id = ui.id().with((self.id, "study-table", k));
+                let (r, clicked) =
+                    studies::paint_table(ui, price_rect, table_top, &b.name, t, self.study_tables_hidden, id);
+                toggle |= clicked;
                 table_top = r.bottom() - price_rect.top() + 6.0;
             }
+        }
+        if toggle {
+            self.study_tables_hidden = !self.study_tables_hidden;
+            clicked = true;
         }
         if let Some((at, tip)) = study_tip {
             studies::tooltip_card(ui, at, &tip);
