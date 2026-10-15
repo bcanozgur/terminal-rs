@@ -44,6 +44,15 @@ impl FeedFilter {
     }
 }
 
+/// Whether a trade matches a lowercase filter on politician, ticker, asset or owner.
+fn trade_matches(t: &Trade, q: &str) -> bool {
+    q.is_empty()
+        || t.politician.to_ascii_lowercase().contains(q)
+        || t.ticker.as_deref().is_some_and(|tk| tk.to_ascii_lowercase().contains(q))
+        || t.asset_name.to_ascii_lowercase().contains(q)
+        || t.owner.as_deref().is_some_and(|o| o.to_ascii_lowercase().contains(q))
+}
+
 fn tx_text(t: TxType) -> (&'static str, Color32) {
     match t {
         TxType::Purchase => ("BUY ", theme::up()),
@@ -167,7 +176,7 @@ fn trade_row(
     });
 }
 
-pub fn feed(ui: &mut Ui, trades: &[Trade], filter: &mut FeedFilter, status: &str) -> Vec<Action> {
+pub fn feed(ui: &mut Ui, trades: &[Trade], filter: &mut FeedFilter, status: &str, q: &str) -> Vec<Action> {
     let mut out = Vec::new();
     ui.horizontal(|ui| {
         let chip = |ui: &mut Ui, label: &str, on: bool| {
@@ -197,7 +206,7 @@ pub fn feed(ui: &mut Ui, trades: &[Trade], filter: &mut FeedFilter, status: &str
         plain(ui, status, muted());
     });
     header(ui, "FILED    TRADED   LAG  POLITICIAN             PTY  C  TYPE TICKER AMOUNT        OWNER    ASSET");
-    let rows: Vec<&Trade> = trades.iter().filter(|t| filter.matches(t)).collect();
+    let rows: Vec<&Trade> = trades.iter().filter(|t| filter.matches(t) && trade_matches(t, q)).collect();
     if rows.is_empty() {
         plain(ui, "No disclosures yet. Ingest runs in the background (REFRESH to force).", muted());
     }
@@ -210,7 +219,7 @@ pub fn feed(ui: &mut Ui, trades: &[Trade], filter: &mut FeedFilter, status: &str
     out
 }
 
-pub fn ticker_trades(ui: &mut Ui, symbol: &str, trades: &[Trade]) -> Vec<Action> {
+pub fn ticker_trades(ui: &mut Ui, symbol: &str, trades: &[Trade], q: &str) -> Vec<Action> {
     let mut out = Vec::new();
     let buys = trades.iter().filter(|t| t.tx_type.is_buy()).count();
     let sells = trades.iter().filter(|t| t.tx_type.is_sell()).count();
@@ -240,12 +249,13 @@ pub fn ticker_trades(ui: &mut Ui, symbol: &str, trades: &[Trade]) -> Vec<Action>
     if trades.is_empty() {
         plain(ui, format!("No congressional trades disclosed for {symbol}."), muted());
     }
+    let rows: Vec<&Trade> = trades.iter().filter(|t| trade_matches(t, q)).collect();
     ScrollArea::both().id_salt(("ticker", symbol)).auto_shrink([false, false]).show_rows(
         ui,
         16.0,
-        trades.len(),
+        rows.len(),
         |ui, range| {
-            for t in &trades[range] {
+            for t in &rows[range] {
                 trade_row(ui, t, true, false, None, &mut out);
             }
         },
@@ -253,7 +263,7 @@ pub fn ticker_trades(ui: &mut Ui, symbol: &str, trades: &[Trade]) -> Vec<Action>
     out
 }
 
-pub fn profile(ui: &mut Ui, query: &str, p: Option<&Profile>, loading: bool) -> Vec<Action> {
+pub fn profile(ui: &mut Ui, query: &str, p: Option<&Profile>, loading: bool, q: &str) -> Vec<Action> {
     let mut out = Vec::new();
     let Some(p) = p else {
         plain(
@@ -323,13 +333,14 @@ pub fn profile(ui: &mut Ui, query: &str, p: Option<&Profile>, loading: bool) -> 
         }
     });
     header(ui, "FILED    TRADED   LAG  TYPE TICKER AMOUNT        RETURN  OWNER    ASSET");
+    let rows: Vec<&Trade> = p.trades.iter().filter(|t| trade_matches(t, q)).collect();
     let ret_by_id: std::collections::HashMap<i64, f64> = p.returns.iter().map(|r| (r.trade_id, r.ret)).collect();
     ScrollArea::both().id_salt(("profile", pol.id)).auto_shrink([false, false]).show_rows(
         ui,
         16.0,
-        p.trades.len(),
+        rows.len(),
         |ui, range| {
-            for t in &p.trades[range] {
+            for t in &rows[range] {
                 let extra = ret_by_id
                     .get(&t.id)
                     .map(|r| (format!("{:>+6.1}%", r * 100.0), if *r >= 0.0 { theme::up() } else { theme::down() }))
@@ -341,17 +352,23 @@ pub fn profile(ui: &mut Ui, query: &str, p: Option<&Profile>, loading: bool) -> 
     out
 }
 
-pub fn politicians(ui: &mut Ui, list: &[PoliticianSummary], search: &mut String) -> Vec<Action> {
+pub fn politicians(ui: &mut Ui, list: &[PoliticianSummary], q: &str) -> Vec<Action> {
     let mut out = Vec::new();
-    ui.horizontal(|ui| {
-        plain(ui, "Search:", muted());
-        ui.add(egui::TextEdit::singleline(search).font(mono(12.0)).desired_width(180.0));
-        plain(ui, format!("{} politicians", list.len()), muted());
-    });
+    let rows: Vec<&PoliticianSummary> = list
+        .iter()
+        .filter(|p| {
+            q.is_empty()
+                || p.politician.name.to_ascii_lowercase().contains(q)
+                || p.politician.state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(q))
+        })
+        .collect();
+    let count = if q.is_empty() {
+        format!("{} politicians", list.len())
+    } else {
+        format!("{} of {} politicians", rows.len(), list.len())
+    };
+    plain(ui, count, muted());
     header(ui, "TRK POLITICIAN               PTY  ST  CH      TRADES  LAST FILED");
-    let q = search.to_ascii_lowercase();
-    let rows: Vec<&PoliticianSummary> =
-        list.iter().filter(|p| q.is_empty() || p.politician.name.to_ascii_lowercase().contains(&q)).collect();
     ScrollArea::both().id_salt("politicians").auto_shrink([false, false]).show_rows(
         ui,
         16.0,
@@ -379,7 +396,7 @@ pub fn politicians(ui: &mut Ui, list: &[PoliticianSummary], search: &mut String)
     out
 }
 
-pub fn alerts(ui: &mut Ui, alerts: &[Alert]) -> (Vec<Action>, bool) {
+pub fn alerts(ui: &mut Ui, alerts: &[Alert], q: &str) -> (Vec<Action>, bool) {
     let mut out = Vec::new();
     let mut mark_seen = false;
     ui.horizontal(|ui| {
@@ -392,7 +409,10 @@ pub fn alerts(ui: &mut Ui, alerts: &[Alert]) -> (Vec<Action>, bool) {
     });
     header(ui, "TIME              POLITICIAN               MESSAGE");
     ScrollArea::vertical().id_salt("alerts").auto_shrink([false, false]).show(ui, |ui| {
-        for a in alerts {
+        let shown = alerts.iter().filter(|a| {
+            q.is_empty() || a.politician.to_ascii_lowercase().contains(q) || a.message.to_ascii_lowercase().contains(q)
+        });
+        for a in shown {
             ui.horizontal(|ui| {
                 let ts = chrono::DateTime::from_timestamp(a.created_at, 0)
                     .map(|d| d.format("%Y-%m-%d %H:%M").to_string())

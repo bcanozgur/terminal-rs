@@ -589,7 +589,9 @@ fn selected(pane: &PortfolioPane) -> impl Fn(&str) -> bool + use<> {
 }
 
 fn matches_symbol(pane: &PortfolioPane, key: Option<String>) -> bool {
-    pane.symbol.is_none() || key == pane.symbol
+    let query_ok =
+        pane.query.is_empty() || key.as_deref().is_some_and(|k| k.to_ascii_lowercase().contains(&pane.query));
+    query_ok && (pane.symbol.is_none() || key == pane.symbol)
 }
 
 fn currency(pf: &Portfolio, pane: &PortfolioPane) -> String {

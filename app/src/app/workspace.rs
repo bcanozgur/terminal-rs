@@ -316,6 +316,7 @@ impl TerminalApp {
         let Some(i) = self.idx(id) else { return };
         let p = self.panes.remove(i);
         self.dock.remove(id);
+        self.pane_search.remove(&id);
         self.worker.send(Request::Forget(id));
         self.preset = None;
         if self.renaming_tab.as_ref().is_some_and(|(r, _)| *r == id) {
@@ -963,7 +964,8 @@ impl TerminalApp {
         // Trailing buttons: add panel (as tab) and the group menu.
         let btn =
             |i: f32| Rect::from_min_size(pos2(strip.right() - 26.0 * i - 2.0, strip.top() + 2.0), vec2(24.0, th - 4.0));
-        let tabs_right = btn(2.0).left() - 4.0;
+        let searchable = self.idx(active).is_some_and(|i| self.panes[i].kind.search_hint().is_some());
+        let tabs_right = btn(if searchable { 3.0 } else { 2.0 }).left() - 4.0;
         // A chart's interval and type controls share the tab strip when there is room,
         // which saves the chart a whole header row.
         let chart_idx = self.idx(active).filter(|&i| matches!(self.panes[i].kind, PaneKind::Chart(_)));
@@ -1089,6 +1091,22 @@ impl TerminalApp {
         }
 
         // Group buttons.
+        if searchable {
+            let mut b = ui.new_child(UiBuilder::new().max_rect(btn(3.0)));
+            let open = self.pane_search.contains_key(&active);
+            let tip = if open { "Close filter (Esc)" } else { "Filter this panel" };
+            if widgets::icon_button_tinted(&mut b, Icon::Search, tip, open, theme::amber(), theme::amber_wash())
+                .clicked()
+            {
+                if open {
+                    self.pane_search.remove(&active);
+                } else {
+                    self.pane_search.insert(active, String::new());
+                    self.search_focus = Some(active);
+                    self.focus = active;
+                }
+            }
+        }
         let plus = btn(2.0);
         let mut b = ui.new_child(UiBuilder::new().max_rect(plus));
         let resp = widgets::icon_button(&mut b, Icon::Plus, "Add Panel as Tab", false);

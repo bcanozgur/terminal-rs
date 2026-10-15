@@ -132,6 +132,11 @@ pub fn control_hover() -> Color32 {
 pub fn series(i: usize) -> Color32 {
     palette().series[i % 6]
 }
+/// Active-state wash derived from the amber key colour.
+pub fn amber_wash() -> Color32 {
+    let a = amber();
+    Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), if palette().dark { 46 } else { 38 })
+}
 /// Selection/highlight wash derived from the accent colour.
 pub fn accent_wash() -> Color32 {
     let a = accent();

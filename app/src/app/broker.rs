@@ -30,6 +30,8 @@ pub struct PortfolioPane {
     pub sort: PosSort,
     /// Orders: only open ones.
     pub open_only: bool,
+    /// In-pane filter (lowercase), matched against market keys. Not persisted.
+    pub query: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -43,7 +45,7 @@ pub enum PosSort {
 
 impl PortfolioPane {
     pub fn new(view: PortView) -> Self {
-        Self { view, account: None, symbol: None, sort: PosSort::Value, open_only: false }
+        Self { view, account: None, symbol: None, sort: PosSort::Value, open_only: false, query: String::new() }
     }
 
     pub fn title(&self) -> String {
