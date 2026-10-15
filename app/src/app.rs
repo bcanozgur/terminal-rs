@@ -247,7 +247,7 @@ impl PaneKind {
                 chart_type: c.chart_type,
                 log: c.log,
                 indicators: c.indicators.clone(),
-                studies: c.studies.clone(),
+                studies: Some(c.studies.clone()),
                 drawings: c.drawings.clone(),
                 compare: c.compare.clone(),
                 show_volume: c.show_volume,
@@ -304,7 +304,9 @@ impl PaneKind {
                 c.chart_type = chart_type;
                 c.log = log;
                 c.indicators = indicators;
-                c.studies = studies;
+                if let Some(s) = studies {
+                    c.studies = s;
+                }
                 c.drawings = drawings;
                 c.compare = compare;
                 c.show_volume = show_volume;

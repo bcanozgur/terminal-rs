@@ -345,6 +345,10 @@ pub trait Study: Send + Sync + 'static {
     fn params(&self) -> &[Param] {
         &[]
     }
+    /// Added to every new chart (a chart where the user removed it keeps it removed).
+    fn default_on(&self) -> bool {
+        false
+    }
     fn compute(&self, input: &Input<'_>) -> Output;
 }
 

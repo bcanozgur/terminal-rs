@@ -30,13 +30,13 @@ pub use tr_study;
 /// Start the terminal with the given chart studies (in addition to the built-in indicators).
 pub fn run(studies: Vec<Arc<dyn tr_study::Study>>) -> eframe::Result {
     let t0 = Instant::now();
-    studies::register(studies);
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,wgpu_core=warn,wgpu_hal=warn,naga=warn".into()),
         )
         .init();
+    studies::register(studies);
 
     // MSAA smooths chart lines and drawings; 4x by default on macOS (TR_MSAA overrides).
     let msaa: u16 = std::env::var("TR_MSAA")

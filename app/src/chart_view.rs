@@ -105,7 +105,7 @@ impl ChartState {
             show_volume: true,
             show_congress: true,
             indicators: vec![IndicatorSpec::Sma(20), IndicatorSpec::Sma(50)],
-            studies: Vec::new(),
+            studies: studies::defaults(),
             drawings: Vec::new(),
             compare: None,
             bars: Arc::new(Vec::new()),

@@ -32,6 +32,11 @@ pub fn get(id: &str) -> Option<&'static Arc<dyn Study>> {
     all().iter().find(|s| s.id() == id)
 }
 
+/// Studies that new charts start with.
+pub fn defaults() -> Vec<StudyConfig> {
+    all().iter().filter(|s| s.default_on()).map(|s| StudyConfig::new(s.id())).collect()
+}
+
 /// Study whose command-line function is `head` (case-insensitive).
 pub fn by_command(head: &str) -> Option<&'static Arc<dyn Study>> {
     all().iter().find(|s| s.command().is_some_and(|c| c.eq_ignore_ascii_case(head)))
@@ -341,8 +346,11 @@ pub fn paint_table(ui: &Ui, area: Rect, top: f32, table: &tr_study::Table, salt:
     rect
 }
 
+/// A piece of legend text and its colour.
+pub type Colored = (String, Color32);
+
 /// Legend line for a study: name, summary, and the last values of its legend lines.
-pub fn legend_parts(b: &BuiltStudy, i: usize) -> (String, Option<(String, Color32)>, Vec<(String, Color32)>) {
+pub fn legend_parts(b: &BuiltStudy, i: usize) -> (String, Option<Colored>, Vec<Colored>) {
     let summary = b.output.summary.as_ref().map(|c| (c.text.clone(), c.color.map(color).unwrap_or_else(muted)));
     let vals = b
         .output
