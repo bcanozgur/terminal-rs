@@ -62,6 +62,10 @@ pub enum PaneSettings {
         chart_type: ChartType,
         log: bool,
         indicators: Vec<IndicatorSpec>,
+        /// Plug-in studies; kept even when the running build doesn't have them. `None` (layouts
+        /// saved before studies existed) gives the chart the default studies.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        studies: Option<Vec<crate::studies::StudyConfig>>,
         drawings: Vec<Drawing>,
         compare: Option<String>,
         #[serde(default = "yes")]
@@ -269,6 +273,7 @@ pub fn chart_settings(symbol: &str, d: &crate::prefs::PanelDefaults) -> PaneSett
         chart_type: d.chart_type,
         log: false,
         indicators: vec![IndicatorSpec::Sma(20), IndicatorSpec::Sma(50)],
+        studies: Some(crate::studies::defaults()),
         drawings: Vec::new(),
         compare: None,
         show_volume: d.show_volume,

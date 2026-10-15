@@ -2,8 +2,8 @@
 //! toolbar icon buttons, rounded cards and hover washes.
 
 use egui::{
-    Align2, Color32, CornerRadius, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, epaint::RectShape, pos2,
-    vec2,
+    Align2, Color32, CornerRadius, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, epaint::RectShape,
+    pos2, vec2,
 };
 
 use crate::anim;
@@ -356,29 +356,6 @@ pub fn buy_sell_pills() -> [Pill<'static>; 2] {
     [("B", theme::up(), Color32::WHITE), ("S", theme::down(), Color32::WHITE)]
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn color_lerp() {
-        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 0.0), Color32::BLACK);
-        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 1.0), Color32::WHITE);
-        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 2.0), Color32::WHITE);
-    }
-
-    #[test]
-    fn segmented_reports_layout_without_panicking() {
-        let ctx = egui::Context::default();
-        let mut out = ctx.run_ui(Default::default(), |ui| {
-            let r = segmented(ui, "tf", &["1m", "5m", "1D"], Some(2), 22.0);
-            assert!(r.is_none());
-            let _ = icon_button(ui, Icon::Sidebar, "Sidebar", false);
-        });
-        out.textures_delta.clear();
-    }
-}
-
 /// Drag-to-reorder for a vertical list of rows. Feed each row's rect and response (which must
 /// sense drags) in order, then call [`Reorder::finish`]; it draws the drop marker and returns
 /// `(from, to)` once a row is released at a new position.
@@ -420,5 +397,28 @@ impl Reorder {
         let slot = ui.data(|d| d.get_temp::<usize>(self.id)).unwrap_or(from);
         let to = if slot > from { slot - 1 } else { slot };
         (to != from).then_some((from, to))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_lerp() {
+        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 0.0), Color32::BLACK);
+        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 1.0), Color32::WHITE);
+        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 2.0), Color32::WHITE);
+    }
+
+    #[test]
+    fn segmented_reports_layout_without_panicking() {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let r = segmented(ui, "tf", &["1m", "5m", "1D"], Some(2), 22.0);
+            assert!(r.is_none());
+            let _ = icon_button(ui, Icon::Sidebar, "Sidebar", false);
+        });
+        out.textures_delta.clear();
     }
 }

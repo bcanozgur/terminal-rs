@@ -51,7 +51,9 @@ impl TerminalApp {
                     self.worker.send(Request::MarkAlertsSeen);
                 }
             }
-            PaneKind::Wei => actions.extend(markets_view::wei(ui, &self.quotes, self.wei_updated.as_deref(), &mut self.wei_order)),
+            PaneKind::Wei => {
+                actions.extend(markets_view::wei(ui, &self.quotes, self.wei_updated.as_deref(), &mut self.wei_order))
+            }
             PaneKind::Curve => actions.extend(markets_view::curve(ui, self.curves.as_deref())),
             PaneKind::Search { query } => {
                 let hits = if self.net_hits.0 == *query { self.net_hits.1.as_slice() } else { &[] };
@@ -241,7 +243,9 @@ impl TerminalApp {
             moved = reorder.finish(ui);
             ui.add_space(4.0);
             ui.label(
-                RichText::new("WL ADD <KEY> to add · drag to reorder · right-click a row for options").font(ui_font(11.0)).color(muted()),
+                RichText::new("WL ADD <KEY> to add · drag to reorder · right-click a row for options")
+                    .font(ui_font(11.0))
+                    .color(muted()),
             );
         });
         let list = match group {

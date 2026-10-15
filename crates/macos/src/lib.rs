@@ -29,8 +29,8 @@ mod imp {
     use objc2::{MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{
         NSAutoresizingMaskOptions, NSColor, NSColorSpace, NSToolbar, NSView, NSVisualEffectBlendingMode,
-        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowButton, NSWindowOrderingMode, NSWindowStyleMask,
-        NSWindowTitleVisibility, NSWindowToolbarStyle,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowButton, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
     };
     use objc2_foundation::NSString;
 

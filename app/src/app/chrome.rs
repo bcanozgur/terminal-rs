@@ -640,7 +640,13 @@ impl TerminalApp {
                     muted(),
                 );
                 pt.text(pos2(r.left() + 24.0, r.center().y), Align2::LEFT_CENTER, name, ui_font(12.5), text());
-                pt.text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), ui_font(10.5), muted());
+                pt.text(
+                    pos2(r.right() - 8.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    n.to_string(),
+                    ui_font(10.5),
+                    muted(),
+                );
                 if resp.clicked() {
                     self.groups[gi].open = !open;
                     self.last_quotes = None;

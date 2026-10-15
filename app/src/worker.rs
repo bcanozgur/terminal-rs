@@ -96,6 +96,15 @@ pub enum Request {
         tf: Timeframe,
         base: Arc<Vec<Bar>>,
     },
+    /// Plug-in studies ([`crate::studies`]) on a chart's bars.
+    Studies {
+        pane: PaneId,
+        generation: u64,
+        symbol: String,
+        tf: Timeframe,
+        bars: Arc<Vec<Bar>>,
+        configs: Vec<crate::studies::StudyConfig>,
+    },
     Markers {
         pane: PaneId,
         symbol: String,
@@ -245,6 +254,11 @@ pub enum Response {
         pane: PaneId,
         generation: u64,
         built: Vec<BuiltIndicator>,
+    },
+    Studies {
+        pane: PaneId,
+        generation: u64,
+        built: Vec<crate::studies::BuiltStudy>,
     },
     Compare {
         pane: PaneId,
@@ -617,6 +631,12 @@ async fn handle(s: &Arc<Shared>, req: Request) {
                 .await
                 .unwrap_or_default();
             s.send(Response::Indicators { pane, generation, built });
+        }
+        Request::Studies { pane, generation, symbol, tf, bars, configs } => {
+            let built = tokio::task::spawn_blocking(move || crate::studies::build(&symbol, tf, &bars, &configs))
+                .await
+                .unwrap_or_default();
+            s.send(Response::Studies { pane, generation, built });
         }
         Request::Compare { pane, generation, symbol, tf, base } => {
             let limit = base.len().max(100);

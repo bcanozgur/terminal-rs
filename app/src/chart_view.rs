@@ -17,6 +17,7 @@ use tr_core::{AssetClass, Bar, Security, Timeframe};
 
 use crate::command::{IndicatorSpec, Range};
 use crate::congress_view::Action;
+use crate::studies::{self, BuiltStudy, StudyConfig};
 use crate::theme::{self, amber, amber_dim, mono, muted, text, ui_font};
 use crate::widgets;
 use crate::worker::{BuiltIndicator, PaneId, Request, Worker, initial_limit};
@@ -51,6 +52,8 @@ pub struct ChartState {
     pub show_volume: bool,
     pub show_congress: bool,
     pub indicators: Vec<IndicatorSpec>,
+    /// Plug-in studies ([`crate::studies`]) with their settings.
+    pub studies: Vec<StudyConfig>,
     pub drawings: Vec<Drawing>,
     pub compare: Option<String>,
 
@@ -64,6 +67,9 @@ pub struct ChartState {
     exhausted: bool,
     error: Option<String>,
     built: Vec<BuiltIndicator>,
+    built_studies: Vec<BuiltStudy>,
+    /// Study tables collapsed to their title strip (per chart; new charts show them).
+    study_tables_hidden: bool,
     compare_line: Option<LineRef>,
     compare_scale: f64,
     markers: Vec<Trade>,
@@ -101,6 +107,7 @@ impl ChartState {
             show_volume: true,
             show_congress: true,
             indicators: vec![IndicatorSpec::Sma(20), IndicatorSpec::Sma(50)],
+            studies: studies::defaults(),
             drawings: Vec::new(),
             compare: None,
             bars: Arc::new(Vec::new()),
@@ -113,6 +120,8 @@ impl ChartState {
             exhausted: false,
             error: None,
             built: Vec::new(),
+            built_studies: Vec::new(),
+            study_tables_hidden: false,
             compare_line: None,
             compare_scale: 1.0,
             markers: Vec::new(),
@@ -147,6 +156,7 @@ impl ChartState {
         self.bars = Arc::new(Vec::new());
         self.gpu = None;
         self.built.clear();
+        self.built_studies.clear();
         w.send(Request::History {
             pane: self.id,
             generation: self.generation,
@@ -232,6 +242,33 @@ impl ChartState {
     pub fn clear_indicators(&mut self) {
         self.indicators.clear();
         self.built.clear();
+        self.studies.clear();
+        self.built_studies.clear();
+    }
+
+    /// Add or remove a plug-in study (by id).
+    pub fn toggle_study(&mut self, id: &str, w: &Worker) {
+        if let Some(i) = self.studies.iter().position(|s| s.id == id) {
+            self.studies.remove(i);
+            self.built_studies.retain(|b| studies::get(id).is_none_or(|s| s.name() != b.name));
+        } else if studies::get(id).is_some() {
+            self.studies.push(StudyConfig::new(id));
+        }
+        self.request_studies(w);
+    }
+
+    fn request_studies(&self, w: &Worker) {
+        if self.bars.is_empty() {
+            return;
+        }
+        w.send(Request::Studies {
+            pane: self.id,
+            generation: self.generation,
+            symbol: self.symbol.clone(),
+            tf: self.tf,
+            bars: self.bars.clone(),
+            configs: self.studies.iter().filter(|c| studies::get(&c.id).is_some()).cloned().collect(),
+        });
     }
 
     pub fn set_compare(&mut self, symbol: Option<String>, w: &Worker) {
@@ -288,6 +325,7 @@ impl ChartState {
     }
 
     fn request_indicators(&self, w: &Worker) {
+        self.request_studies(w);
         if !self.bars.is_empty() {
             w.send(Request::Indicators {
                 pane: self.id,
@@ -380,6 +418,12 @@ impl ChartState {
     pub fn on_indicators(&mut self, generation: u64, built: Vec<BuiltIndicator>) {
         if generation == self.generation {
             self.built = built;
+        }
+    }
+
+    pub fn on_studies(&mut self, generation: u64, built: Vec<BuiltStudy>) {
+        if generation == self.generation {
+            self.built_studies = built;
         }
     }
 
@@ -576,9 +620,9 @@ impl ChartState {
             return clicked;
         };
 
-        // Split plot height between the price pane and oscillator sub-panes.
-        let pane_specs: Vec<usize> = (0..self.built.len()).filter(|&i| self.built[i].spec.is_pane()).collect();
-        let n_sub = pane_specs.len().min(3);
+        // Split plot height between the price pane and oscillator sub-panes (indicators, then studies).
+        let subs = self.sub_panes();
+        let n_sub = subs.len().min(4);
         let sub_h = if n_sub > 0 { (plot_all.height() * 0.2).clamp(50.0, 160.0) } else { 0.0 };
         let price_rect =
             Rect::from_min_max(plot_all.min, pos2(plot_all.right(), plot_all.bottom() - sub_h * n_sub as f32));
@@ -662,6 +706,7 @@ impl ChartState {
             .iter()
             .filter(|b| !b.spec.is_pane())
             .flat_map(|b| b.overlays.iter().map(|o| o.1.clone()))
+            .chain(self.built_studies.iter().flat_map(|b| b.lines.iter().map(|l| l.1.clone())))
             .collect();
         if let Some(c) = &self.compare_line {
             let (lo, hi) = self.viewport.as_ref().map(|v| v.visible_range(len)).unwrap_or((0, len));
@@ -723,29 +768,21 @@ impl ChartState {
 
         // Sub panes.
         let mut sub_rects = Vec::new();
-        for (k, &bi) in pane_specs.iter().take(n_sub).enumerate() {
-            let b = &self.built[bi];
+        for (k, sp) in subs.iter().take(n_sub).enumerate() {
             let top = price_rect.bottom() + sub_h * k as f32;
             let r = Rect::from_min_max(pos2(plot_all.left(), top), pos2(plot_all.right(), top + sub_h));
-            let fixed = matches!(b.spec, IndicatorSpec::Rsi(_)).then_some((0.0, 100.0));
-            let ovs: Vec<Overlay> = b.overlays.iter().map(|o| o.1.clone()).collect();
+            let ovs: Vec<Overlay> = sp.overlays.iter().map(|o| o.1.clone()).collect();
             let mut s = style;
             s.thickness_px = 1.3;
-            let so = scene::sub_pane(&ovs, &v, r.height() as f64, fixed, s);
+            let so = scene::sub_pane(&ovs, &v, r.height() as f64, sp.fixed, s);
             let p = ui.painter_at(r);
             p.hline(r.x_range(), r.top(), Stroke::new(1.0, theme::border()));
-            if matches!(b.spec, IndicatorSpec::Rsi(_)) {
-                for lvl in [30.0, 70.0] {
-                    p.hline(
-                        r.x_range(),
-                        r.top() + so.scale.y_of(lvl) as f32,
-                        Stroke::new(1.0, Color32::from_rgb(60, 45, 80)),
-                    );
-                }
+            for (lvl, c) in &sp.levels {
+                p.hline(r.x_range(), r.top() + so.scale.y_of(*lvl) as f32, Stroke::new(1.0, *c));
             }
             let frame = Frame { pane: self.id * 8 + 1 + k as u64, frame_no, cmds: so.cmds };
             ui.painter().add(tr_chart::egui_wgpu::Callback::new_paint_callback(r, ChartCallback(Arc::new(frame))));
-            sub_rects.push((r, bi, so.scale));
+            sub_rects.push((r, k, so.scale));
         }
 
         // ---- axes ----
@@ -768,8 +805,8 @@ impl ChartState {
                 );
             }
         }
-        for (r, bi, s) in &sub_rects {
-            let label = self.built[*bi].spec.label();
+        for (r, k, s) in &sub_rects {
+            let label = subs[*k].label.clone();
             ui.painter_at(*r).text(r.left_top() + vec2(6.0, 3.0), Align2::LEFT_TOP, label, mono(10.5), muted());
             for t in scale::price_ticks(s.lo, s.hi, 3) {
                 let y = r.top() + s.y_of(t) as f32;
@@ -826,6 +863,19 @@ impl ChartState {
             }
         }
 
+        // ---- studies: fills, segments, markers (under the user's drawings) ----
+        let mut study_tip = None;
+        if !self.built_studies.is_empty() {
+            let f = studies::Frame { rect: price_rect, v: &v, s: &scale, bars: &self.bars };
+            for b in &self.built_studies {
+                studies::paint_fills(ui, &f, &b.output.fills);
+                studies::paint_segments(ui, &f, &b.output.segments);
+                if let Some(t) = studies::paint_markers(ui, &f, &b.output.markers, hover) {
+                    study_tip = Some(t);
+                }
+            }
+        }
+
         // ---- drawings ----
         self.paint_drawings(ui, price_rect, &v, &scale, hover, &plot_resp);
 
@@ -866,9 +916,29 @@ impl ChartState {
                 ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
             }
         }
-        self.paint_legend(ui, price_rect, hovered_bar.unwrap_or(len.saturating_sub(1)), &sub_rects);
-        if matches!(self.sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf) {
+        self.paint_legend(ui, price_rect, hovered_bar.unwrap_or(len.saturating_sub(1)), &sub_rects, &subs);
+        let has_trade_buttons = matches!(self.sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf);
+        if has_trade_buttons {
             clicked |= self.trade_buttons(ui, plot_all);
+        }
+        // Study tables in the top-right corner, under the Buy/Sell buttons, stacked.
+        let mut table_top = if has_trade_buttons { 32.0 } else { 6.0 };
+        let mut toggle = false;
+        for (k, b) in self.built_studies.iter().enumerate() {
+            if let Some(t) = &b.output.table {
+                let id = ui.id().with((self.id, "study-table", k));
+                let (r, clicked) =
+                    studies::paint_table(ui, price_rect, table_top, &b.name, t, self.study_tables_hidden, id);
+                toggle |= clicked;
+                table_top = r.bottom() - price_rect.top() + 6.0;
+            }
+        }
+        if toggle {
+            self.study_tables_hidden = !self.study_tables_hidden;
+            clicked = true;
+        }
+        if let Some((at, tip)) = study_tip {
+            studies::tooltip_card(ui, at, &tip);
         }
 
         let _ = focused; // the surrounding card shows focus
@@ -935,6 +1005,36 @@ impl ChartState {
                 ui.close();
             }
         });
+        if !studies::all().is_empty() {
+            ui.menu_button("Studies", |ui| {
+                for st in studies::all() {
+                    let on = self.studies.iter().any(|c| c.id == st.id());
+                    let label = match st.command() {
+                        Some(c) => format!("{}  ({c})", st.name()),
+                        None => st.name().to_string(),
+                    };
+                    let resp = ui.checkbox(&mut on.clone(), label);
+                    let resp = if st.description().is_empty() { resp } else { resp.on_hover_text(st.description()) };
+                    if resp.clicked() {
+                        self.toggle_study(st.id(), w);
+                    }
+                }
+                let active: Vec<usize> = (0..self.studies.len())
+                    .filter(|&i| studies::get(&self.studies[i].id).is_some_and(|s| !s.params().is_empty()))
+                    .collect();
+                if !active.is_empty() {
+                    ui.separator();
+                }
+                for i in active {
+                    let st = studies::get(&self.studies[i].id).expect("registered");
+                    ui.menu_button(format!("{} Settings", st.name()), |ui| {
+                        if study_settings(ui, st.params(), &mut self.studies[i].params) {
+                            self.request_studies(w);
+                        }
+                    });
+                }
+            });
+        }
         ui.menu_button("Draw", |ui| {
             let alt = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
             for (tool, key) in
@@ -980,7 +1080,40 @@ impl ChartState {
         }
     }
 
-    fn paint_legend(&self, ui: &Ui, price_rect: Rect, i: usize, sub_rects: &[(Rect, usize, PriceScale)]) {
+    /// Oscillator sub-panes: built-in indicators first, then plug-in studies.
+    fn sub_panes(&self) -> Vec<SubPane> {
+        let ind = self.built.iter().filter(|b| b.spec.is_pane()).map(|b| {
+            let rsi = matches!(b.spec, IndicatorSpec::Rsi(_));
+            SubPane {
+                label: b.spec.label(),
+                overlays: b.overlays.clone(),
+                fixed: rsi.then_some((0.0, 100.0)),
+                levels: if rsi {
+                    vec![(30.0, Color32::from_rgb(60, 45, 80)), (70.0, Color32::from_rgb(60, 45, 80))]
+                } else {
+                    Vec::new()
+                },
+            }
+        });
+        let st = self.built_studies.iter().flat_map(|b| {
+            b.panes.iter().map(|p| SubPane {
+                label: p.title.clone(),
+                overlays: p.overlays.clone(),
+                fixed: p.range,
+                levels: p.levels.clone(),
+            })
+        });
+        ind.chain(st).collect()
+    }
+
+    fn paint_legend(
+        &self,
+        ui: &Ui,
+        price_rect: Rect,
+        i: usize,
+        sub_rects: &[(Rect, usize, PriceScale)],
+        subs: &[SubPane],
+    ) {
         let Some(b) = self.bars.get(i) else { return };
         let p = ui.painter_at(price_rect);
         let prev = if i > 0 { self.bars[i - 1].close } else { b.open };
@@ -1028,6 +1161,23 @@ impl ChartState {
             );
             ly += 14.0;
         }
+        for b in &self.built_studies {
+            let (name, summary, vals) = studies::legend_parts(b, i);
+            let mut x = price_rect.left() + 6.0;
+            let mut put = |t: String, c: Color32| {
+                let g = p.layout_no_wrap(t, mono(11.0), c);
+                p.galley(pos2(x, ly), g.clone(), c);
+                x += g.size().x + 8.0;
+            };
+            put(name, amber());
+            if let Some((t, c)) = summary {
+                put(t, c);
+            }
+            for (t, c) in vals {
+                put(t, c);
+            }
+            ly += 14.0;
+        }
         if let (Some(sym), Some(line)) = (&self.compare, &self.compare_line) {
             // Raw price plus performance relative to the left edge of the view.
             let raw = value_at(line);
@@ -1053,8 +1203,8 @@ impl ChartState {
                 amber(),
             );
         }
-        for (r, bi, _) in sub_rects {
-            let b = &self.built[*bi];
+        for (r, k, _) in sub_rects {
+            let b = &subs[*k];
             let vals: Vec<String> =
                 b.overlays.iter().filter_map(|(n, o)| value_at(&o.line).map(|v| format!("{n} {v:.2}"))).collect();
             ui.painter_at(*r).text(
@@ -1236,6 +1386,86 @@ impl ChartState {
             hover_card(ui, c, t);
         }
     }
+}
+
+/// Settings menu for one study, grouped like its parameter list. Returns whether a value changed.
+fn study_settings(ui: &mut Ui, defs: &[tr_study::Param], values: &mut tr_study::Params) -> bool {
+    use tr_study::{ParamKind, ParamValue};
+    ui.set_min_width(240.0);
+    let mut changed = false;
+    let mut group = "";
+    for d in defs {
+        if d.group != group {
+            group = d.group;
+            if !group.is_empty() {
+                ui.label(RichText::new(group).font(ui_font(11.0)).color(muted()));
+            }
+        }
+        let cur = d.sanitize(values.get(d.key));
+        let new = match (&d.kind, &cur) {
+            (ParamKind::Bool, ParamValue::Bool(b)) => {
+                let mut b = *b;
+                let r = ui.checkbox(&mut b, d.label);
+                if d.help.is_empty() {
+                    r
+                } else {
+                    r.on_hover_text(d.help)
+                };
+                ParamValue::Bool(b)
+            }
+            (ParamKind::Int { min, max }, ParamValue::Int(i)) => {
+                let mut i = *i;
+                ui.horizontal(|ui| {
+                    ui.label(d.label);
+                    let r = ui.add(egui::DragValue::new(&mut i).range(*min..=*max));
+                    if !d.help.is_empty() {
+                        r.on_hover_text(d.help);
+                    }
+                });
+                ParamValue::Int(i)
+            }
+            (ParamKind::Float { min, max, step }, ParamValue::Float(f)) => {
+                let mut f = *f;
+                ui.horizontal(|ui| {
+                    ui.label(d.label);
+                    let r = ui.add(egui::DragValue::new(&mut f).range(*min..=*max).speed(*step).max_decimals(3));
+                    if !d.help.is_empty() {
+                        r.on_hover_text(d.help);
+                    }
+                });
+                ParamValue::Float(f)
+            }
+            (ParamKind::Choice(opts), ParamValue::Text(t)) => {
+                let mut t = t.clone();
+                ui.horizontal(|ui| {
+                    ui.label(d.label);
+                    for o in *opts {
+                        ui.radio_value(&mut t, o.to_string(), *o);
+                    }
+                });
+                ParamValue::Text(t)
+            }
+            _ => cur.clone(),
+        };
+        if new != cur {
+            values.insert(d.key.to_string(), new);
+            changed = true;
+        }
+    }
+    ui.separator();
+    if ui.button("Reset to Defaults").clicked() {
+        changed |= !values.is_empty();
+        values.clear();
+    }
+    changed
+}
+
+/// An oscillator pane under the price pane.
+struct SubPane {
+    label: String,
+    overlays: Vec<(String, Overlay)>,
+    fixed: Option<(f64, f64)>,
+    levels: Vec<(f64, Color32)>,
 }
 
 fn dashed_h(p: &egui::Painter, x: egui::Rangef, y: f32, s: Stroke) {
