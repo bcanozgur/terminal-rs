@@ -2,7 +2,7 @@
 //! toolbar icon buttons, rounded cards and hover washes.
 
 use egui::{
-    Align2, Color32, CornerRadius, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, epaint::RectShape, pos2,
+    Align2, Color32, CornerRadius, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, epaint::RectShape, pos2,
     vec2,
 };
 
@@ -240,6 +240,36 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, active: bool) -> Resp
     resp.on_hover_text(tooltip)
 }
 
+/// Star toggle: hollow when off, filled in the text colour when on, with only a neutral hover wash.
+pub fn star_button(ui: &mut Ui, filled: bool, tooltip: &str) -> Response {
+    let size = vec2(ui.available_width().clamp(18.0, 28.0), ui.available_height().clamp(18.0, 24.0));
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let t = anim::spring_bool(ui.ctx(), resp.id.with("hover"), resp.hovered());
+    if t > 0.01 {
+        ui.painter().rect_filled(rect, theme::CONTROL_RADIUS, theme::control_hover().gamma_multiply(t));
+    }
+    let color = if filled { theme::text() } else { theme::text().gamma_multiply(0.85) };
+    let c = rect.center();
+    let outer = rect.height().min(rect.width()) * 0.36;
+    let inner = outer * 0.42;
+    let at = |i: usize, r: f32| {
+        let a = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+        pos2(c.x + r * a.cos(), c.y + 0.5 + r * a.sin())
+    };
+    let tips: Vec<Pos2> = (0..5).map(|k| at(2 * k, outer)).collect();
+    let dips: Vec<Pos2> = (0..5).map(|k| at(2 * k + 1, inner)).collect();
+    let p = ui.painter();
+    if filled {
+        p.add(Shape::convex_polygon(dips.clone(), color, Stroke::NONE));
+        for k in 0..5 {
+            p.add(Shape::convex_polygon(vec![dips[(k + 4) % 5], tips[k], dips[k]], color, Stroke::NONE));
+        }
+    }
+    let outline: Vec<Pos2> = (0..10).map(|i| at(i, if i % 2 == 0 { outer } else { inner })).collect();
+    p.add(Shape::closed_line(outline, Stroke::new(1.4, color)));
+    resp.on_hover_text(tooltip)
+}
+
 /// Rounded card with soft shadow; the border tints with the accent colour when focused.
 /// Returns the inner content rect.
 pub fn card(ui: &Ui, rect: Rect, focus: f32) -> Rect {
@@ -346,5 +376,49 @@ mod tests {
             let _ = icon_button(ui, Icon::Sidebar, "Sidebar", false);
         });
         out.textures_delta.clear();
+    }
+}
+
+/// Drag-to-reorder for a vertical list of rows. Feed each row's rect and response (which must
+/// sense drags) in order, then call [`Reorder::finish`]; it draws the drop marker and returns
+/// `(from, to)` once a row is released at a new position.
+pub struct Reorder {
+    id: Id,
+    rects: Vec<Rect>,
+    dragging: Option<usize>,
+    dropped: Option<usize>,
+}
+
+impl Reorder {
+    pub fn new(id: Id) -> Self {
+        Self { id, rects: Vec::new(), dragging: None, dropped: None }
+    }
+
+    pub fn row(&mut self, rect: Rect, resp: &Response) {
+        let i = self.rects.len();
+        self.rects.push(rect);
+        if resp.dragged() {
+            self.dragging = Some(i);
+        }
+        if resp.drag_stopped() {
+            self.dropped = Some(i);
+        }
+    }
+
+    pub fn finish(self, ui: &Ui) -> Option<(usize, usize)> {
+        let ptr = ui.ctx().pointer_interact_pos().or_else(|| ui.ctx().pointer_latest_pos())?;
+        let slot = |rects: &[Rect]| rects.iter().filter(|r| r.center().y < ptr.y).count();
+        if let Some(from) = self.dragging {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            let slot = slot(&self.rects);
+            let y = if slot == 0 { self.rects[0].top() } else { self.rects[slot - 1].bottom() };
+            let x = self.rects[from].x_range();
+            ui.painter().hline(x, y, Stroke::new(2.0, theme::accent()));
+            ui.data_mut(|d| d.insert_temp(self.id, slot));
+        }
+        let from = self.dropped?;
+        let slot = ui.data(|d| d.get_temp::<usize>(self.id)).unwrap_or(from);
+        let to = if slot > from { slot - 1 } else { slot };
+        (to != from).then_some((from, to))
     }
 }

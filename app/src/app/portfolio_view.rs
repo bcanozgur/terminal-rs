@@ -160,6 +160,40 @@ fn span(r: Rect, cols: &[Col], k: usize) -> (f32, f32) {
     (l, l + inner * cols[k].w / total)
 }
 
+/// Colour of each holding's slice in the allocation bar (by value rank), keyed by
+/// account and symbol, so tables can show the same dot next to the symbol.
+fn holding_colors(
+    pf: &Portfolio,
+    sel: &dyn Fn(&str) -> bool,
+    price_of: &dyn Fn(&Position) -> Option<f64>,
+) -> HashMap<(String, String), Color32> {
+    let mut held: Vec<(&Position, f64)> = pf
+        .positions
+        .iter()
+        .filter(|p| sel(&p.account_id))
+        .filter_map(|p| Some((p, p.market_value_at(price_of(p))?.abs())))
+        .filter(|(_, v)| *v > 0.0)
+        .collect();
+    held.sort_by(|a, b| b.1.total_cmp(&a.1));
+    held.iter()
+        .enumerate()
+        .map(|(i, (p, _))| ((p.account_id.clone(), p.symbol.clone()), if i < 8 { theme::series(i) } else { muted() }))
+        .collect()
+}
+
+/// The symbol column: a dot in the holding's allocation colour, then the symbol.
+fn symbol_cell(painter: &egui::Painter, r: Rect, cols: &[Col], p: &Position, dot: Option<Color32>) {
+    let Some(c) = dot else { return cell(painter, r, cols, 0, p.short_label(), mono(12.0), amber()) };
+    if cols.first().is_none_or(|c| c.w <= 0.0) {
+        return;
+    }
+    let (l, _) = span(r, cols, 0);
+    painter.circle_filled(pos2(l + 4.0, r.center().y), 4.0, c);
+    let mut shifted = r;
+    shifted.min.x += 14.0;
+    cell(painter, shifted, cols, 0, p.short_label(), mono(12.0), amber());
+}
+
 fn cell(p: &egui::Painter, r: Rect, cols: &[Col], k: usize, s: impl ToString, font: egui::FontId, c: Color32) {
     if cols.get(k).is_none_or(|c| c.w <= 0.0) {
         return;
@@ -258,6 +292,10 @@ fn security_menu(ui: &mut Ui, key: &str, symbol: &str, out: &mut Vec<PortAction>
         out.push(PortAction::Core(Action::OpenChart(key.to_string())));
         ui.close();
     }
+    if ui.button("Open Chart as New").clicked() {
+        out.push(PortAction::Core(Action::OpenChartNew(key.to_string())));
+        ui.close();
+    }
     let sec = tr_data::security(key);
     if matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf)
         && ui.button("Option Chain (OMON)").clicked()
@@ -328,12 +366,13 @@ pub fn portfolio(
                 pane.account = None;
             }
             let price_of = |p: &Position| b.live_price(quotes, p);
+            let prev_of = |p: &Position| b.prev_close(quotes, p);
             match pane.view {
                 PortView::Summary => {
                     egui::ScrollArea::vertical()
                         .id_salt("port-summary")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| summary(ui, pane, pf, &price_of, &mut out));
+                        .show(ui, |ui| summary(ui, pane, pf, &price_of, &prev_of, &mut out));
                 }
                 PortView::Accounts => accounts(ui, pane, pf, &price_of),
                 PortView::Positions => positions(ui, pane, pf, &price_of, &mut out),
@@ -562,9 +601,16 @@ fn summary(
     pane: &mut PortfolioPane,
     pf: &Portfolio,
     price_of: &dyn Fn(&Position) -> Option<f64>,
+    prev_of: &dyn Fn(&Position) -> Option<f64>,
     out: &mut Vec<PortAction>,
 ) {
     let t = pf.totals(pane.account.as_deref(), price_of);
+    let (day, day_base) = pf.daily_pnl(pane.account.as_deref(), price_of, prev_of);
+    let day_txt = if day_base.abs() > 1e-9 {
+        format!("{} ({})", signed_money(day, &currency(pf, pane)), pct(day / day_base.abs() * 100.0))
+    } else {
+        signed_money(day, &currency(pf, pane))
+    };
     let ccy = currency(pf, pane);
     // Headline figures, laid out as a grid that wraps to the pane width.
     let pnl = match t.pnl_pct() {
@@ -573,6 +619,7 @@ fn summary(
     };
     let stats = [
         ("Total value", money(t.value, &ccy), text()),
+        ("Daily P&L", day_txt, pnl_color(day)),
         ("Unrealised P&L", pnl, pnl_color(t.pnl)),
         ("Invested", money(t.invested, &ccy), text()),
         ("Cash", money(t.cash, &ccy), text()),
@@ -675,10 +722,11 @@ fn summary(
         ui.available_width(),
     );
     header(ui, &cols, None);
+    let colors = holding_colors(pf, &sel, price_of);
     for (p, _) in held.iter().take(8) {
         position_row(ui, &cols, p, price_of(p), out, |ui, r, cols, p, live| {
             let painter = ui.painter();
-            cell(painter, r, cols, 0, p.short_label(), mono(12.0), amber());
+            symbol_cell(painter, r, cols, p, colors.get(&(p.account_id.clone(), p.symbol.clone())).copied());
             cell(painter, r, cols, 1, qty(p.units), mono(12.0), text());
             cell(painter, r, cols, 2, live.or(p.price).map_or("—".into(), price), mono(12.0), text());
             cell(painter, r, cols, 3, p.market_value_at(live).map_or("—".into(), |v| group(v, 2)), mono(12.0), text());
@@ -872,12 +920,14 @@ fn positions(
         .auto_shrink([false, true])
         .max_height(ui.available_height() - dp(40.0))
         .show(ui, |ui| {
+            let colors = holding_colors(pf, &sel, price_of);
             for (p, live) in &list {
                 let share = (gross > 0.0).then(|| value(&(p, *live)).abs() / gross * 100.0);
                 let account = pf.account(&p.account_id).map(Account::label).unwrap_or_default();
                 position_row(ui, &cols, p, *live, out, |ui, r, cols, p, live| {
                     let painter = ui.painter();
-                    cell(painter, r, cols, 0, p.short_label(), mono(12.0), amber());
+                    let dot = colors.get(&(p.account_id.clone(), p.symbol.clone())).copied();
+                    symbol_cell(painter, r, cols, p, dot);
                     let desc =
                         if p.description.is_empty() { p.kind.label().to_string() } else { p.description.clone() };
                     cell(painter, r, cols, 1, desc, ui_font(12.0), if p.cash_equivalent { muted() } else { text() });

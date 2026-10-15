@@ -44,6 +44,10 @@ pub struct ChartState {
     pub chart_type: ChartType,
     pub log: bool,
     pub magnet: bool,
+    /// Display currency for prices (`None` = as quoted). Chart-only; not persisted.
+    pub currency: Option<String>,
+    /// Whether the symbol is already on the watchlist (set by the app each frame).
+    pub watched: bool,
     pub show_volume: bool,
     pub show_congress: bool,
     pub indicators: Vec<IndicatorSpec>,
@@ -92,6 +96,8 @@ impl ChartState {
             },
             log: false,
             magnet: false,
+            currency: None,
+            watched: false,
             show_volume: true,
             show_congress: true,
             indicators: vec![IndicatorSpec::Sma(20), IndicatorSpec::Sma(50)],
@@ -147,6 +153,7 @@ impl ChartState {
             symbol: self.symbol.clone(),
             tf: self.tf,
             limit: initial_limit(self.tf),
+            currency: self.currency.clone(),
         });
         self.last_live = None;
         if self.sec.has_congress_trades() {
@@ -165,6 +172,20 @@ impl ChartState {
         self.sec = sec;
         self.draw = DrawState::default();
         self.load(w);
+    }
+
+    pub fn set_currency(&mut self, currency: Option<&str>, w: &Worker) {
+        if self.currency.as_deref() != currency {
+            self.currency = currency.map(str::to_string);
+            self.load(w);
+        }
+    }
+
+    /// `TRY->USD` while prices are shown in a currency other than the one quoted.
+    fn currency_note(&self) -> Option<String> {
+        let to = self.currency.as_deref()?;
+        let from = tr_data::native_currency(&self.symbol);
+        (from != to).then(|| format!("{from}→{to}"))
     }
 
     pub fn set_timeframe(&mut self, tf: Timeframe, w: &Worker) {
@@ -410,7 +431,7 @@ impl ChartState {
     pub fn controls_width(ui: &Ui) -> f32 {
         let tf: Vec<&str> = Timeframe::ALL.iter().map(|t| t.label()).collect();
         let ct: Vec<&str> = ChartType::ALL.iter().map(|c| c.label()).collect();
-        widgets::segmented_width(ui, &tf, CONTROL_H) + widgets::segmented_width(ui, &ct, CONTROL_H) + 8.0
+        widgets::segmented_width(ui, &tf, CONTROL_H) + widgets::segmented_width(ui, &ct, CONTROL_H) + 8.0 + 8.0 + 24.0
     }
 
     /// Interval and chart-type controls, laid out left to right in `ui`. Returns whether
@@ -430,7 +451,24 @@ impl ChartState {
             self.chart_type = ChartType::ALL[i];
             clicked = true;
         }
+        ui.add_space(8.0);
+        clicked |= self.watch_button(ui);
         clicked
+    }
+
+    /// Star toggle: on the watchlist (filled) or not (hollow).
+    fn watch_button(&mut self, ui: &mut Ui) -> bool {
+        let tip = if self.watched { "Remove from Watchlist" } else { "Add to Watchlist" };
+        let resp = widgets::star_button(ui, self.watched, tip);
+        if resp.clicked() {
+            self.actions.push(if self.watched {
+                Action::RemoveFromWatchlist(self.symbol.clone())
+            } else {
+                Action::AddToWatchlist(self.symbol.clone())
+            });
+            self.watched = !self.watched;
+        }
+        resp.clicked()
     }
 
     pub fn show(&mut self, ui: &mut Ui, rect: Rect, focused: bool, w: &Worker) -> bool {
@@ -475,6 +513,7 @@ impl ChartState {
                         }
                     }
                 });
+                clicked |= self.watch_button(&mut hui);
             }
         }
         if self.last_live.is_some_and(|t| t.elapsed().as_secs() < 5) {
@@ -510,8 +549,9 @@ impl ChartState {
             (_, true, _) => "loading…".into(),
             (_, _, true) => "loading history…".into(),
             _ => format!(
-                "{} bars{}{}",
+                "{} bars{}{}{}",
                 self.bars.len(),
+                self.currency_note().map(|n| format!("  {n}")).unwrap_or_default(),
                 if self.log { "  LOG" } else { "" },
                 if self.magnet { "  MAGNET" } else { "" }
             ),
@@ -612,6 +652,7 @@ impl ChartState {
                 tf: self.tf,
                 existing: self.bars.clone(),
                 limit: initial_limit(self.tf),
+                currency: self.currency.clone(),
             });
         }
 
@@ -907,6 +948,19 @@ impl ChartState {
             if ui.button("Remove All Drawings").clicked() {
                 self.drawings.clear();
                 ui.close();
+            }
+        });
+        ui.menu_button("Currency", |ui| {
+            let native = tr_data::native_currency(&self.symbol);
+            if ui.radio(self.currency.is_none(), format!("As quoted ({native})")).clicked() {
+                self.set_currency(None, w);
+                ui.close();
+            }
+            for c in ["USD", "EUR", "GBP", "TRY", "JPY", "CHF", "CAD"] {
+                if ui.radio(self.currency.as_deref() == Some(c), c).clicked() {
+                    self.set_currency(Some(c), w);
+                    ui.close();
+                }
             }
         });
         ui.checkbox(&mut self.log, "Log Scale");

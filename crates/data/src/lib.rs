@@ -383,6 +383,70 @@ pub fn security(symbol: &str) -> Security {
     Security::parse(symbol).unwrap_or_else(|| Security::equity(symbol))
 }
 
+/// The currency a market key is quoted in (USD when unknown).
+pub fn native_currency(symbol: &str) -> &'static str {
+    let sec = security(symbol);
+    match sec.class {
+        AssetClass::Fx | AssetClass::Govt => "USD",
+        _ => yahoo::currency_of(&yahoo::yahoo_symbol(&sec)),
+    }
+}
+
+/// USD per one unit of `ccy` as a time series (`None` for USD itself).
+async fn usd_per(
+    provider: &dyn MarketData,
+    ccy: &str,
+    tf: Timeframe,
+    end: i64,
+    limit: usize,
+) -> Result<Option<Vec<(i64, f64)>>> {
+    if ccy == "USD" {
+        return Ok(None);
+    }
+    // Yahoo quotes these as USD per unit; every other currency as units per USD.
+    let direct = matches!(ccy, "EUR" | "GBP" | "AUD" | "NZD");
+    let pair = if direct { format!("{ccy}USD") } else { format!("USD{ccy}") };
+    let key = Security::new(pair.clone(), AssetClass::Fx).key();
+    let bars = provider.history(&key, tf, Some(end), limit).await?;
+    if bars.is_empty() {
+        anyhow::bail!("no {pair} rates");
+    }
+    Ok(Some(bars.iter().map(|b| (b.ts, if direct { b.close } else { 1.0 / b.close })).collect()))
+}
+
+fn rate_at(series: &Option<Vec<(i64, f64)>>, ts: i64) -> f64 {
+    let Some(s) = series else { return 1.0 };
+    let i = s.partition_point(|(t, _)| *t <= ts);
+    s[i.saturating_sub(1)].1
+}
+
+/// Re-express `bars` quoted in `from` in currency `to`, using the FX rate in force at each
+/// bar. Volume is untouched.
+pub async fn convert_bars(
+    provider: &dyn MarketData,
+    bars: Vec<Bar>,
+    from: &str,
+    to: &str,
+    tf: Timeframe,
+) -> Result<Vec<Bar>> {
+    let Some(last) = bars.last() else { return Ok(bars) };
+    if from == to {
+        return Ok(bars);
+    }
+    let end = last.ts + tf.seconds() + 1;
+    // FX trades around the clock, so intraday needs several FX bars per equity bar.
+    let want = if tf.is_intraday() { bars.len() * 4 + 100 } else { bars.len() + 60 };
+    let a = usd_per(provider, from, tf, end, want).await?;
+    let b = usd_per(provider, to, tf, end, want).await?;
+    Ok(bars
+        .into_iter()
+        .map(|x| {
+            let r = rate_at(&a, x.ts) / rate_at(&b, x.ts);
+            Bar::new(x.ts, x.open * r, x.high * r, x.low * r, x.close * r, x.volume)
+        })
+        .collect())
+}
+
 /// Build the provider described in the crate docs from environment variables.
 pub fn from_env() -> Provider {
     // reqwest and the websocket client both use rustls; pin one crypto provider.

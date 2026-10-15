@@ -154,6 +154,14 @@ impl BrokerState {
         }
         quotes.get(&p.market_key()?).map(|q| q.last).filter(|x| x.is_finite() && *x > 0.0)
     }
+
+    /// The previous session's close for a position, for the daily P&L.
+    pub fn prev_close(&self, quotes: &std::collections::HashMap<String, tr_data::Quote>, p: &Position) -> Option<f64> {
+        if p.kind == tr_broker::InstrumentKind::Option {
+            return None;
+        }
+        quotes.get(&p.market_key()?).map(|q| q.prev_close).filter(|x| x.is_finite() && *x > 0.0)
+    }
 }
 
 /// Open a URL or path with the system handler.

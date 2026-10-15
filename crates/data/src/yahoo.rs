@@ -32,6 +32,41 @@ impl YahooProvider {
         Ok(Self { client, crumb: tokio::sync::Mutex::new(None) })
     }
 
+    /// Poll Yahoo for the forming bar of `symbol` every few seconds (it has no push feed).
+    /// Only the bar-sized intervals Yahoo serves natively; W/M and 4h are resampled, so skip.
+    ///
+    /// Yahoo's newest intraday row is stamped with the last trade time, not the bar open, so
+    /// rows are snapped onto the grid of the older (complete) rows: the pane sees one bar per
+    /// interval that updates in place and a new one only when the interval rolls over.
+    pub fn live(&self, symbol: String, tf: Timeframe) -> Option<crate::LiveFeed> {
+        if matches!(tf, Timeframe::W1 | Timeframe::MN1 | Timeframe::H4) {
+            return None;
+        }
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let me = Self { client: self.client.clone(), crumb: tokio::sync::Mutex::new(None) };
+        tokio::spawn(async move {
+            let (iv, _) = interval(tf);
+            let step = tf.seconds();
+            while !tx.is_closed() {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                let now = chrono::Utc::now().timestamp();
+                let back = if tf == Timeframe::D1 { 5 * 86_400 } else { step * 4 + 3_600 };
+                let chart = match me.chart(&symbol, iv, now - back, now + 60).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::debug!("yahoo live {symbol}: {e:#}");
+                        continue;
+                    }
+                };
+                let Some(bar) = forming_bar(&chart, tf, now) else { continue };
+                if tx.send(bar).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Some(rx)
+    }
+
     async fn chart(&self, symbol: &str, interval: &str, period1: i64, period2: i64) -> Result<Chart> {
         let url = format!("{BASE}/{}", urlencode(symbol));
         let resp = self
@@ -49,6 +84,58 @@ impl YahooProvider {
             bail!("yahoo {symbol}: HTTP {}", resp.status());
         }
         parse_chart(&resp.text().await?)
+    }
+}
+
+/// The current bar of `chart`, aligned to the interval grid (see [`YahooProvider::live`]).
+fn forming_bar(chart: &Chart, tf: Timeframe, now: i64) -> Option<Bar> {
+    if tf == Timeframe::D1 {
+        return chart.bars.last().copied();
+    }
+    let step = tf.seconds();
+    let anchor = chart.bars.first()?.ts;
+    let bucket = |ts: i64| anchor + (ts - anchor).div_euclid(step) * step;
+    let last_bucket = bucket(chart.bars.last()?.ts);
+    let mut cur: Option<Bar> = None;
+    for b in chart.bars.iter().filter(|b| bucket(b.ts) == last_bucket) {
+        cur = Some(match cur {
+            None => Bar::new(last_bucket, b.open, b.high, b.low, b.close, b.volume),
+            Some(c) => Bar::new(last_bucket, c.open, c.high.max(b.high), c.low.min(b.low), b.close, c.volume + b.volume),
+        });
+    }
+    let mut bar = cur?;
+    // While this interval is still running, pin the close to the latest trade.
+    if now < last_bucket + step
+        && let Some(p) = chart.last_price
+    {
+        bar.close = p;
+        bar.high = bar.high.max(p);
+        bar.low = bar.low.min(p);
+    }
+    Some(bar)
+}
+
+/// Yahoo stamps the forming intraday row with the last trade time. Snap the last few rows
+/// onto the interval grid of the rows before them, merging rows that share an interval, so
+/// live updates replace the forming bar instead of adding a second one.
+fn snap_tail(bars: &mut Vec<Bar>, step: i64) {
+    const TAIL: usize = 5;
+    if bars.len() <= TAIL {
+        return;
+    }
+    let anchor = bars[bars.len() - TAIL - 1].ts;
+    let tail = bars.split_off(bars.len() - TAIL);
+    for b in tail {
+        let ts = anchor + (b.ts - anchor).div_euclid(step) * step;
+        match bars.last_mut() {
+            Some(last) if last.ts == ts => {
+                last.high = last.high.max(b.high);
+                last.low = last.low.min(b.low);
+                last.close = b.close;
+                last.volume += b.volume;
+            }
+            _ => bars.push(Bar::new(ts, b.open, b.high, b.low, b.close, b.volume)),
+        }
     }
 }
 
@@ -171,6 +258,9 @@ impl MarketData for YahooProvider {
             return Ok(Vec::new());
         }
         let mut bars = self.chart(symbol, iv, period1, period2).await?.bars;
+        if tf.is_intraday() {
+            snap_tail(&mut bars, base_tf.seconds());
+        }
         // Yahoo's weekly/monthly timestamps are session opens; snap to our calendar buckets.
         if matches!(tf, Timeframe::W1 | Timeframe::MN1 | Timeframe::H4) {
             bars = tf.resample(&bars);
@@ -404,7 +494,18 @@ pub fn yahoo_symbol(sec: &Security) -> String {
         return y.to_string();
     }
     match sec.class {
-        AssetClass::Equity | AssetClass::Etf => sec.ticker.replace('.', "-"),
+        AssetClass::Equity | AssetClass::Etf => {
+            let t = sec.ticker.to_ascii_uppercase();
+            // Borsa Istanbul indices are typed bare (`XU100`) but Yahoo lists them as `XU100.IS`.
+            if matches!(t.as_str(), "XU100" | "XU030") {
+                return format!("{t}.IS");
+            }
+            // `THYAO.IS`, `SAP.DE`: a 2+ letter suffix is an exchange, not a share class (`BRK.B`).
+            match t.rsplit_once('.') {
+                Some((_, suffix)) if suffix.len() >= 2 => t,
+                _ => sec.ticker.replace('.', "-"),
+            }
+        }
         AssetClass::Index if sec.ticker.starts_with('^') => sec.ticker.clone(),
         AssetClass::Index => format!("^{}", sec.ticker),
         AssetClass::Fx => format!("{}=X", sec.ticker),
@@ -413,6 +514,38 @@ pub fn yahoo_symbol(sec: &Security) -> String {
             None => sec.ticker.clone(),
         },
         AssetClass::Govt | AssetClass::Cmdty => sec.ticker.clone(),
+    }
+}
+
+/// The currency a Yahoo symbol is quoted in, judged from its exchange suffix or index.
+/// Unknown symbols are assumed USD.
+pub fn currency_of(yahoo_symbol: &str) -> &'static str {
+    match yahoo_symbol {
+        "^GDAXI" | "^FCHI" | "^STOXX50E" | "^IBEX" | "FTSEMIB.MI" => return "EUR",
+        "^FTSE" => return "GBP",
+        "^N225" => return "JPY",
+        "^HSI" => return "HKD",
+        "^BVSP" => return "BRL",
+        "^GSPTSE" => return "CAD",
+        "^AXJO" => return "AUD",
+        "^KS11" => return "KRW",
+        "^BSESN" => return "INR",
+        "^SSMI" => return "CHF",
+        "^MXX" => return "MXN",
+        _ => {}
+    }
+    match yahoo_symbol.rsplit_once('.').map(|(_, x)| x) {
+        Some("IS") => "TRY",
+        Some("DE" | "PA" | "MI" | "AS" | "MC" | "BR" | "HE" | "VI" | "LS") => "EUR",
+        Some("T") => "JPY",
+        Some("HK") => "HKD",
+        Some("TO") => "CAD",
+        Some("SW") => "CHF",
+        Some("AX") => "AUD",
+        Some("SA") => "BRL",
+        Some("NS" | "BO") => "INR",
+        Some("KS") => "KRW",
+        _ => "USD",
     }
 }
 
@@ -518,5 +651,61 @@ mod tests {
     fn encodes_index_symbols() {
         assert_eq!(urlencode("^GSPC"), "^GSPC");
         assert_eq!(urlencode("BRK B"), "BRK%20B");
+    }
+}
+
+#[cfg(test)]
+mod symbol_tests {
+    use super::*;
+
+    #[test]
+    fn borsa_istanbul_symbols() {
+        let y = |t: &str| yahoo_symbol(&Security::equity(t));
+        assert_eq!(y("XU100"), "XU100.IS");
+        assert_eq!(y("xu030"), "XU030.IS");
+        assert_eq!(y("THYAO.IS"), "THYAO.IS");
+        assert_eq!(y("BRK.B"), "BRK-B");
+        assert_eq!(currency_of("THYAO.IS"), "TRY");
+        assert_eq!(currency_of("XU100.IS"), "TRY");
+        assert_eq!(currency_of("AAPL"), "USD");
+        assert_eq!(currency_of("^GDAXI"), "EUR");
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    fn bar(ts: i64, o: f64, h: f64, l: f64, c: f64) -> Bar {
+        Bar::new(ts, o, h, l, c, 10.0)
+    }
+
+    #[test]
+    fn history_tail_is_snapped_to_the_grid() {
+        let t0 = 1_700_000_000 - 1_700_000_000 % 3600 + 1800;
+        let mut bars: Vec<Bar> = (0..8).map(|i| bar(t0 + i * 3600, 1.0, 2.0, 0.5, 1.5)).collect();
+        bars.push(bar(t0 + 7 * 3600 + 900, 1.5, 3.0, 1.4, 2.5));
+        snap_tail(&mut bars, 3600);
+        assert_eq!(bars.len(), 8);
+        let l = bars.last().unwrap();
+        assert_eq!((l.ts, l.high, l.close), (t0 + 7 * 3600, 3.0, 2.5));
+    }
+
+    #[test]
+    fn off_grid_tail_joins_the_forming_bar() {
+        // Hourly grid at :30; the newest row is stamped at the last trade time.
+        let t0 = 1_700_000_000 - 1_700_000_000 % 3600 + 1800;
+        let chart = Chart {
+            bars: vec![
+                bar(t0, 100.0, 101.0, 99.0, 100.5),
+                bar(t0 + 3600, 100.5, 102.0, 100.0, 101.0),
+                bar(t0 + 3600 + 600, 101.0, 101.2, 100.9, 101.1),
+            ],
+            last_price: Some(101.5),
+            prev_close: None,
+        };
+        let b = forming_bar(&chart, Timeframe::H1, t0 + 3600 + 700).unwrap();
+        assert_eq!(b.ts, t0 + 3600);
+        assert_eq!((b.open, b.high, b.low, b.close), (100.5, 102.0, 100.0, 101.5));
     }
 }

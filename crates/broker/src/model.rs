@@ -398,6 +398,25 @@ impl Portfolio {
     }
 }
 
+impl Portfolio {
+    /// Today's profit or loss over the selected accounts and the value those holdings had at
+    /// the previous close (for a percentage). Positions without a previous close are left out.
+    pub fn daily_pnl(
+        &self,
+        filter: Option<&str>,
+        price_of: impl Fn(&Position) -> Option<f64>,
+        prev_of: impl Fn(&Position) -> Option<f64>,
+    ) -> (f64, f64) {
+        let (mut pnl, mut base) = (0.0, 0.0);
+        for p in self.positions.iter().filter(|p| filter.is_none_or(|f| f == p.account_id) && !p.cash_equivalent) {
+            let (Some(prev), Some(now)) = (prev_of(p), price_of(p).or(p.price)) else { continue };
+            pnl += p.units * (now - prev) * p.multiplier;
+            base += p.units * prev * p.multiplier;
+        }
+        (pnl, base)
+    }
+}
+
 /// True when the price override changes nothing (so the broker's totals stay authoritative).
 fn price_of_is_trivial(positions: &[Position], price_of: &impl Fn(&Position) -> Option<f64>) -> bool {
     positions.iter().all(|p| price_of(p).is_none())

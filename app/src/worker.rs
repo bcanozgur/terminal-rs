@@ -67,6 +67,8 @@ pub enum Request {
         symbol: String,
         tf: Timeframe,
         limit: usize,
+        /// Display currency (`None` = as quoted).
+        currency: Option<String>,
     },
     /// Prepend older history to `existing`.
     MoreHistory {
@@ -76,6 +78,7 @@ pub enum Request {
         tf: Timeframe,
         existing: Arc<Vec<Bar>>,
         limit: usize,
+        currency: Option<String>,
     },
     Indicators {
         pane: PaneId,
@@ -491,13 +494,14 @@ pub fn initial_limit(tf: Timeframe) -> usize {
 
 async fn handle(s: &Arc<Shared>, req: Request) {
     match req {
-        Request::History { pane, generation, symbol, tf, limit } => {
+        Request::History { pane, generation, symbol, tf, limit, currency } => {
+            let convert_to = currency.filter(|c| *c != tr_data::native_currency(&symbol));
             if !claim_series(s, pane, generation) {
                 return; // a newer load for this pane is already running
             }
             // Paint from the disk cache immediately, then refresh from the network.
             let cached = s.cache.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.load(&symbol, tf, limit).ok()));
-            if let Some(bars) = cached.filter(|b| !b.is_empty()) {
+            if let Some(bars) = cached.filter(|b| !b.is_empty() && convert_to.is_none()) {
                 let bars = Arc::new(bars);
                 let gpu = build_gpu(bars.clone()).await;
                 s.send(Response::History {
@@ -521,6 +525,19 @@ async fn handle(s: &Arc<Shared>, req: Request) {
                         let _ = c.store(&symbol, tf, &bars);
                     }
                     let exhausted = bars.len() < limit / 2;
+                    let bars = match &convert_to {
+                        Some(to) => {
+                            let from = tr_data::native_currency(&symbol);
+                            match tr_data::convert_bars(&*s.provider, bars, from, to, tf).await {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    let error = format!("{from}->{to} conversion: {e:#}");
+                                    return s.send(Response::HistoryError { pane, generation, error });
+                                }
+                            }
+                        }
+                        None => bars,
+                    };
                     let bars = Arc::new(bars);
                     if !store_series(s, pane, generation, bars.clone()) {
                         return; // superseded while loading
@@ -538,19 +555,36 @@ async fn handle(s: &Arc<Shared>, req: Request) {
                         exhausted,
                         live: false,
                     });
-                    start_live(s.clone(), pane, generation, symbol, tf);
+                    // Live ticks are quoted natively, so converted charts stay on history.
+                    if convert_to.is_none() {
+                        start_live(s.clone(), pane, generation, symbol, tf);
+                    }
                 }
                 Ok(_) => s.send(Response::HistoryError { pane, generation, error: format!("no data for {symbol}") }),
                 Err(e) => s.send(Response::HistoryError { pane, generation, error: format!("{e:#}") }),
             }
         }
-        Request::MoreHistory { pane, generation, symbol, tf, existing, limit } => {
+        Request::MoreHistory { pane, generation, symbol, tf, existing, limit, currency } => {
+            let convert_to = currency.filter(|c| *c != tr_data::native_currency(&symbol));
             // Page from the worker's copy (it may hold newer live bars than the UI's).
             let base = current_series(s, pane, generation).filter(|b| !b.is_empty()).unwrap_or(existing);
             let Some(first) = base.first().copied() else { return };
             match s.provider.history(&symbol, tf, Some(first.ts), limit).await {
                 Ok(older) => {
                     let older: Vec<Bar> = older.into_iter().filter(|b| b.ts < first.ts).collect();
+                    let older = match &convert_to {
+                        Some(to) => {
+                            let from = tr_data::native_currency(&symbol);
+                            match tr_data::convert_bars(&*s.provider, older, from, to, tf).await {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    let error = format!("{from}->{to} conversion: {e:#}");
+                                    return s.send(Response::HistoryError { pane, generation, error });
+                                }
+                            }
+                        }
+                        None => older,
+                    };
                     let prepended = older.len();
                     let bars = {
                         let mut map = s.series.lock().expect("series lock");

@@ -62,6 +62,8 @@ pub enum PaneKind {
     Politicians,
     Alerts,
     Watchlist,
+    /// A named sidebar list (see [`WatchGroup`]) shown as a pane.
+    List(String),
     Help,
     Wei,
     Curve,
@@ -176,6 +178,7 @@ impl PaneKind {
             PaneKind::Politicians => "Politicians".into(),
             PaneKind::Alerts => "Alerts".into(),
             PaneKind::Watchlist => "Watchlist".into(),
+            PaneKind::List(name) => name.clone(),
             PaneKind::Help => "Help".into(),
             PaneKind::Wei => "World Markets".into(),
             PaneKind::Curve => "Yield Curve".into(),
@@ -200,6 +203,7 @@ impl PaneKind {
             PaneKind::Profile { .. } | PaneKind::Politicians => "POL",
             PaneKind::Alerts => "ALRT",
             PaneKind::Watchlist => "WL",
+            PaneKind::List(_) => "LST",
             PaneKind::Help => "HELP",
             PaneKind::Wei => "WEI",
             PaneKind::Curve => "GC",
@@ -257,6 +261,7 @@ impl PaneKind {
             PaneKind::Politicians => PaneSettings::Politicians,
             PaneKind::Alerts => PaneSettings::Alerts,
             PaneKind::Watchlist => PaneSettings::Watchlist,
+            PaneKind::List(name) => PaneSettings::List(name.clone()),
             PaneKind::Help => PaneSettings::Help,
             PaneKind::Wei => PaneSettings::Wei,
             PaneKind::Curve => PaneSettings::Curve,
@@ -310,6 +315,7 @@ impl PaneKind {
             PaneSettings::Politicians => PaneKind::Politicians,
             PaneSettings::Alerts => PaneKind::Alerts,
             PaneSettings::Watchlist => PaneKind::Watchlist,
+            PaneSettings::List(name) => PaneKind::List(name),
             PaneSettings::Help => PaneKind::Help,
             PaneSettings::Wei => PaneKind::Wei,
             PaneSettings::Curve => PaneKind::Curve,
@@ -350,6 +356,10 @@ impl Pane {
 struct Settings {
     #[serde(default)]
     watchlist: Vec<String>,
+    #[serde(default)]
+    wei_order: Vec<String>,
+    #[serde(default)]
+    groups: Option<Vec<WatchGroup>>,
     #[serde(default = "default_true")]
     sidebar: bool,
     /// Name of the layout to restore on launch.
@@ -364,6 +374,27 @@ struct Settings {
 
 fn default_true() -> bool {
     true
+}
+
+/// BIST 30 constituents, most traded first (average daily TRY turnover over the 60 sessions
+/// before 15 Oct 2026).
+const BIST30_BY_VOLUME: [&str; 30] = [
+    "THYAO", "ASELS", "AKBNK", "TUPRS", "ASTOR", "YKBNK", "ISCTR", "KCHOL", "EREGL", "GARAN", "BIMAS", "SAHOL", "EKGYO", "TCELL", "SISE", "KRDMD", "TTKOM", "PETKM", "HALKB", "VAKBN", "MGROS", "SASA", "FROTO", "PGSUS", "BRSAN", "GUBRF", "ENKAI", "TOASO", "TAVHL", "ALARK"
+];
+
+/// A named, collapsible list in the sidebar, beside the main watchlist.
+#[derive(Clone, Serialize, Deserialize)]
+struct WatchGroup {
+    name: String,
+    keys: Vec<String>,
+    open: bool,
+}
+
+impl WatchGroup {
+    fn bist30() -> Self {
+        let keys = BIST30_BY_VOLUME.iter().map(|t| tr_data::security(t).key()).collect();
+        Self { name: "BIST 30 · by volume".into(), keys, open: true }
+    }
 }
 
 const DEFAULT_WATCHLIST: [&str; 11] = [
@@ -457,11 +488,17 @@ pub struct TerminalApp {
     last_wei: Option<Instant>,
     last_curve: Option<Instant>,
     wei_updated: Option<String>,
+    /// Drag-arranged World Markets order (market keys), applied within each group.
+    wei_order: Vec<String>,
+    /// Extra sidebar lists under the watchlist.
+    groups: Vec<WatchGroup>,
     /// Latest network search results and the query they answer.
     net_hits: (String, Vec<SearchHit>),
     /// Query typed in the command line awaiting a debounced network search.
     search_pending: Option<(String, Instant)>,
     suggestion: Option<usize>,
+    /// The pointer is over the autocomplete list (it must outlive the field losing focus to a click).
+    dropdown_hover: bool,
 
     cmd: String,
     cmd_history: Vec<String>,
@@ -604,9 +641,12 @@ impl TerminalApp {
             last_wei: None,
             last_curve: None,
             wei_updated: None,
+            wei_order: Vec::new(),
+            groups: vec![WatchGroup::bist30()],
             net_hits: (String::new(), Vec::new()),
             search_pending: None,
             suggestion: None,
+            dropdown_hover: false,
             cmd: String::new(),
             cmd_history: Vec::new(),
             cmd_hist_pos: None,
@@ -646,6 +686,10 @@ impl TerminalApp {
                 app.watchlist = s.watchlist.iter().map(|w| tr_data::security(w).key()).collect();
                 app.watchlist.dedup();
             }
+            app.wei_order = s.wei_order.clone();
+            if let Some(g) = &s.groups {
+                app.groups = g.clone();
+            }
             app.sidebar_open = s.sidebar;
             if let Some(name) = &s.active_layout {
                 match app.store.load(name) {
@@ -677,6 +721,8 @@ impl TerminalApp {
     fn save_settings(&self) {
         let s = Settings {
             watchlist: self.watchlist.clone(),
+            wei_order: self.wei_order.clone(),
+            groups: Some(self.groups.clone()),
             sidebar: self.sidebar_open,
             active_layout: Some(self.layout_name.clone()),
             layout: None,
@@ -699,6 +745,7 @@ impl TerminalApp {
         for a in actions {
             match a {
                 Action::OpenChart(s) => self.open_security(&s),
+                Action::OpenChartNew(s) => self.open_chart_new(&s),
                 Action::OpenTicker(s) => {
                     self.open_panel(PaneKind::Ticker { symbol: s, trades: Vec::new(), loading: true })
                 }
@@ -709,7 +756,14 @@ impl TerminalApp {
                         self.status = format!("Added {key} to the watchlist");
                         self.watchlist.push(key);
                         self.last_quotes = None;
+                    } else {
+                        self.status = format!("{key} is already on the watchlist");
                     }
+                }
+                Action::RemoveFromWatchlist(s) => {
+                    let key = tr_data::security(&s).key();
+                    self.watchlist.retain(|k| *k != key);
+                    self.status = format!("Removed {key} from the watchlist");
                 }
                 Action::LinkedSymbol(link, s) => self.broadcast(link, &s, None),
                 Action::Command(line) => match command::parse(&line) {
@@ -1316,12 +1370,17 @@ impl TerminalApp {
     fn periodic(&mut self) {
         let visible = self.visible_panes();
         let shown = |f: &dyn Fn(&PaneKind) -> bool| visible.iter().any(|&i| f(&self.panes[i].kind));
-        let visible_wl = self.sidebar_open || shown(&|k| matches!(k, PaneKind::Watchlist));
-        if visible_wl && self.last_quotes.is_none_or(|t| t.elapsed() > Duration::from_secs(20)) {
-            self.worker.send(Request::Quotes(self.watchlist.clone()));
+        let visible_wl = self.sidebar_open || shown(&|k| matches!(k, PaneKind::Watchlist | PaneKind::List(_)));
+        if visible_wl && self.last_quotes.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
+            let mut keys = self.watchlist.clone();
+            let list_shown = |name: &str| shown(&|k| matches!(k, PaneKind::List(n) if n == name));
+            for g in self.groups.iter().filter(|g| (g.open && self.sidebar_open) || list_shown(&g.name)) {
+                keys.extend(g.keys.iter().filter(|k| !keys.contains(k)).cloned().collect::<Vec<_>>());
+            }
+            self.worker.send(Request::Quotes(keys));
             self.last_quotes = Some(Instant::now());
         }
-        if shown(&|k| matches!(k, PaneKind::Wei)) && self.last_wei.is_none_or(|t| t.elapsed() > Duration::from_secs(20))
+        if shown(&|k| matches!(k, PaneKind::Wei)) && self.last_wei.is_none_or(|t| t.elapsed() > Duration::from_secs(10))
         {
             self.worker.send(Request::Quotes(markets_view::overview_keys()));
             self.last_wei = Some(Instant::now());
@@ -1511,6 +1570,11 @@ impl eframe::App for TerminalApp {
                 SidebarCmd::Action(a) => actions.push(a),
                 SidebarCmd::Function(f) => self.apply(f),
                 SidebarCmd::Layout(op) => self.layout_op(op),
+            }
+        }
+        for p in &mut self.panes {
+            if let PaneKind::Chart(c) = &mut p.kind {
+                c.watched = self.watchlist.contains(&c.symbol);
             }
         }
         actions.extend(self.render_dock(ui, area, gap));

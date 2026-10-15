@@ -224,6 +224,7 @@ pub static CATALOG: LazyLock<Vec<Listing>> = LazyLock::new(|| {
         fx("EURGBP", "Euro / British Pound", 0.85),
         fx("EURJPY", "Euro / Japanese Yen", 162.0),
         fx("USDINR", "US Dollar / Indian Rupee", 84.0),
+        fx("USDTRY", "US Dollar / Turkish Lira", 42.0),
         // Crypto
         crypto("BTCUSD", "Bitcoin / US Dollar", "BTCUSDT", "BTC-USD", 65000.0),
         crypto("ETHUSD", "Ethereum / US Dollar", "ETHUSDT", "ETH-USD", 3000.0),
@@ -244,6 +245,7 @@ pub static CATALOG: LazyLock<Vec<Listing>> = LazyLock::new(|| {
         yahoo("VTI", Etf, "Vanguard Total Stock Market ETF", Etfs, "VTI", 290.0),
         yahoo("EFA", Etf, "iShares MSCI EAFE ETF", Etfs, "EFA", 80.0),
         yahoo("EEM", Etf, "iShares MSCI Emerging Markets ETF", Etfs, "EEM", 45.0),
+        yahoo("TMF", Etf, "Direxion Daily 20+ Year Treasury Bull 3X Shares", Etfs, "TMF", 28.0),
         yahoo("TLT", Etf, "iShares 20+ Year Treasury Bond ETF", Etfs, "TLT", 92.0),
         yahoo("IEF", Etf, "iShares 7-10 Year Treasury Bond ETF", Etfs, "IEF", 95.0),
         yahoo("HYG", Etf, "iShares iBoxx High Yield Corporate Bond ETF", Etfs, "HYG", 79.0),
@@ -276,6 +278,41 @@ pub static CATALOG: LazyLock<Vec<Listing>> = LazyLock::new(|| {
         yahoo("NFLX", Equity, "Netflix Inc", Stocks, "NFLX", 700.0),
         yahoo("COIN", Equity, "Coinbase Global Inc", Stocks, "COIN", 200.0),
         yahoo("MSTR", Equity, "MicroStrategy Inc", Stocks, "MSTR", 300.0),
+        // Borsa Istanbul: indices and BIST 30 stocks, quoted in TRY on Yahoo (`.IS`)
+        yahoo("XU100", Index, "BIST 100 Index (XU100)", Emea, "XU100.IS", 12000.0),
+        yahoo("XU030", Index, "BIST 30 Index (XU030, XU30)", Emea, "XU030.IS", 15000.0),
+        yahoo("AKBNK", Equity, "Akbank (BIST)", Stocks, "AKBNK.IS", 67.0),
+        yahoo("ALARK", Equity, "Alarko Holding (BIST)", Stocks, "ALARK.IS", 109.0),
+        yahoo("ARCLK", Equity, "Arcelik (BIST)", Stocks, "ARCLK.IS", 76.0),
+        yahoo("ASELS", Equity, "Aselsan (BIST)", Stocks, "ASELS.IS", 349.0),
+        yahoo("ASTOR", Equity, "Astor Enerji (BIST)", Stocks, "ASTOR.IS", 187.0),
+        yahoo("BIMAS", Equity, "BIM Birlesik Magazalar (BIST)", Stocks, "BIMAS.IS", 400.0),
+        yahoo("BRSAN", Equity, "Borusan Mannesmann (BIST)", Stocks, "BRSAN.IS", 658.0),
+        yahoo("EKGYO", Equity, "Emlak Konut GYO (BIST)", Stocks, "EKGYO.IS", 20.0),
+        yahoo("ENKAI", Equity, "Enka Insaat (BIST)", Stocks, "ENKAI.IS", 78.0),
+        yahoo("EREGL", Equity, "Eregli Demir ve Celik (BIST)", Stocks, "EREGL.IS", 37.0),
+        yahoo("FROTO", Equity, "Ford Otosan (BIST)", Stocks, "FROTO.IS", 71.0),
+        yahoo("GARAN", Equity, "Garanti BBVA (BIST)", Stocks, "GARAN.IS", 132.0),
+        yahoo("GUBRF", Equity, "Gubre Fabrikalari (BIST)", Stocks, "GUBRF.IS", 393.0),
+        yahoo("HALKB", Equity, "Halkbank (BIST)", Stocks, "HALKB.IS", 43.0),
+        yahoo("ISCTR", Equity, "Is Bankasi (BIST)", Stocks, "ISCTR.IS", 13.0),
+        yahoo("KCHOL", Equity, "Koc Holding (BIST)", Stocks, "KCHOL.IS", 210.0),
+        yahoo("KRDMD", Equity, "Kardemir (BIST)", Stocks, "KRDMD.IS", 42.0),
+        yahoo("MGROS", Equity, "Migros (BIST)", Stocks, "MGROS.IS", 470.0),
+        yahoo("OYAKC", Equity, "Oyak Cimento (BIST)", Stocks, "OYAKC.IS", 20.0),
+        yahoo("PETKM", Equity, "Petkim (BIST)", Stocks, "PETKM.IS", 20.0),
+        yahoo("PGSUS", Equity, "Pegasus Hava Tasimaciligi (BIST)", Stocks, "PGSUS.IS", 129.0),
+        yahoo("SAHOL", Equity, "Sabanci Holding (BIST)", Stocks, "SAHOL.IS", 84.0),
+        yahoo("SASA", Equity, "Sasa Polyester (BIST)", Stocks, "SASA.IS", 2.0),
+        yahoo("SISE", Equity, "Sisecam (BIST)", Stocks, "SISE.IS", 37.0),
+        yahoo("TAVHL", Equity, "TAV Havalimanlari (BIST)", Stocks, "TAVHL.IS", 270.0),
+        yahoo("TCELL", Equity, "Turkcell (BIST)", Stocks, "TCELL.IS", 98.0),
+        yahoo("THYAO", Equity, "Turk Hava Yollari (BIST)", Stocks, "THYAO.IS", 276.0),
+        yahoo("TOASO", Equity, "Tofas (BIST)", Stocks, "TOASO.IS", 246.0),
+        yahoo("TTKOM", Equity, "Turk Telekom (BIST)", Stocks, "TTKOM.IS", 52.0),
+        yahoo("TUPRS", Equity, "Tupras (BIST)", Stocks, "TUPRS.IS", 381.0),
+        yahoo("VAKBN", Equity, "Vakifbank (BIST)", Stocks, "VAKBN.IS", 34.0),
+        yahoo("YKBNK", Equity, "Yapi Kredi (BIST)", Stocks, "YKBNK.IS", 36.0),
     ]
 });
 
@@ -392,5 +429,16 @@ mod tests {
         for g in Group::OVERVIEW {
             assert!(group(g).count() >= 4, "{g:?}");
         }
+    }
+
+    #[test]
+    fn borsa_istanbul_search() {
+        let top = |q: &str| search(q, 5).first().map(|l| l.ticker);
+        assert_eq!(top("xu100"), Some("XU100"));
+        assert_eq!(top("xu030"), Some("XU030"));
+        assert_eq!(top("xu30"), Some("XU030"));
+        assert_eq!(top("thy"), Some("THYAO"));
+        assert_eq!(top("garan"), Some("GARAN"));
+        assert_eq!(lookup("THYAO", None).and_then(|l| l.yahoo), Some("THYAO.IS"));
     }
 }

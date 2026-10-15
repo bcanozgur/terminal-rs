@@ -2092,6 +2092,7 @@ mod tests {
         let mut t = ticket();
         t.account = Some(demo::ACCOUNT_ID.into());
         let mut book = demo::DemoBook::new(chrono::Utc::now());
+        book.reset(100_000.0, chrono::Utc::now());
         let o = book.submit(&t.request().unwrap(), Some(200.0), chrono::Utc::now()).unwrap();
         assert_eq!(o.status, "EXECUTED");
         assert_eq!(book.held("AAPL"), 10.0);

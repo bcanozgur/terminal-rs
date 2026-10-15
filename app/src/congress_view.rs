@@ -17,6 +17,9 @@ pub enum Action {
     OpenProfile(String),
     Track(String, bool),
     AddToWatchlist(String),
+    /// Open a chart in a new pane beside the focused one instead of replacing a chart.
+    OpenChartNew(String),
+    RemoveFromWatchlist(String),
     /// Load a security into every pane of a colour link group.
     LinkedSymbol(crate::layouts::Link, String),
     /// Run a command line (`AAPL OMON`, `PORT REFRESH`) without adding it to the history.
@@ -136,6 +139,10 @@ fn trade_row(
                     r.context_menu(|ui| {
                         if ui.button("Open Chart").clicked() {
                             out.push(Action::OpenChart(tk.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Open Chart as New").clicked() {
+                            out.push(Action::OpenChartNew(tk.clone()));
                             ui.close();
                         }
                         if ui.button(format!("Who in Congress Traded {tk}")).clicked() {

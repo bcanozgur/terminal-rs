@@ -29,7 +29,7 @@ mod imp {
     use objc2::{MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{
         NSAutoresizingMaskOptions, NSColor, NSColorSpace, NSToolbar, NSView, NSVisualEffectBlendingMode,
-        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowButton, NSWindowOrderingMode,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowButton, NSWindowOrderingMode, NSWindowStyleMask,
         NSWindowTitleVisibility, NSWindowToolbarStyle,
     };
     use objc2_foundation::NSString;
@@ -85,6 +85,22 @@ mod imp {
         // SAFETY: caller guarantees a live NSView on the main thread.
         let view: &NSView = unsafe { &*(ns_view as *const NSView) };
         let window = view.window()?;
+        // In full screen macOS parks the (empty) native toolbar over the top of the content,
+        // hiding the app's own toolbar and search field. Drop it there, restore it afterwards.
+        let full_screen = window.styleMask().contains(NSWindowStyleMask::FullScreen);
+        if full_screen {
+            if window.toolbar().is_some() {
+                window.setToolbar(None);
+            }
+            return Some(super::Chrome { titlebar_height: 0.0, traffic_lights_width: 0.0 });
+        }
+        if window.toolbar().is_none() {
+            let mtm = MainThreadMarker::new()?;
+            let toolbar =
+                NSToolbar::initWithIdentifier(NSToolbar::alloc(mtm), &NSString::from_str("terminal-rs.toolbar"));
+            window.setToolbar(Some(&toolbar));
+            window.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
+        }
         // The content layout rect excludes the title bar/toolbar strip that overlaps a
         // full-size content view; the difference is the region the system owns.
         let titlebar = (window.frame().size.height - window.contentLayoutRect().size.height).max(0.0) as f32;

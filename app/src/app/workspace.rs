@@ -20,9 +20,10 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 14] = [
+pub const PANELS: [(&str, &str); 15] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
+    ("BIST 30 · by volume", "BIST30"),
     ("News", "NEWS"),
     ("Order Book", "BOOK"),
     ("Options", "OMON"),
@@ -420,6 +421,18 @@ impl TerminalApp {
 
     /// Load a security: into the focused pane when it follows symbols (and its link group),
     /// else into the focused pane's link group, else into a chart.
+    /// Open `symbol` in a new chart pane docked beside the focused pane.
+    pub(super) fn open_chart_new(&mut self, symbol: &str) {
+        let key = tr_data::security(symbol).key();
+        let Some(kind) = self.panel_from_spec("CHART", Some(&key)) else { return };
+        let target = self.focused_visible();
+        let id = self.new_pane(kind);
+        self.dock_pane(id, target, Zone::Right);
+        self.focus = id;
+        self.last_opened = Some(id);
+        self.status = format!("{key} opened in a new chart");
+    }
+
     pub(super) fn open_security(&mut self, symbol: &str) {
         let key = tr_data::security(symbol).key();
         if let Some(i) = self.idx(self.focus) {
@@ -552,6 +565,9 @@ impl TerminalApp {
                 d,
             )),
             "WL" | "WATCHLIST" | "W" => PaneKind::Watchlist,
+            "BIST30" | "BIST" => PaneKind::List(
+                self.groups.iter().find(|g| g.name.starts_with("BIST 30")).map(|g| g.name.clone()).unwrap_or_default(),
+            ),
             "NEWS" | "N" | "CN" | "TOP" => PaneKind::News(Box::new(NewsPane::new(current))),
             "BOOK" | "OB" | "DEPTH" | "DOM" => {
                 // Default to a market with a public book.

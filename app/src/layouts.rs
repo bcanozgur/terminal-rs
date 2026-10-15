@@ -78,6 +78,7 @@ pub enum PaneSettings {
     Politicians,
     Alerts,
     Watchlist,
+    List(String),
     Help,
     Wei,
     Curve,

@@ -46,19 +46,35 @@ fn sparkline(ui: &Ui, rect: Rect, values: &[f64], color: Color32) {
     ui.painter().add(egui::Shape::line(pts, Stroke::new(1.2, color)));
 }
 
-fn row(ui: &mut Ui, l: &Listing, quotes: &HashMap<String, Quote>, out: &mut Vec<Action>, width: f32) {
+fn row(
+    ui: &mut Ui,
+    l: &Listing,
+    quotes: &HashMap<String, Quote>,
+    out: &mut Vec<Action>,
+    width: f32,
+) -> (Rect, egui::Response) {
     let sec = l.security();
     let key = l.key();
     let q = quotes.get(&key);
     let h = theme::dp(16.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, h), Sense::click());
-    if resp.hovered() {
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, h), Sense::click_and_drag());
+    if resp.hovered() && !resp.dragged() {
         ui.painter().rect_filled(rect, 3.0, theme::control());
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     if resp.clicked() {
         out.push(Action::OpenChart(key.clone()));
     }
+    resp.context_menu(|ui| {
+        if ui.button("Open Chart").clicked() {
+            out.push(Action::OpenChart(key.clone()));
+            ui.close();
+        }
+        if ui.button("Open Chart as New").clicked() {
+            out.push(Action::OpenChartNew(key.clone()));
+            ui.close();
+        }
+    });
     let p = ui.painter_at(rect);
     let y = rect.center().y;
     let x = rect.left() + 2.0;
@@ -94,10 +110,17 @@ fn row(ui: &mut Ui, l: &Listing, quotes: &HashMap<String, Quote>, out: &mut Vec<
         let clip = Rect::from_min_max(pos2(name_left, rect.top()), pos2(name_right, rect.bottom()));
         p.with_clip_rect(clip).text(pos2(name_left, y), Align2::LEFT_CENTER, l.name, ui_font(11.5), muted());
     }
+    (rect, resp)
 }
 
 /// WEI-style overview: regional indices, futures, Treasuries, FX, crypto, commodities.
-pub fn wei(ui: &mut Ui, quotes: &HashMap<String, Quote>, updated: Option<&str>) -> Vec<Action> {
+/// World Markets. `order` is the user's drag-arranged key order, applied within each group.
+pub fn wei(
+    ui: &mut Ui,
+    quotes: &HashMap<String, Quote>,
+    updated: Option<&str>,
+    order: &mut Vec<String>,
+) -> Vec<Action> {
     let mut out = Vec::new();
     let width = ui.available_width();
     let cols = ((width / 460.0).floor() as usize).clamp(1, 3);
@@ -105,7 +128,7 @@ pub fn wei(ui: &mut Ui, quotes: &HashMap<String, Quote>, updated: Option<&str>) 
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new("WORLD MARKETS").font(mono(12.5)).color(amber()));
         ui.label(RichText::new(updated.unwrap_or("loading quotes…")).font(mono(11.0)).color(muted()));
-        ui.label(RichText::new("click a row to chart it").font(mono(11.0)).color(muted()));
+        ui.label(RichText::new("click a row to chart it · drag to reorder").font(mono(11.0)).color(muted()));
     });
     egui::ScrollArea::vertical().id_salt("wei").auto_shrink([false, false]).show(ui, |ui| {
         // Distribute groups across columns, keeping them in display order.
@@ -133,8 +156,19 @@ pub fn wei(ui: &mut Ui, quotes: &HashMap<String, Quote>, updated: Option<&str>) 
                             mono(10.5),
                             amber_dim(),
                         );
-                        for l in catalog::group(*g) {
-                            row(ui, l, quotes, &mut out, col_w);
+                        let mut listings: Vec<&Listing> = catalog::group(*g).collect();
+                        listings.sort_by_key(|l| order.iter().position(|k| *k == l.key()).unwrap_or(usize::MAX));
+                        let mut reorder = crate::widgets::Reorder::new(egui::Id::new(("wei-reorder", g.label())));
+                        for l in &listings {
+                            let (rect, resp) = row(ui, l, quotes, &mut out, col_w);
+                            reorder.row(rect, &resp);
+                        }
+                        if let Some((from, to)) = reorder.finish(ui) {
+                            let item = listings.remove(from);
+                            listings.insert(to, item);
+                            let keys: Vec<String> = listings.iter().map(|l| l.key()).collect();
+                            order.retain(|k| !keys.contains(k));
+                            order.extend(keys);
                         }
                         ui.add_space(6.0);
                     }

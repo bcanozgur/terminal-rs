@@ -38,6 +38,23 @@ impl Markets {
     }
 }
 
+impl Markets {
+    /// Yahoo history for a stock; a bare ticker Yahoo does not know is retried as a Borsa
+    /// Istanbul listing (`THYAO` -> `THYAO.IS`).
+    async fn yahoo_equity(&self, sec: &Security, tf: Timeframe, end: Option<i64>, limit: usize) -> Result<Vec<Bar>> {
+        let y = yahoo_symbol(sec);
+        match self.yahoo.history(&y, tf, end, limit).await {
+            Err(e) if !y.contains(['.', '-', '^']) => {
+                match self.yahoo.history(&format!("{y}.IS"), tf, end, limit).await {
+                    Ok(b) if !b.is_empty() => Ok(b),
+                    _ => Err(e),
+                }
+            }
+            r => r,
+        }
+    }
+}
+
 #[async_trait]
 impl MarketData for Markets {
     fn name(&self) -> &str {
@@ -57,9 +74,10 @@ impl MarketData for Markets {
                 let a = self.alpaca.as_ref().expect("checked");
                 match a.history(&sec.ticker, tf, end, limit).await {
                     Ok(b) if !b.is_empty() => Ok(b),
-                    _ => self.yahoo.history(&yahoo_symbol(&sec), tf, end, limit).await,
+                    _ => self.yahoo_equity(&sec, tf, end, limit).await,
                 }
             }
+            AssetClass::Equity | AssetClass::Etf => self.yahoo_equity(&sec, tf, end, limit).await,
             _ => self.yahoo.history(&yahoo_symbol(&sec), tf, end, limit).await,
         }
     }
@@ -111,7 +129,15 @@ impl MarketData for Markets {
 
     fn live(&self, symbol: &str, tf: Timeframe) -> Option<LiveFeed> {
         let sec = security(symbol);
-        (sec.class == AssetClass::Crypto).then(|| CryptoProvider::live(&sec, tf))
+        match sec.class {
+            AssetClass::Crypto => Some(CryptoProvider::live(&sec, tf)),
+            // Alpaca bars are timestamped differently, so keyed setups keep their static load.
+            AssetClass::Equity | AssetClass::Etf if self.alpaca.is_some() => None,
+            AssetClass::Equity | AssetClass::Etf | AssetClass::Index | AssetClass::Fx | AssetClass::Cmdty => {
+                self.yahoo.live(yahoo_symbol(&sec), tf)
+            }
+            AssetClass::Govt => None,
+        }
     }
 
     async fn search(&self, query: &str) -> Result<Vec<SearchHit>> {

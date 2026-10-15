@@ -24,6 +24,8 @@ pub const TOOLBAR_H: f32 = if cfg!(target_os = "macos") { tr_macos::TITLEBAR_HEI
 /// Default space kept clear for the traffic lights when the sidebar is collapsed.
 pub const TRAFFIC_INSET: f32 = if cfg!(target_os = "macos") { tr_macos::TRAFFIC_LIGHTS_WIDTH } else { 0.0 };
 pub const STATUS_H: f32 = 22.0;
+/// Strip above the toolbar in macOS full screen where clicks do not reach the window.
+const FULLSCREEN_TOP_PAD: f32 = 30.0;
 pub const SIDEBAR_W: f32 = 232.0;
 const ROW_H: f32 = 24.0;
 const MAC: bool = cfg!(target_os = "macos");
@@ -53,9 +55,18 @@ impl TerminalApp {
     pub(super) fn toolbar_h(&self) -> f32 {
         match self.chrome {
             Some(c) if c.titlebar_height > 0.0 => c.titlebar_height.max(TOOLBAR_H),
-            // Full screen: no title bar strip.
-            Some(_) => 34.0,
+            // Full screen: no title bar, but macOS keeps the top strip for its menu bar reveal
+            // and swallows clicks there, so the toolbar's controls sit below it.
+            Some(_) => 34.0 + self.fullscreen_pad(),
             None => TOOLBAR_H,
+        }
+    }
+
+    /// Extra space above the toolbar controls in full screen on macOS.
+    pub(super) fn fullscreen_pad(&self) -> f32 {
+        match self.chrome {
+            Some(c) if cfg!(target_os = "macos") && c.titlebar_height == 0.0 => FULLSCREEN_TOP_PAD,
+            _ => 0.0,
         }
     }
 
@@ -75,7 +86,7 @@ impl TerminalApp {
         window_drag_region(ui, rect, "toolbar");
         let p = ui.painter_at(rect);
         p.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, theme::border()));
-        let cy = rect.center().y;
+        let cy = rect.center().y + self.fullscreen_pad() / 2.0;
         let mut x = rect.left() + left_inset + 8.0;
 
         // The sidebar toggle sits on the sidebar's side, its glyph pointing at it.
@@ -189,7 +200,7 @@ impl TerminalApp {
             right -= 12.0;
         }
 
-        let field = Rect::from_min_max(pos2(x, cy - 11.0), pos2(right.max(x + 160.0).min(x + 860.0), cy + 11.0));
+        let field = Rect::from_min_max(pos2(x, cy - 11.0), pos2((right - 4.0).max(x + 160.0), cy + 11.0));
         self.command_field(ui, field)
     }
 
@@ -421,8 +432,12 @@ impl TerminalApp {
             self.cmd_hist_pos = Some(pos);
             self.cmd = self.cmd_history[pos].clone();
         }
-        if focused && !self.cmd.is_empty() {
+        // Pressing a suggestion takes focus from the field before the click completes, so the
+        // list stays up while the pointer is over it.
+        if (focused || self.dropdown_hover) && !self.cmd.is_empty() {
             self.dropdown(ui.ctx(), field, &suggestions);
+        } else {
+            self.dropdown_hover = false;
         }
         focused
     }
@@ -448,7 +463,7 @@ impl TerminalApp {
         }
         let mut clicked = None;
         let width = below.width().clamp(420.0, 680.0);
-        egui::Area::new(Id::new("cmd-suggestions"))
+        let area = egui::Area::new(Id::new("cmd-suggestions"))
             .order(egui::Order::Foreground)
             .fixed_pos(below.left_bottom() + vec2(0.0, 6.0))
             .show(ctx, |ui| {
@@ -502,7 +517,9 @@ impl TerminalApp {
                         );
                     });
             });
+        self.dropdown_hover = ctx.pointer_hover_pos().is_some_and(|p| area.response.rect.contains(p));
         if let Some(key) = clicked {
+            self.dropdown_hover = false;
             self.cmd.clear();
             self.suggestion = None;
             self.execute(&key);
@@ -537,10 +554,12 @@ impl TerminalApp {
 
             section(ui, "Watchlist");
             let mut remove = None;
+            let mut reorder = widgets::Reorder::new(egui::Id::new("wl-sidebar-reorder"));
             for key in &self.watchlist {
                 let sec = tr_data::security(key);
                 let resp = row_frame(ui, false);
                 let r = resp.rect;
+                reorder.row(r, &resp);
                 let pt = ui.painter();
                 pt.text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.0), text());
                 if let Some(q) = self.quotes.get(key) {
@@ -576,6 +595,10 @@ impl TerminalApp {
                         out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
                         ui.close();
                     }
+                    if ui.button("Open Chart as New").clicked() {
+                        out.push(SidebarCmd::Action(Action::OpenChartNew(key.clone())));
+                        ui.close();
+                    }
                     if sec.has_congress_trades() && ui.button("Who in Congress Traded This").clicked() {
                         out.push(SidebarCmd::Action(Action::OpenTicker(sec.ticker.clone())));
                         ui.close();
@@ -594,8 +617,88 @@ impl TerminalApp {
             if let Some(k) = remove {
                 self.watchlist.retain(|x| *x != k);
             }
+            if let Some((from, to)) = reorder.finish(ui) {
+                let item = self.watchlist.remove(from);
+                self.watchlist.insert(to, item);
+            }
             if nav_row(ui, Icon::List, "Open Watchlist Pane", None, is_focused(&PaneKind::Watchlist)).clicked() {
                 out.push(SidebarCmd::Function(Function::Watchlist));
+            }
+
+            // Extra lists: a disclosure header per list; its rows are hidden when collapsed.
+            for gi in 0..self.groups.len() {
+                ui.add_space(6.0);
+                let resp = row_frame(ui, false);
+                let r = resp.rect;
+                let (open, name, n) = (self.groups[gi].open, self.groups[gi].name.clone(), self.groups[gi].keys.len());
+                let pt = ui.painter();
+                pt.text(
+                    pos2(r.left() + 8.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    if open { "▾" } else { "▸" },
+                    ui_font(12.0),
+                    muted(),
+                );
+                pt.text(pos2(r.left() + 24.0, r.center().y), Align2::LEFT_CENTER, name, ui_font(12.5), text());
+                pt.text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), ui_font(10.5), muted());
+                if resp.clicked() {
+                    self.groups[gi].open = !open;
+                    self.last_quotes = None;
+                }
+                resp.context_menu(|ui| {
+                    if ui.button("Open as Pane").clicked() {
+                        out.push(SidebarCmd::Action(Action::Command("NEW BIST30".into())));
+                        ui.close();
+                    }
+                });
+                if !self.groups[gi].open {
+                    continue;
+                }
+                for key in self.groups[gi].keys.clone() {
+                    let sec = tr_data::security(&key);
+                    let resp = row_frame(ui, false);
+                    let r = resp.rect;
+                    let pt = ui.painter();
+                    pt.text(pos2(r.left() + 22.0, r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.0), text());
+                    if let Some(q) = self.quotes.get(&key) {
+                        let c = if q.change() >= 0.0 { theme::up() } else { theme::down() };
+                        let pill = Rect::from_min_size(pos2(r.right() - 62.0, r.center().y - 8.0), vec2(58.0, 16.0));
+                        pt.rect_filled(pill, 4.0, c.gamma_multiply(0.16));
+                        pt.text(
+                            pill.right_center() - vec2(5.0, 0.0),
+                            Align2::RIGHT_CENTER,
+                            format!("{:+.2}%", q.change_pct()),
+                            mono(11.0),
+                            c,
+                        );
+                        let d = sec.decimals(q.last);
+                        pt.text(
+                            pos2(pill.left() - 8.0, r.center().y),
+                            Align2::RIGHT_CENTER,
+                            format!("{:.d$}", q.last),
+                            mono(11.5),
+                            text(),
+                        );
+                    }
+                    if resp.clicked() {
+                        out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
+                    }
+                    let resp = resp.on_hover_text(format!("{} — {}", sec.key(), sec.name().unwrap_or(&sec.ticker)));
+                    resp.context_menu(|ui| {
+                        if ui.button("Open Chart").clicked() {
+                            out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
+                            ui.close();
+                        }
+                        if ui.button("Open Chart as New").clicked() {
+                            out.push(SidebarCmd::Action(Action::OpenChartNew(key.clone())));
+                            ui.close();
+                        }
+                        if !self.watchlist.contains(&key) && ui.button("Add to Watchlist").clicked() {
+                            self.watchlist.push(key.clone());
+                            ui.close();
+                        }
+                    });
+                }
             }
 
             section(ui, "Markets");
@@ -894,9 +997,9 @@ fn section(ui: &mut Ui, label: &str) {
 
 /// A full-width clickable sidebar row with hover wash; the caller paints its content.
 fn row_frame(ui: &mut Ui, selected: bool) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), theme::dp(ROW_H)), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), theme::dp(ROW_H)), Sense::click_and_drag());
     widgets::hover_wash(ui, r, &resp, selected);
-    if resp.hovered() {
+    if resp.hovered() && !resp.dragged() {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
     resp

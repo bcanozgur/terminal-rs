@@ -51,7 +51,7 @@ impl TerminalApp {
                     self.worker.send(Request::MarkAlertsSeen);
                 }
             }
-            PaneKind::Wei => actions.extend(markets_view::wei(ui, &self.quotes, self.wei_updated.as_deref())),
+            PaneKind::Wei => actions.extend(markets_view::wei(ui, &self.quotes, self.wei_updated.as_deref(), &mut self.wei_order)),
             PaneKind::Curve => actions.extend(markets_view::curve(ui, self.curves.as_deref())),
             PaneKind::Search { query } => {
                 let hits = if self.net_hits.0 == *query { self.net_hits.1.as_slice() } else { &[] };
@@ -115,10 +115,15 @@ impl TerminalApp {
                     }
                 }
             }
-            PaneKind::Watchlist | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
+            PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
         }
         match self.panes[i].kind {
-            PaneKind::Watchlist => actions.extend(self.watchlist(ui)),
+            PaneKind::Watchlist => actions.extend(self.watchlist(ui, None)),
+            PaneKind::List(ref name) => {
+                let name = name.clone();
+                let gi = self.groups.iter().position(|g| g.name == name);
+                actions.extend(self.watchlist(ui, gi))
+            }
             PaneKind::Help => self.help_panel(ui),
             PaneKind::Settings => {
                 let cmds = self.settings_panel(ui);
@@ -129,7 +134,12 @@ impl TerminalApp {
         (actions, false)
     }
 
-    fn watchlist(&mut self, ui: &mut Ui) -> Vec<Action> {
+    /// The watchlist table; `group` selects a sidebar list instead of the main watchlist.
+    fn watchlist(&mut self, ui: &mut Ui, group: Option<usize>) -> Vec<Action> {
+        let keys: Vec<String> = match group {
+            Some(gi) => self.groups[gi].keys.clone(),
+            None => self.watchlist.clone(),
+        };
         let mut out = Vec::new();
         let row_h = dp(22.0);
         let w = ui.available_width();
@@ -143,10 +153,13 @@ impl TerminalApp {
             p.text(pos2(col(hdr, k), hdr.center().y), Align2::RIGHT_CENTER, h, ui_font(11.5), muted());
         }
         let mut remove = None;
+        let mut moved = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for s in &self.watchlist {
+            let mut reorder = widgets::Reorder::new(egui::Id::new("wl-pane-reorder"));
+            for s in &keys {
                 let sec = tr_data::security(s);
-                let (r, resp) = ui.allocate_exact_size(vec2(w, row_h), Sense::click());
+                let (r, resp) = ui.allocate_exact_size(vec2(w, row_h), Sense::click_and_drag());
+                reorder.row(r, &resp);
                 widgets::hover_wash(ui, r, &resp, false);
                 let p = ui.painter();
                 p.text(pos2(col(r, 0), r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.5), amber());
@@ -210,6 +223,10 @@ impl TerminalApp {
                         out.push(Action::OpenChart(s.clone()));
                         ui.close();
                     }
+                    if ui.button("Open Chart as New").clicked() {
+                        out.push(Action::OpenChartNew(s.clone()));
+                        ui.close();
+                    }
                     if sec.has_congress_trades() && ui.button("Who in Congress Traded This").clicked() {
                         out.push(Action::OpenTicker(sec.ticker.clone()));
                         ui.close();
@@ -221,13 +238,22 @@ impl TerminalApp {
                     }
                 });
             }
+            moved = reorder.finish(ui);
             ui.add_space(4.0);
             ui.label(
-                RichText::new("WL ADD <KEY> to add · right-click a row for options").font(ui_font(11.0)).color(muted()),
+                RichText::new("WL ADD <KEY> to add · drag to reorder · right-click a row for options").font(ui_font(11.0)).color(muted()),
             );
         });
+        let list = match group {
+            Some(gi) => &mut self.groups[gi].keys,
+            None => &mut self.watchlist,
+        };
         if let Some(s) = remove {
-            self.watchlist.retain(|x| *x != s);
+            list.retain(|x| *x != s);
+        }
+        if let Some((from, to)) = moved {
+            let item = list.remove(from);
+            list.insert(to, item);
         }
         out
     }
