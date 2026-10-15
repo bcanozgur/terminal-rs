@@ -100,7 +100,9 @@ fn forming_bar(chart: &Chart, tf: Timeframe, now: i64) -> Option<Bar> {
     for b in chart.bars.iter().filter(|b| bucket(b.ts) == last_bucket) {
         cur = Some(match cur {
             None => Bar::new(last_bucket, b.open, b.high, b.low, b.close, b.volume),
-            Some(c) => Bar::new(last_bucket, c.open, c.high.max(b.high), c.low.min(b.low), b.close, c.volume + b.volume),
+            Some(c) => {
+                Bar::new(last_bucket, c.open, c.high.max(b.high), c.low.min(b.low), b.close, c.volume + b.volume)
+            }
         });
     }
     let mut bar = cur?;
