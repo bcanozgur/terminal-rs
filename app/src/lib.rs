@@ -24,6 +24,7 @@ mod worker;
 use std::sync::Arc;
 use std::time::Instant;
 
+pub use eframe;
 pub use tr_study;
 
 /// Start the terminal with the given chart studies (in addition to the built-in indicators).
