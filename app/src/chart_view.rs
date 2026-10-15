@@ -70,6 +70,11 @@ pub struct ChartState {
     built_studies: Vec<BuiltStudy>,
     /// Study tables collapsed to their title strip (per chart; new charts show them).
     study_tables_hidden: bool,
+    /// Width (points) the study tables cover at the plot's right edge; the latest bar is kept
+    /// left of it while following.
+    table_inset: f32,
+    /// The view is pinned to the latest bar (until the user pans away).
+    follow_latest: bool,
     compare_line: Option<LineRef>,
     compare_scale: f64,
     markers: Vec<Trade>,
@@ -122,6 +127,8 @@ impl ChartState {
             built: Vec::new(),
             built_studies: Vec::new(),
             study_tables_hidden: false,
+            table_inset: 0.0,
+            follow_latest: true,
             compare_line: None,
             compare_scale: 1.0,
             markers: Vec::new(),
@@ -149,6 +156,7 @@ impl ChartState {
         self.exhausted = false;
         self.error = None;
         self.viewport = None;
+        self.follow_latest = true;
         self.manual_scale = None;
         self.compare_line = None;
         self.markers.clear();
@@ -224,6 +232,7 @@ impl ChartState {
         };
         *v = Viewport::fit_last(self.bars.len(), count.max(2), v.width_px);
         self.manual_scale = None;
+        self.follow_latest = true;
     }
 
     pub fn toggle_indicator(&mut self, spec: IndicatorSpec, w: &Worker) {
@@ -307,12 +316,14 @@ impl ChartState {
             *v = Viewport::fit_last(self.bars.len(), DEFAULT_VISIBLE, v.width_px);
         }
         self.manual_scale = None;
+        self.follow_latest = true;
     }
 
     pub fn pan_bars(&mut self, n: f64) {
         if let Some(v) = self.viewport.as_mut() {
             v.pan_bars(n);
             v.clamp(self.bars.len());
+            self.follow_latest = false;
         }
     }
 
@@ -662,11 +673,15 @@ impl ChartState {
             }
             if scroll.x != 0.0 {
                 v.pan_px(scroll.x as f64);
+                self.follow_latest = false;
             }
         }
         if self.draw.tool.is_none() && plot_resp.dragged() {
             let d = plot_resp.drag_delta();
             self.viewport.as_mut().expect("viewport").pan_px(d.x as f64);
+            if d.x != 0.0 {
+                self.follow_latest = false;
+            }
             if let Some(s) = self.manual_scale.as_mut() {
                 s.pan_px(d.y as f64);
             }
@@ -683,6 +698,16 @@ impl ChartState {
         }
         let v = *self.viewport.as_ref().expect("viewport");
         let mut v = v;
+        // Following the latest bar: keep it clear of the study tables (and re-pin when the
+        // user pans back to the right end). Recomputed every frame, so resizing the pane,
+        // zooming and hiding/showing a table all keep the gap right.
+        let latest_right = len as f64 + 3.0 + self.table_inset as f64 / v.bar_px;
+        if !self.follow_latest && v.right >= latest_right {
+            self.follow_latest = true;
+        }
+        if self.follow_latest {
+            v.right = latest_right;
+        }
         v.clamp(len);
         self.viewport = Some(v);
 
@@ -924,18 +949,27 @@ impl ChartState {
         // Study tables in the top-right corner, under the Buy/Sell buttons, stacked.
         let mut table_top = if has_trade_buttons { 32.0 } else { 6.0 };
         let mut toggle = false;
+        let mut inset: f32 = 0.0;
         for (k, b) in self.built_studies.iter().enumerate() {
             if let Some(t) = &b.output.table {
                 let id = ui.id().with((self.id, "study-table", k));
                 let (r, clicked) =
                     studies::paint_table(ui, price_rect, table_top, &b.name, t, self.study_tables_hidden, id);
                 toggle |= clicked;
+                if !self.study_tables_hidden {
+                    inset = inset.max(price_rect.right() - r.left() + 10.0);
+                }
                 table_top = r.bottom() - price_rect.top() + 6.0;
             }
         }
         if toggle {
             self.study_tables_hidden = !self.study_tables_hidden;
             clicked = true;
+        }
+        if (inset - self.table_inset).abs() > 0.5 {
+            // The table appeared, changed width or was hidden: redraw with the new gap.
+            self.table_inset = inset;
+            ui.ctx().request_repaint();
         }
         if let Some((at, tip)) = study_tip {
             studies::tooltip_card(ui, at, &tip);
