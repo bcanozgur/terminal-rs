@@ -1,0 +1,12 @@
+[package]
+name = "tr-study"
+description = "Plug-in chart studies for terminal-rs: settings, lines, fills, markers, sub-panes and tables"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tr-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

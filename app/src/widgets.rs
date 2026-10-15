@@ -2,8 +2,8 @@
 //! toolbar icon buttons, rounded cards and hover washes.
 
 use egui::{
-    Align2, Color32, CornerRadius, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, epaint::RectShape, pos2,
-    vec2,
+    Align2, Color32, CornerRadius, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, epaint::RectShape,
+    pos2, vec2,
 };
 
 use crate::anim;

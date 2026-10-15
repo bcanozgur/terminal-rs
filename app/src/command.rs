@@ -244,6 +244,8 @@ pub enum Function {
     Timeframe(Timeframe),
     ChartType(ChartType),
     Indicator(IndicatorSpec),
+    /// Toggle a plug-in study by id (its command, e.g. `C11`).
+    Study(String),
     ClearIndicators,
     Compare(Option<String>),
     LogScale,
@@ -398,6 +400,9 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             _ => return None,
         },
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
+        _ if crate::studies::by_command(&up).is_some() => {
+            Function::Study(crate::studies::by_command(&up)?.id().to_string())
+        }
         // Timeframes win where spellings overlap (`1D`, `1M`); otherwise try a range (`5D`, `YTD`).
         _ => {
             return head
@@ -476,6 +481,9 @@ fn describe(f: &Function) -> String {
         ),
         Function::ChartType(c) => format!("Chart type {}", c.label()),
         Function::Indicator(i) => format!("Toggle {}", i.label()),
+        Function::Study(id) => {
+            format!("Toggle {}", crate::studies::get(id).map_or(id.as_str(), |s| s.name()))
+        }
         Function::ClearIndicators => "Remove all indicators".into(),
         Function::Compare(Some(s)) => format!("Compare with {s}"),
         Function::Compare(None) => "Remove comparison".into(),

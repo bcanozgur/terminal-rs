@@ -247,6 +247,7 @@ impl PaneKind {
                 chart_type: c.chart_type,
                 log: c.log,
                 indicators: c.indicators.clone(),
+                studies: c.studies.clone(),
                 drawings: c.drawings.clone(),
                 compare: c.compare.clone(),
                 show_volume: c.show_volume,
@@ -292,6 +293,7 @@ impl PaneKind {
                 chart_type,
                 log,
                 indicators,
+                studies,
                 drawings,
                 compare,
                 show_volume,
@@ -302,6 +304,7 @@ impl PaneKind {
                 c.chart_type = chart_type;
                 c.log = log;
                 c.indicators = indicators;
+                c.studies = studies;
                 c.drawings = drawings;
                 c.compare = compare;
                 c.show_volume = show_volume;
@@ -379,7 +382,9 @@ fn default_true() -> bool {
 /// BIST 30 constituents, most traded first (average daily TRY turnover over the 60 sessions
 /// before 15 Oct 2026).
 const BIST30_BY_VOLUME: [&str; 30] = [
-    "THYAO", "ASELS", "AKBNK", "TUPRS", "ASTOR", "YKBNK", "ISCTR", "KCHOL", "EREGL", "GARAN", "BIMAS", "SAHOL", "EKGYO", "TCELL", "SISE", "KRDMD", "TTKOM", "PETKM", "HALKB", "VAKBN", "MGROS", "SASA", "FROTO", "PGSUS", "BRSAN", "GUBRF", "ENKAI", "TOASO", "TAVHL", "ALARK"
+    "THYAO", "ASELS", "AKBNK", "TUPRS", "ASTOR", "YKBNK", "ISCTR", "KCHOL", "EREGL", "GARAN", "BIMAS", "SAHOL",
+    "EKGYO", "TCELL", "SISE", "KRDMD", "TTKOM", "PETKM", "HALKB", "VAKBN", "MGROS", "SASA", "FROTO", "PGSUS", "BRSAN",
+    "GUBRF", "ENKAI", "TOASO", "TAVHL", "ALARK",
 ];
 
 /// A named, collapsible list in the sidebar, beside the main watchlist.
@@ -836,6 +841,7 @@ impl TerminalApp {
         match f {
             Function::Timeframe(tf) => self.with_chart(|c, w| c.set_timeframe(tf, w)),
             Function::ChartType(t) => self.with_chart(|c, _| c.chart_type = t),
+            Function::Study(id) => self.with_chart(|c, w| c.toggle_study(&id, w)),
             Function::Indicator(spec) => self.with_chart(|c, w| c.toggle_indicator(spec, w)),
             Function::ClearIndicators => self.with_chart(|c, _| c.clear_indicators()),
             Function::Compare(s) => self.with_chart(|c, w| c.set_compare(s, w)),
@@ -1010,6 +1016,11 @@ impl TerminalApp {
                 Response::Compare { pane, generation, symbol, line } => {
                     if let Some(c) = self.chart_mut(pane) {
                         c.on_compare(generation, &symbol, line);
+                    }
+                }
+                Response::Studies { pane, generation, built } => {
+                    if let Some(c) = self.chart_mut(pane) {
+                        c.on_studies(generation, built);
                     }
                 }
                 Response::Markers { pane, symbol, trades } => {
