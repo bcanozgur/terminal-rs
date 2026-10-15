@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- terminal-rs app icon: two screens on one stand, macOS icon grid (824 body, transparent outside). -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#151517"/>
+      <stop offset="1" stop-color="#050506"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9e9ec"/>
+    </linearGradient>
+    <pattern id="dots" width="41.2" height="41.2" patternUnits="userSpaceOnUse" x="100" y="100">
+      <circle cx="20.6" cy="20.6" r="2.6" fill="#f5a623" fill-opacity="0.32"/>
+    </pattern>
+    <clipPath id="squircle">
+      <rect x="100" y="100" width="824" height="824" rx="186" ry="186"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#body)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#dots)"/>
+  </g>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="186" ry="186" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>
+
+  <!-- stand: pole between the screens and an oval base with a socket -->
+  <rect x="499" y="520" width="26" height="128" fill="#f4f4f6"/>
+  <ellipse cx="512" cy="664" rx="124" ry="38" fill="#f4f4f6"/>
+  <ellipse cx="512" cy="652" rx="26" ry="9" fill="#0a0a0b"/>
+
+  <!-- left screen: candles -->
+  <rect x="228" y="318" width="276" height="206" rx="20" fill="url(#screen)"/>
+  <g stroke-width="5" stroke-linecap="round">
+    <line x1="278" y1="414" x2="278" y2="474" stroke="#e5484d"/>
+    <rect x="268" y="426" width="20" height="36" rx="3" fill="#e5484d"/>
+    <line x1="318" y1="398" x2="318" y2="466" stroke="#1f9d55"/>
+    <rect x="308" y="410" width="20" height="44" rx="3" fill="#1f9d55"/>
+    <line x1="358" y1="380" x2="358" y2="442" stroke="#1f9d55"/>
+    <rect x="348" y="390" width="20" height="40" rx="3" fill="#1f9d55"/>
+    <line x1="398" y1="388" x2="398" y2="446" stroke="#e5484d"/>
+    <rect x="388" y="398" width="20" height="30" rx="3" fill="#e5484d"/>
+    <line x1="438" y1="352" x2="438" y2="420" stroke="#1f9d55"/>
+    <rect x="428" y="362" width="20" height="46" rx="3" fill="#1f9d55"/>
+  </g>
+  <line x1="256" y1="492" x2="476" y2="492" stroke="#c9c9cf" stroke-width="4"/>
+
+  <!-- right screen: price line and quote rows -->
+  <rect x="520" y="318" width="276" height="206" rx="20" fill="url(#screen)"/>
+  <polyline points="548,448 584,430 616,440 650,398 686,410 720,368 768,352" fill="none" stroke="#f5a623" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="768" cy="352" r="9" fill="#f5a623"/>
+  <g fill="#2a2a30">
+    <rect x="548" y="474" width="96" height="10" rx="5"/>
+    <rect x="548" y="494" width="64" height="10" rx="5"/>
+    <rect x="700" y="474" width="68" height="10" rx="5" fill="#1f9d55"/>
+    <rect x="716" y="494" width="52" height="10" rx="5" fill="#e5484d"/>
+  </g>
+</svg>

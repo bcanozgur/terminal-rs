@@ -4,8 +4,8 @@
 #   scripts/bundle-macos.sh                 # target/release/terminal-rs
 #   scripts/bundle-macos.sh path/to/binary  # another build of the terminal (e.g. with extra studies)
 #
-# The icon is assets/icon/terminal-rs.icns, made from terminal-rs-1024.png (each iconset size
-# with `sips -z`, then `iconutil -c icns`).
+# The icon is assets/icon/terminal-rs.icns, made from terminal-rs.svg (render each iconset size
+# from the SVG, then `iconutil -c icns`).
 set -euo pipefail
 bin=${1:-}
 [ -n "$bin" ] && bin=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
