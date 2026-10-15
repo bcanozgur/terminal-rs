@@ -29,30 +29,30 @@ impl TerminalApp {
         let mut child = ui.new_child(UiBuilder::new().max_rect(inner).id_salt(("pane", id)));
         child.set_clip_rect(inner.intersect(ui.clip_rect()));
         let ui = &mut child;
+        let q = self.search_bar(ui, i);
+        let q = q.as_str();
         match &mut self.panes[i].kind {
-            PaneKind::Feed { filter } => actions.extend(congress_view::feed(ui, &self.latest, filter, &freshness)),
+            PaneKind::Feed { filter } => actions.extend(congress_view::feed(ui, &self.latest, filter, &freshness, q)),
             PaneKind::Ticker { symbol, trades, loading } => {
                 if *loading {
                     ui.label(RichText::new("Loading…").color(muted()));
                 } else {
-                    actions.extend(congress_view::ticker_trades(ui, symbol, trades));
+                    actions.extend(congress_view::ticker_trades(ui, symbol, trades, q));
                 }
             }
             PaneKind::Profile { query, data, loading } => {
-                actions.extend(congress_view::profile(ui, query, data.as_deref(), *loading))
+                actions.extend(congress_view::profile(ui, query, data.as_deref(), *loading, q))
             }
-            PaneKind::Politicians => {
-                actions.extend(congress_view::politicians(ui, &self.politicians, &mut self.pol_search))
-            }
+            PaneKind::Politicians => actions.extend(congress_view::politicians(ui, &self.politicians, q)),
             PaneKind::Alerts => {
-                let (a, seen) = congress_view::alerts(ui, &self.alerts);
+                let (a, seen) = congress_view::alerts(ui, &self.alerts, q);
                 actions.extend(a);
                 if seen {
                     self.worker.send(Request::MarkAlertsSeen);
                 }
             }
             PaneKind::Wei => {
-                actions.extend(markets_view::wei(ui, &self.quotes, self.wei_updated.as_deref(), &mut self.wei_order))
+                actions.extend(markets_view::wei(ui, &self.quotes, self.wei_updated.as_deref(), &mut self.wei_order, q))
             }
             PaneKind::Curve => actions.extend(markets_view::curve(ui, self.curves.as_deref())),
             PaneKind::Search { query } => {
@@ -65,7 +65,7 @@ impl TerminalApp {
             }
             PaneKind::News(n) => {
                 let offline = self.provider.eq_ignore_ascii_case("sample");
-                if let Some(refresh) = news(ui, n, offline) {
+                if let Some(refresh) = news(ui, n, offline, q) {
                     n.fetched = None;
                     n.loading = refresh;
                 }
@@ -83,6 +83,7 @@ impl TerminalApp {
                 }
             }
             PaneKind::Portfolio(pp) => {
+                pp.query = q.to_string();
                 let demo =
                     (self.prefs.trading.account_mode == crate::prefs::AccountMode::Demo).then_some(&*self.demo.pf);
                 for a in super::portfolio_view::portfolio(ui, pp, &self.broker, demo, &self.quotes) {
@@ -120,11 +121,11 @@ impl TerminalApp {
             PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
         }
         match self.panes[i].kind {
-            PaneKind::Watchlist => actions.extend(self.watchlist(ui, None)),
+            PaneKind::Watchlist => actions.extend(self.watchlist(ui, None, q)),
             PaneKind::List(ref name) => {
                 let name = name.clone();
                 let gi = self.groups.iter().position(|g| g.name == name);
-                actions.extend(self.watchlist(ui, gi))
+                actions.extend(self.watchlist(ui, gi, q))
             }
             PaneKind::Help => self.help_panel(ui),
             PaneKind::Settings => {
@@ -137,12 +138,45 @@ impl TerminalApp {
     }
 
     /// The watchlist table; `group` selects a sidebar list instead of the main watchlist.
-    fn watchlist(&mut self, ui: &mut Ui, group: Option<usize>) -> Vec<Action> {
-        let keys: Vec<String> = match group {
+    /// Pane `i`'s filter box, when open (see the strip's search button). Returns the
+    /// trimmed, lowercased query, empty when the box is closed or blank.
+    fn search_bar(&mut self, ui: &mut Ui, i: usize) -> String {
+        let id = self.panes[i].id;
+        let Some(hint) = self.panes[i].kind.search_hint() else { return String::new() };
+        let Some(q) = self.pane_search.get_mut(&id) else { return String::new() };
+        let r = ui.add(
+            egui::TextEdit::singleline(q)
+                .id(egui::Id::new(("pane-search", id)))
+                .hint_text(RichText::new(hint).font(ui_font(12.0)).color(muted()))
+                .font(mono(12.5))
+                .text_color(amber())
+                .desired_width(f32::INFINITY),
+        );
+        if self.search_focus == Some(id) {
+            r.request_focus();
+            self.search_focus = None;
+        }
+        let needle = q.trim().to_ascii_lowercase();
+        if r.lost_focus() && ui.input(|inp| inp.key_pressed(egui::Key::Escape)) {
+            self.pane_search.remove(&id);
+            return String::new();
+        }
+        ui.add_space(4.0);
+        needle
+    }
+
+    fn watchlist(&mut self, ui: &mut Ui, group: Option<usize>, q: &str) -> Vec<Action> {
+        let mut keys: Vec<String> = match group {
             Some(gi) => self.groups[gi].keys.clone(),
             None => self.watchlist.clone(),
         };
         let mut out = Vec::new();
+        let filtering = !q.is_empty();
+        if filtering {
+            keys.retain(|k| {
+                tr_data::security(k).ticker.to_ascii_lowercase().contains(q) || k.to_ascii_lowercase().contains(q)
+            });
+        }
         let row_h = dp(22.0);
         let w = ui.available_width();
         let (hdr, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
@@ -255,7 +289,7 @@ impl TerminalApp {
         if let Some(s) = remove {
             list.retain(|x| *x != s);
         }
-        if let Some((from, to)) = moved {
+        if let Some((from, to)) = moved.filter(|_| !filtering) {
             let item = list.remove(from);
             list.insert(to, item);
         }
@@ -264,7 +298,7 @@ impl TerminalApp {
 }
 
 /// Headlines list. Returns `Some(_)` when a refresh was requested.
-fn news(ui: &mut Ui, n: &mut super::NewsPane, offline: bool) -> Option<bool> {
+fn news(ui: &mut Ui, n: &mut super::NewsPane, offline: bool, q: &str) -> Option<bool> {
     let mut refresh = None;
     ui.horizontal_wrapped(|ui| {
         let title = match &n.symbol {
@@ -299,7 +333,10 @@ fn news(ui: &mut Ui, n: &mut super::NewsPane, offline: bool) -> Option<bool> {
     let now = chrono::Utc::now().timestamp();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let w = ui.available_width();
-        for item in &n.items {
+        let shown = n.items.iter().filter(|it| {
+            q.is_empty() || it.title.to_ascii_lowercase().contains(q) || it.publisher.to_ascii_lowercase().contains(q)
+        });
+        for item in shown {
             let age = (now - item.ts).max(0);
             let when = if age < 3600 {
                 format!("{}m", age / 60)

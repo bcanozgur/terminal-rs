@@ -228,6 +228,22 @@ impl PaneKind {
         }
     }
 
+    /// Placeholder of the pane's filter box, for panes whose rows can be filtered.
+    fn search_hint(&self) -> Option<&'static str> {
+        Some(match self {
+            PaneKind::Watchlist | PaneKind::List(_) => "Filter by ticker…",
+            PaneKind::Feed { .. } => "Filter by politician, ticker or asset…",
+            PaneKind::Ticker { .. } => "Filter by politician or asset…",
+            PaneKind::Profile { .. } => "Filter trades by ticker or asset…",
+            PaneKind::Politicians => "Filter by name or state…",
+            PaneKind::Alerts => "Filter by politician or message…",
+            PaneKind::Wei => "Filter by ticker or name…",
+            PaneKind::News(_) => "Filter headlines…",
+            PaneKind::Portfolio(_) => "Filter by symbol…",
+            _ => return None,
+        })
+    }
+
     fn follows_symbol(&self) -> bool {
         matches!(
             self,
@@ -334,7 +350,14 @@ impl PaneKind {
                 PaneKind::Options(Box::new(OptionsPane::new(&symbol, strikes, greeks)))
             }
             PaneSettings::Portfolio { view, account, symbol, sort, open_only } => {
-                PaneKind::Portfolio(Box::new(broker::PortfolioPane { view, account, symbol, sort, open_only }))
+                PaneKind::Portfolio(Box::new(broker::PortfolioPane {
+                    view,
+                    account,
+                    symbol,
+                    sort,
+                    open_only,
+                    query: String::new(),
+                }))
             }
         }
     }
@@ -517,7 +540,10 @@ pub struct TerminalApp {
 
     latest: Vec<Trade>,
     politicians: Vec<PoliticianSummary>,
-    pol_search: String,
+    /// Open in-pane filter boxes, keyed by pane.
+    pane_search: HashMap<PaneId, String>,
+    /// Pane whose filter box takes the keyboard on its next draw.
+    search_focus: Option<PaneId>,
     alerts: Vec<Alert>,
     congress_status: String,
     /// When the last Congress ingest finished.
@@ -662,7 +688,8 @@ impl TerminalApp {
             toasts: Vec::new(),
             latest: Vec::new(),
             politicians: Vec::new(),
-            pol_search: String::new(),
+            pane_search: HashMap::new(),
+            search_focus: None,
             alerts: Vec::new(),
             congress_status: String::new(),
             congress_checked: None,

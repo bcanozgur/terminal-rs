@@ -227,15 +227,27 @@ pub fn draw_icon(p: &egui::Painter, r: Rect, icon: Icon, color: Color32) {
 
 /// Borderless toolbar button with an animated hover/press wash.
 pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, active: bool) -> Response {
+    icon_button_tinted(ui, icon, tooltip, active, theme::accent(), theme::accent_wash())
+}
+
+/// [`icon_button`] whose active state uses `tint` over `wash` instead of the accent.
+pub fn icon_button_tinted(
+    ui: &mut Ui,
+    icon: Icon,
+    tooltip: &str,
+    active: bool,
+    tint: egui::Color32,
+    wash: egui::Color32,
+) -> Response {
     // Fill the space given (toolbars pass compact rects), up to a 28×24 button.
     let size = vec2(ui.available_width().clamp(18.0, 28.0), ui.available_height().clamp(18.0, 24.0));
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let t = anim::spring_bool(ui.ctx(), resp.id.with("hover"), resp.hovered() || active);
     if t > 0.01 {
-        let base = if active { theme::accent_wash() } else { theme::control_hover() };
+        let base = if active { wash } else { theme::control_hover() };
         ui.painter().rect_filled(rect, theme::CONTROL_RADIUS, base.gamma_multiply(t));
     }
-    let color = if active { theme::accent() } else { theme::text().gamma_multiply(0.85) };
+    let color = if active { tint } else { theme::text().gamma_multiply(0.85) };
     draw_icon(ui.painter(), rect.shrink(4.0), icon, color);
     resp.on_hover_text(tooltip)
 }

@@ -120,6 +120,7 @@ pub fn wei(
     quotes: &HashMap<String, Quote>,
     updated: Option<&str>,
     order: &mut Vec<String>,
+    q: &str,
 ) -> Vec<Action> {
     let mut out = Vec::new();
     let width = ui.available_width();
@@ -139,6 +140,16 @@ pub fn wei(
                 ui.vertical(|ui| {
                     ui.set_width(col_w);
                     for g in groups.iter().skip(c * per).take(per) {
+                        let mut listings: Vec<&Listing> = catalog::group(*g)
+                            .filter(|l| {
+                                q.is_empty()
+                                    || l.ticker.to_ascii_lowercase().contains(q)
+                                    || l.name.to_ascii_lowercase().contains(q)
+                            })
+                            .collect();
+                        if listings.is_empty() {
+                            continue;
+                        }
                         let (r, _) = ui.allocate_exact_size(vec2(col_w, 20.0), Sense::hover());
                         ui.painter().rect_filled(r, theme::CONTROL_RADIUS, theme::header());
                         ui.painter().text(
@@ -156,14 +167,14 @@ pub fn wei(
                             mono(10.5),
                             amber_dim(),
                         );
-                        let mut listings: Vec<&Listing> = catalog::group(*g).collect();
                         listings.sort_by_key(|l| order.iter().position(|k| *k == l.key()).unwrap_or(usize::MAX));
                         let mut reorder = crate::widgets::Reorder::new(egui::Id::new(("wei-reorder", g.label())));
                         for l in &listings {
                             let (rect, resp) = row(ui, l, quotes, &mut out, col_w);
                             reorder.row(rect, &resp);
                         }
-                        if let Some((from, to)) = reorder.finish(ui) {
+                        // Reordering a filtered subset would shuffle the hidden rows.
+                        if let Some((from, to)) = reorder.finish(ui).filter(|_| q.is_empty()) {
                             let item = listings.remove(from);
                             listings.insert(to, item);
                             let keys: Vec<String> = listings.iter().map(|l| l.key()).collect();
