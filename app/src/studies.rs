@@ -309,6 +309,16 @@ pub fn paint_table(ui: &Ui, area: Rect, top: f32, table: &tr_study::Table, salt:
             }
         }
     }
+    // Widen the last column until every spanning cell fits.
+    for row in table.rows.iter().filter(|r| !r.is_empty() && r.len() < cols) {
+        let k = row.len() - 1;
+        let g = p.layout_no_wrap(row[k].text.clone(), font.clone(), text());
+        let have: f32 = widths[k..].iter().sum();
+        let need = g.size().x + 12.0;
+        if need > have {
+            widths[cols - 1] += need - have;
+        }
+    }
     let total_w: f32 = widths.iter().sum();
     let total_h = row_h * table.rows.len() as f32;
     let rect = Rect::from_min_size(pos2(area.right() - total_w - 8.0, area.top() + top), vec2(total_w, total_h));
