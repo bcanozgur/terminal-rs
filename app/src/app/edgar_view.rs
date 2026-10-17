@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use egui::{RichText, Sense, Ui};
 use tr_data::Quote;
-use tr_data::bist::{self, BistCompany, Currency};
+use tr_data::bist::{self, BistCompany};
 use tr_data::edgar::{self, Company, Statement};
 
 use crate::congress_view::Action;
@@ -94,10 +94,6 @@ impl EdgarPane {
     /// The Borsa Istanbul code when this is a BIST equity.
     pub fn bist_code(&self) -> Option<String> {
         bist::bist_ticker(&self.symbol)
-    }
-
-    pub fn currency(&self) -> Currency {
-        if self.usd { Currency::Usd } else { Currency::Try }
     }
 
     /// Switch a BIST pane between TRY and USD statements (refetches; the data layer caches).
