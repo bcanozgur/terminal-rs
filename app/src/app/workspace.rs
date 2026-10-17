@@ -21,7 +21,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 24] = [
+pub const PANELS: [(&str, &str); 25] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -43,6 +43,7 @@ pub const PANELS: [(&str, &str); 24] = [
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
     ("Alerts", "ALRT"),
+    ("Audit Log", "AUDIT"),
     ("Security Search", "SECF"),
     ("Settings", "PREFS"),
     ("Help", "HELP"),
@@ -703,6 +704,9 @@ impl TerminalApp {
                 }
                 r.apply_args(&words[1..].join(" "));
                 PaneKind::Risk(Box::new(r))
+            }
+            "AUDIT" | "HOL" => {
+                PaneKind::Audit(Box::new(super::safety_view::AuditPane::new(if head == "HOL" { "hol" } else { "" })))
             }
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,

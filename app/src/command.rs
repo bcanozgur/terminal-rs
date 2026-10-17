@@ -327,6 +327,10 @@ pub enum Function {
     TrFunds(String),
     /// US market movers (`MOST`, `MOST LOSERS`, `MOST ACTIVE`).
     Most(String),
+    /// Order audit log and market holidays (`AUDIT`, `HOL`).
+    Audit(String),
+    /// Kill switch (`KILL`, `KILL CANCEL`, `KILL OFF`).
+    Kill(String),
     /// Smart money (`SMART`, `SMART SHORT`, `SMART 13F`, `AAPL SMART`): Form 4, 13F and FINRA short interest.
     Smart(String),
     /// Portfolio risk (`RISK`, `RISK QQQ 2Y`; `CORR` opens the correlation heatmap).
@@ -434,6 +438,9 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ETF" | "ETFS" => Function::Etf(joined()),
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
         "MOST" | "MOVERS" => Function::Most(joined()),
+        "AUDIT" => Function::Audit(joined()),
+        "HOL" | "HOLIDAYS" => Function::Audit("hol".into()),
+        "KILL" | "KILLSWITCH" => Function::Kill(joined()),
         "SMART" | "SMARTMONEY" => Function::Smart(joined()),
         "RISK" | "VAR" => Function::Risk(joined()),
         "CORR" => Function::Risk(format!("CORR {}", joined())),
@@ -634,6 +641,15 @@ fn describe(f: &Function) -> String {
         Function::TrFunds(a) => match a.split_whitespace().count() {
             0 => "Turkish funds (KAP): allocation, buys and sells, reverse search".into(),
             _ => format!("Turkish funds: {}", a.to_ascii_uppercase()),
+        },
+        Function::Audit(a) if a.trim().eq_ignore_ascii_case("hol") => {
+            "Market holidays and early closes: NYSE, Borsa Istanbul".into()
+        }
+        Function::Audit(_) => "Audit log: order attempts, kill switch and limit changes".into(),
+        Function::Kill(a) => match a.trim().to_ascii_uppercase().as_str() {
+            "OFF" | "RELEASE" | "STOP" => "Kill switch OFF: allow new orders again".into(),
+            "CANCEL" | "ALL" => "Kill switch ON and cancel all open orders".into(),
+            _ => "Kill switch ON: block every new order".into(),
         },
         Function::Most(a) => match a.split_whitespace().next().map(str::to_ascii_lowercase).as_deref() {
             Some("losers") => "Market movers: US day losers".into(),
@@ -888,6 +904,16 @@ mod tests {
         assert_eq!(parse("ECON PREV"), Some(Command::Function(Function::Eco("PREV".into()))));
         assert_eq!(parse("ECOF core cpi"), Some(Command::Function(Function::EcoSeries("core cpi".into()))));
         assert!(hint("ECOF CPI").contains("CPIAUCSL"));
+    }
+
+    #[test]
+    fn safety_commands() {
+        assert_eq!(parse("KILL"), Some(Command::Function(Function::Kill(String::new()))));
+        assert_eq!(parse("kill off"), Some(Command::Function(Function::Kill("off".into()))));
+        assert_eq!(parse("AUDIT"), Some(Command::Function(Function::Audit(String::new()))));
+        assert_eq!(parse("HOL"), Some(Command::Function(Function::Audit("hol".into()))));
+        assert!(hint("KILL OFF").contains("OFF"));
+        assert!(hint("HOL").contains("holidays"));
     }
 
     #[test]

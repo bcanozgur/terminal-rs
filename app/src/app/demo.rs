@@ -213,7 +213,25 @@ impl TerminalApp {
             return self.trade_toast(format!("No {symbol} shares to close (check open sell orders)"), false);
         };
         let quote = market_key(symbol).and_then(|k| self.quotes.get(&k)).map(|q| q.last);
-        let _ = self.demo_submit(&req, quote);
+        match self.submit_gate(&req, quote, false) {
+            Ok(a) => {
+                let result = self.demo_submit(&req, quote);
+                self.audit_demo_result(&req, &a, false, quote, &result);
+            }
+            // Warnings (market closed, …) are confirmed in the ticket, which opens on the position.
+            Err(super::safety_view::GateErr::NeedsConfirm(_)) => {
+                self.open_ticket(
+                    crate::command::TradeArgs {
+                        buy: Some(false),
+                        symbol: Some(market_key(symbol).unwrap_or_else(|| symbol.to_string())),
+                        all: true,
+                        ..Default::default()
+                    },
+                    Some(req.account_id.clone()),
+                );
+            }
+            Err(e) => self.trade_toast(format!("Close not sent: {}", e.text()), false),
+        }
     }
 
     pub(super) fn reset_demo(&mut self, cash: f64) {
