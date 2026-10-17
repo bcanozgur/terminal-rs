@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tr_core::{Security, indicators};
+use tr_core::{Security, Timeframe, indicators};
 
 /// History of fired alerts kept in the book.
 const HISTORY: usize = 200;
@@ -232,6 +232,13 @@ pub struct Rule {
     /// Last observed state (see [`Condition::state`]); persisted so a restart never re-fires.
     #[serde(default)]
     pub state: Option<bool>,
+    /// Chart timeframe active when the alert was created on a chart (`None` for older rules
+    /// and alerts typed on the command line).
+    #[serde(default)]
+    pub tf: Option<Timeframe>,
+    /// Free-text note shown on the chart's alert line.
+    #[serde(default)]
+    pub note: String,
 }
 
 impl Rule {
@@ -279,6 +286,8 @@ pub enum RuleOp {
     Enable(u64, bool),
     Repeat(u64, bool),
     Delete(u64),
+    /// Change a rule's condition and note (re-arms it: its tracked state starts fresh).
+    Edit(u64, Condition, String),
     /// Native (macOS) notifications on or off.
     Notify(bool),
     MarkSeen,
@@ -344,6 +353,8 @@ impl AlertBook {
             last_fired: None,
             fired: 0,
             state: None,
+            tf: None,
+            note: String::new(),
         });
         id
     }
@@ -357,7 +368,20 @@ impl AlertBook {
         match op {
             RuleOp::Add(spec) => {
                 let Some(symbol) = spec.symbol else { return false };
-                self.add(&symbol, spec.cond, spec.repeat, now);
+                let id = self.add(&symbol, spec.cond, spec.repeat, now);
+                if let Some(r) = self.rule_mut(id) {
+                    r.tf = spec.tf;
+                    r.note = spec.note;
+                }
+            }
+            RuleOp::Edit(id, cond, note) => {
+                let Some(r) = self.rule_mut(id) else { return false };
+                if r.cond == cond && r.note == note {
+                    return false;
+                }
+                r.cond = cond;
+                r.note = note;
+                r.state = None;
             }
             RuleOp::Enable(id, on) => {
                 let Some(r) = self.rule_mut(id) else { return false };
@@ -429,13 +453,13 @@ impl AlertBook {
         (fired, changed)
     }
 
-    /// Price levels of `symbol`'s enabled price rules (drawn on its charts).
-    pub fn levels(&self, symbol: &str) -> Vec<f64> {
+    /// `symbol`'s enabled price-level rules, drawn as lines on its charts.
+    pub fn chart_alerts(&self, symbol: &str) -> Vec<ChartAlert> {
         self.rules
             .iter()
             .filter(|r| r.enabled && r.symbol == symbol && r.cond.metric == Metric::Price)
             .filter_map(|r| match r.cond.target {
-                Target::Level(x) => Some(x),
+                Target::Level(level) => Some(ChartAlert { id: r.id, level, op: r.cond.op, note: r.note.clone() }),
                 _ => None,
             })
             .collect()
@@ -446,6 +470,21 @@ impl AlertBook {
     }
 }
 
+/// An armed price-level alert as a chart draws it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartAlert {
+    pub id: u64,
+    pub level: f64,
+    pub op: Op,
+    pub note: String,
+}
+
+/// The condition a chart suggests for a new alert at `price`: crossing up when the price is
+/// above the last price, crossing down when below.
+pub fn default_chart_op(price: f64, last: Option<f64>) -> Op {
+    if last.is_some_and(|l| price < l) { Op::CrossBelow } else { Op::CrossAbove }
+}
+
 /// A rule typed on the command line: `ALRT AAPL > 250`, `ALRT NVDA RSI > 70 REPEAT`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spec {
@@ -453,6 +492,9 @@ pub struct Spec {
     pub symbol: Option<String>,
     pub cond: Condition,
     pub repeat: bool,
+    /// Chart timeframe the alert was created on, if any.
+    pub tf: Option<Timeframe>,
+    pub note: String,
 }
 
 fn metric_word(w: &str) -> Option<Metric> {
@@ -591,7 +633,7 @@ pub fn parse(words: &[&str]) -> Option<Spec> {
             _ => false,
         },
     };
-    valid.then_some(Spec { symbol, cond, repeat })
+    valid.then_some(Spec { symbol, cond, repeat, tf: None, note: String::new() })
 }
 
 #[cfg(test)]
@@ -706,6 +748,8 @@ mod tests {
             last_fired: None,
             fired: 0,
             state: None,
+            tf: None,
+            note: String::new(),
         };
         assert_eq!(r.check(&px(240.0), 1), Some(240.0));
         assert!(r.check(&px(240.0), 2).is_none());
@@ -866,5 +910,50 @@ mod tests {
         assert!(path.with_extension("json.bad").exists());
         assert_eq!(AlertBook::load(&dir.join("missing.json")), AlertBook::default());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn old_rules_without_timeframe_or_note_still_load() {
+        let mut b = AlertBook::default();
+        b.add("AAPL US Equity", cond(Metric::Price, Op::Above, Target::Level(250.0)), false, 1);
+        let mut v = serde_json::to_value(&b).unwrap();
+        let rule = v["rules"][0].as_object_mut().unwrap();
+        assert!(rule.remove("tf").is_some() && rule.remove("note").is_some());
+        let old: AlertBook = serde_json::from_value(v).unwrap();
+        assert_eq!(old.rules[0].tf, None);
+        assert_eq!(old.rules[0].note, "");
+        assert_eq!(old.rules[0].cond, b.rules[0].cond);
+    }
+
+    #[test]
+    fn chart_alert_keeps_timeframe_and_note_and_can_be_edited() {
+        let mut b = AlertBook::default();
+        let spec = Spec {
+            symbol: Some("AAPL US Equity".into()),
+            cond: cond(Metric::Price, Op::CrossAbove, Target::Level(260.0)),
+            repeat: false,
+            tf: Some(Timeframe::H1),
+            note: "breakout".into(),
+        };
+        assert!(b.apply(RuleOp::Add(spec), 1));
+        assert_eq!(b.rules[0].tf, Some(Timeframe::H1));
+        let shown = b.chart_alerts("AAPL US Equity");
+        assert_eq!(shown.len(), 1);
+        assert_eq!((shown[0].level, shown[0].note.as_str()), (260.0, "breakout"));
+        let id = b.rules[0].id;
+        let moved = cond(Metric::Price, Op::CrossBelow, Target::Level(240.0));
+        assert!(b.apply(RuleOp::Edit(id, moved, "stop".into()), 2));
+        assert_eq!(b.chart_alerts("AAPL US Equity")[0].level, 240.0);
+        assert!(!b.apply(RuleOp::Edit(id, moved, "stop".into()), 3), "no change");
+        // Triggered alerts stop drawing.
+        b.rules[0].enabled = false;
+        assert!(b.chart_alerts("AAPL US Equity").is_empty());
+    }
+
+    #[test]
+    fn chart_default_condition_follows_last_price() {
+        assert_eq!(default_chart_op(110.0, Some(100.0)), Op::CrossAbove);
+        assert_eq!(default_chart_op(90.0, Some(100.0)), Op::CrossBelow);
+        assert_eq!(default_chart_op(90.0, None), Op::CrossAbove);
     }
 }
