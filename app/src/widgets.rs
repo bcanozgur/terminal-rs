@@ -98,6 +98,7 @@ pub enum Icon {
     Plus,
     More,
     Gear,
+    Info,
 }
 
 /// Draw a simple line icon centred in `r`.
@@ -191,6 +192,11 @@ pub fn draw_icon(p: &egui::Painter, r: Rect, icon: Icon, color: Color32) {
         }
         Icon::Chart => {
             p.add(Shape::line(vec![pt(-6.0, 4.0), pt(-2.0, -1.0), pt(1.0, 2.0), pt(6.0, -4.5)], s));
+        }
+        Icon::Info => {
+            p.circle_stroke(c, 6.5 * u, s);
+            p.circle_filled(pt(0.0, -3.2), 0.9 * u.max(1.0), color);
+            p.line_segment([pt(0.0, -0.8), pt(0.0, 3.8)], s);
         }
         Icon::Plus => {
             p.line_segment([pt(-5.0, 0.0), pt(5.0, 0.0)], s);

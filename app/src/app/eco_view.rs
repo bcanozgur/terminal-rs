@@ -215,6 +215,7 @@ fn calendar(ui: &mut Ui, pane: &mut EcoPane, q: &str) {
                         actual: Some(l.actual),
                         prior: l.prior,
                         state: RowState::Released,
+                        consensus: None,
                     };
                     if latest_row(ui, &cols, &r) {
                         open = Some(l.code);
@@ -235,6 +236,7 @@ struct Columns {
     local: f32,
     event: f32,
     period: f32,
+    cons: f32,
     actual: f32,
     prior: f32,
     change: f32,
@@ -248,8 +250,9 @@ impl Columns {
         let change = imp - dp(10.0);
         let prior = change - num;
         let actual = prior - num;
-        let period = actual - num - dp(6.0);
-        Self { w, et: dp(6.0), local: dp(52.0), event: dp(100.0), period, actual, prior, change, imp }
+        let cons = actual - num;
+        let period = cons - num - dp(6.0);
+        Self { w, et: dp(6.0), local: dp(52.0), event: dp(100.0), period, cons, actual, prior, change, imp }
     }
 }
 
@@ -266,6 +269,7 @@ fn header(ui: &mut Ui, c: &Columns) {
     t(c.local, Align2::LEFT_CENTER, "LOCAL");
     t(c.event, Align2::LEFT_CENTER, "US EVENT");
     t(c.period, Align2::RIGHT_CENTER, "PERIOD");
+    t(c.cons, Align2::RIGHT_CENTER, "CONS");
     t(c.actual, Align2::RIGHT_CENTER, "ACTUAL");
     t(c.prior, Align2::RIGHT_CENTER, "PRIOR");
     t(c.change, Align2::RIGHT_CENTER, "CHG");
@@ -292,10 +296,17 @@ fn row(ui: &mut Ui, c: &Columns, r: &EcoRow, now: i64) -> bool {
     let clip = Rect::from_min_max(pos2(x(c.event), rect.top()), pos2(x(c.event) + name_w, rect.bottom()));
     p.with_clip_rect(clip).galley(pos2(x(c.event), y - name.size().y / 2.0), name, text());
     p.text(pos2(x(c.period), y), Align2::RIGHT_CENTER, r.period_label(), f.clone(), muted());
+    if let Some(cons) = &r.consensus {
+        p.text(pos2(x(c.cons), y), Align2::RIGHT_CENTER, cons, f.clone(), text());
+    }
     match r.state {
         RowState::Released => {
             let a = r.actual.unwrap_or_default();
-            let col = match r.change() {
+            // Against consensus when it is comparable (the surprise), otherwise against prior.
+            // Compared at the displayed precision, so an in-line print stays neutral.
+            let shown = e.fmt(a).trim_end_matches(e.unit).parse().unwrap_or(a);
+            let surprise = r.consensus.as_deref().and_then(|s| eco::consensus_value(e, s)).map(|c| shown - c);
+            let col = match surprise.or(r.change()) {
                 Some(d) if d > 1e-9 => theme::up(),
                 Some(d) if d < -1e-9 => theme::down(),
                 _ => amber(),
@@ -335,8 +346,9 @@ fn row(ui: &mut Ui, c: &Columns, r: &EcoRow, now: i64) -> bool {
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    let cons = r.consensus.as_deref().map_or(String::new(), |c| format!("\nConsensus {c} (ForexFactory)"));
     let tip = format!(
-        "{} · FRED {} ({})\n{} {:02}:{:02} ET · {} local\nClick for history (ECOF {})",
+        "{} · FRED {} ({})\n{} {:02}:{:02} ET · {} local{cons}\nClick for history (ECOF {})",
         e.name,
         e.series,
         e.measure(),
@@ -391,7 +403,7 @@ fn footer(ui: &mut Ui, week: &EcoWeek) {
     };
     note(&source);
     note(
-        "No consensus/forecast column: survey expectations are not available from free sources. Actual and prior are as first published that day (ALFRED). ISM is proprietary and not on FRED.",
+        "Consensus: ForexFactory's free weekly calendar (current week only); ACTUAL is green/red against it when comparable, otherwise against PRIOR. Actual and prior are as first published that day (ALFRED). ISM is proprietary and not on FRED.",
     );
     for n in &week.notes {
         ui.label(RichText::new(n).font(ui_font(11.0)).color(theme::down()));

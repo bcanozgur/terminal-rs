@@ -7,8 +7,9 @@
 //!   real-time period (what ALFRED calls a vintage); without one, ALFRED's keyless `alfredgraph.csv` with `vintage_date` = the release
 //!   day, so each row shows what was published that day, not today's revised numbers.
 //! - History: `fred/series/observations` with a key, FRED's keyless `fredgraph.csv` without.
+//! - Consensus: ForexFactory's free weekly calendar export (`ff_calendar_thisweek.json`, no
+//!   key), so forecasts are shown for the current week only.
 //!
-//! There is no consensus/forecast column: survey expectations are not available for free.
 //! Everything fetched is cached in SQLite; settled releases are cached for good.
 
 use std::collections::HashMap;
@@ -26,6 +27,8 @@ const FRED_API: &str = "https://api.stlouisfed.org/fred";
 const CALENDAR: &str = "https://fred.stlouisfed.org/releases/calendar";
 const ALFRED_CSV: &str = "https://alfred.stlouisfed.org/graph/alfredgraph.csv";
 const FRED_CSV: &str = "https://fred.stlouisfed.org/graph/fredgraph.csv";
+/// ForexFactory's public calendar export for the current week (forecasts included).
+const FF_WEEK: &str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
 /// Environment variable holding a FRED API key (overrides the stored key).
 pub const ENV_KEY: &str = "FRED_API_KEY";
 /// Where to get a free key.
@@ -389,6 +392,8 @@ pub struct EcoRow {
     pub actual: Option<f64>,
     pub prior: Option<f64>,
     pub state: RowState,
+    /// Consensus forecast as published (`0.4%`, `199K`), current week only.
+    pub consensus: Option<String>,
 }
 
 impl EcoRow {
@@ -497,6 +502,7 @@ pub fn schedule(monday: NaiveDate, dates: &[ReleaseDate]) -> Vec<EcoRow> {
                     actual: None,
                     prior: None,
                     state: RowState::Upcoming,
+                    consensus: None,
                 });
             }
         };
@@ -510,6 +516,74 @@ pub fn schedule(monday: NaiveDate, dates: &[ReleaseDate]) -> Vec<EcoRow> {
     }
     rows.sort_by(|a, b| a.ts.cmp(&b.ts).then(b.event().importance.cmp(&a.event().importance)));
     rows
+}
+
+// ---- consensus ----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FfEvent {
+    pub title: String,
+    pub country: String,
+    /// RFC 3339 with the US Eastern offset.
+    pub date: String,
+    #[serde(default)]
+    pub forecast: String,
+}
+
+/// Parse ForexFactory's weekly calendar export.
+pub fn parse_ff(json: &str) -> Result<Vec<FfEvent>> {
+    serde_json::from_str(json).context("ForexFactory calendar")
+}
+
+/// Whether a ForexFactory title is the release behind event `code`.
+fn ff_matches(code: &str, title: &str) -> bool {
+    let t = title.trim();
+    match code {
+        "CPI" => t == "CPI m/m",
+        "CPIYOY" => t == "CPI y/y",
+        "CORECPI" => t == "Core CPI m/m",
+        "PPI" => t == "PPI m/m",
+        "PCE" => t == "PCE Price Index m/m",
+        "COREPCE" => t == "Core PCE Price Index m/m",
+        "NFP" => t == "Non-Farm Employment Change",
+        "UNRATE" => t == "Unemployment Rate",
+        "CLAIMS" => t == "Unemployment Claims",
+        // Advance, Prelim and Final estimates.
+        "GDP" => t.ends_with("GDP q/q"),
+        "RETAIL" => t == "Retail Sales m/m",
+        "INDPRO" => t == "Industrial Production m/m",
+        "HOUST" => t == "Housing Starts",
+        "UMICH" => t.ends_with("UoM Consumer Sentiment"),
+        "JOLTS" => t == "JOLTS Job Openings",
+        "FOMC" => t == "Federal Funds Rate",
+        _ => false,
+    }
+}
+
+/// Put US consensus forecasts on the rows released the same (Eastern) day.
+pub fn apply_consensus(rows: &mut [EcoRow], ff: &[FfEvent]) {
+    for r in rows {
+        let hit = ff.iter().find(|f| {
+            f.country == "USD"
+                && !f.forecast.trim().is_empty()
+                && ff_matches(r.code, &f.title)
+                && chrono::DateTime::parse_from_rfc3339(&f.date).is_ok_and(|d| d.date_naive() == r.date)
+        });
+        if let Some(f) = hit {
+            r.consensus = Some(f.forecast.trim().to_string());
+        }
+    }
+}
+
+/// A consensus figure in the event's own unit, when the two can be compared (`0.4%` for a
+/// percent release, `199K` for claims).
+pub fn consensus_value(ev: &EcoEvent, s: &str) -> Option<f64> {
+    let s = s.trim();
+    let (num, unit) = match s.char_indices().last() {
+        Some((i, c)) if c.is_ascii_alphabetic() || c == '%' => (&s[..i], &s[i..]),
+        _ => (s, ""),
+    };
+    (unit == ev.unit).then(|| num.parse().ok()).flatten()
 }
 
 // ---- key ----------------------------------------------------------------------------------
@@ -835,6 +909,14 @@ impl Eco {
         let mut rows = schedule(monday, &dates);
         let jobs: Vec<_> = rows.iter_mut().map(|r| self.fill(key, r, now)).collect();
         futures::stream::iter(jobs).buffer_unordered(CONCURRENCY).collect::<Vec<()>>().await;
+        // The export covers the current week only.
+        let today = chrono::DateTime::from_timestamp(now, 0).map_or(NaiveDate::MIN, |t| t.date_naive());
+        if (monday..=sunday).contains(&today) {
+            match self.text(FF_WEEK, "forexfactory thisweek", now, Some(HOUR)).await.and_then(|b| parse_ff(&b)) {
+                Ok(ff) => apply_consensus(&mut rows, &ff),
+                Err(e) => notes.push(format!("consensus: {e:#}")),
+            }
+        }
         let latest = if source == DateSource::Unavailable { self.latest(key, now).await } else { Vec::new() };
         if let Ok(d) = self.down.lock() {
             let mut hosts: Vec<&String> = d.iter().filter(|&(_, &t)| t > now).map(|(h, _)| h).collect();
@@ -932,6 +1014,35 @@ impl EcoRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consensus_from_forexfactory() {
+        let json = r#"[
+            {"title":"CPI m/m","country":"USD","date":"2026-10-14T08:30:00-04:00","impact":"High","forecast":"0.6%","previous":"0.4%"},
+            {"title":"CPI m/m","country":"GBP","date":"2026-10-14T02:00:00-04:00","impact":"High","forecast":"0.9%","previous":"0.4%"},
+            {"title":"Unemployment Claims","country":"USD","date":"2026-10-15T08:30:00-04:00","impact":"Medium","forecast":"199K","previous":"197K"},
+            {"title":"Prelim UoM Consumer Sentiment","country":"USD","date":"2026-10-16T10:00:00-04:00","impact":"High","forecast":"","previous":"55.1"}
+        ]"#;
+        let ff = parse_ff(json).unwrap();
+        let d = |day| NaiveDate::from_ymd_opt(2026, 10, day).unwrap();
+        let mut rows = schedule(
+            d(12),
+            &[
+                ReleaseDate { release_id: 10, date: d(14), et: None },
+                ReleaseDate { release_id: 180, date: d(15), et: None },
+                ReleaseDate { release_id: 91, date: d(16), et: None },
+            ],
+        );
+        apply_consensus(&mut rows, &ff);
+        let cons = |code: &str| rows.iter().find(|r| r.code == code).and_then(|r| r.consensus.clone());
+        assert_eq!(cons("CPI").as_deref(), Some("0.6%"));
+        assert_eq!(cons("CPIYOY"), None);
+        assert_eq!(cons("CLAIMS").as_deref(), Some("199K"));
+        assert_eq!(cons("UMICH"), None);
+        assert_eq!(consensus_value(event("CPI").unwrap(), "0.6%"), Some(0.6));
+        assert_eq!(consensus_value(event("CLAIMS").unwrap(), "199K"), Some(199.0));
+        assert_eq!(consensus_value(event("HOUST").unwrap(), "1.31M"), None);
+    }
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()

@@ -237,6 +237,77 @@ impl PaneKind {
         }
     }
 
+    /// What the panel shows and how to use it (the ⓘ button in the tab strip).
+    fn about(&self) -> &'static str {
+        match self {
+            PaneKind::Chart(_) => {
+                "Chart (GP): price bars with studies. Pick the interval and style in the header, right-click \
+                 for studies, markers and drawing tools. Type a ticker to load it."
+            }
+            PaneKind::Feed { .. } => {
+                "Congress feed (CONG): stock trades disclosed by members of the US Congress (Senate eFD and \
+                 House Clerk filings), newest first. Filter by party, chamber or side; click a row for details."
+            }
+            PaneKind::Ticker { .. } => "Congress trades in one security (TICKER CONG): who bought or sold it and when.",
+            PaneKind::Profile { .. } => "Politician profile (POL): one member's disclosed trades and holdings.",
+            PaneKind::Politicians => {
+                "Politicians (POL): members of Congress ranked by disclosed trading; star one to track it."
+            }
+            PaneKind::Alerts => {
+                "Alerts (ALRT): your price and indicator alerts, plus new Congress filings for tracked members \
+                 and tickers. Add one with e.g. AAPL ALRT > 250 or from a chart's right-click menu."
+            }
+            PaneKind::Watchlist => {
+                "Watchlist (WL): your securities with live quotes. WL ADD <ticker> to add; drag to reorder."
+            }
+            PaneKind::List(_) => "Security list (LST): a ready-made group such as BIST 30, sorted by volume.",
+            PaneKind::Help => "Commands and hotkeys (HELP): every function code and keyboard shortcut.",
+            PaneKind::Wei => {
+                "World equity indices (WEI): major indices by region with the day's change. Click one to chart it."
+            }
+            PaneKind::Curve => "Yield curve (GC): US Treasury yields by maturity: today, a month ago and a year ago.",
+            PaneKind::Search { .. } => {
+                "Security search (SECF): find stocks, ETFs, indices, FX and crypto by name or ticker."
+            }
+            PaneKind::News(_) => "News (CN): headlines for the security, or top market news when none is loaded.",
+            PaneKind::OrderBook(_) => {
+                "Order book (OB): live bids and asks with depth, for markets with a public book (crypto)."
+            }
+            PaneKind::Options(_) => {
+                "Option monitor (OMON): calls and puts by expiry and strike with prices and implied volatility."
+            }
+            PaneKind::Portfolio(_) => {
+                "Portfolio (PORT): positions, orders, accounts and activity of the demo or connected account, \
+                 with live P&L including pre- and after-market prices."
+            }
+            PaneKind::Settings => "Settings (PDF): appearance, panels, data keys, trading and layouts.",
+            PaneKind::Edgar(e) if e.fa => {
+                "Financials (FA): income statement, balance sheet, cash flow and ratios from the company's SEC \
+                 filings (XBRL), annual or quarterly. US-listed companies only. Type a ticker in the box and \
+                 press Enter; click a row to chart that line."
+            }
+            PaneKind::Edgar(_) => {
+                "Description (DES): company profile from SEC EDGAR: business, sector, fiscal year, key figures, \
+                 valuation at the live price and recent filings. US-listed companies only. Type a ticker in the \
+                 box and press Enter."
+            }
+            PaneKind::Earnings(e) if e.symbol.is_some() => {
+                "Earnings history (TICKER ERN): past and next report dates with EPS estimate vs actual, the \
+                 surprise and the stock's move on the report. Source: Nasdaq calendar and SEC filings."
+            }
+            PaneKind::Earnings(_) => {
+                "Earnings calendar (ERN): which companies report each day of the week, before the open (BMO) \
+                 or after the close (AMC), with EPS estimates. Your watchlist and positions are highlighted; \
+                 click a row for that company's history."
+            }
+            PaneKind::Eco(_) => {
+                "Economic calendar (ECO): this week's US releases (CPI, payrolls, retail sales, FOMC…) with \
+                 consensus, actual, prior and change. Actual vs consensus is the surprise markets react to. \
+                 Click a row for its history (ECOF). Sources: FRED, ForexFactory."
+            }
+        }
+    }
+
     /// The security this pane follows, for symbol-driven panels.
     fn symbol(&self) -> Option<&str> {
         match self {

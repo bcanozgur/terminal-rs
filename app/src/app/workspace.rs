@@ -985,7 +985,8 @@ impl TerminalApp {
         let btn =
             |i: f32| Rect::from_min_size(pos2(strip.right() - 26.0 * i - 2.0, strip.top() + 2.0), vec2(24.0, th - 4.0));
         let searchable = self.idx(active).is_some_and(|i| self.panes[i].kind.search_hint().is_some());
-        let tabs_right = btn(if searchable { 3.0 } else { 2.0 }).left() - 4.0;
+        let info_slot = if searchable { 4.0 } else { 3.0 };
+        let tabs_right = btn(info_slot).left() - 4.0;
         // A chart's interval and type controls share the tab strip when there is room,
         // which saves the chart a whole header row.
         let chart_idx = self.idx(active).filter(|&i| matches!(self.panes[i].kind, PaneKind::Chart(_)));
@@ -1126,6 +1127,15 @@ impl TerminalApp {
                     self.focus = active;
                 }
             }
+        }
+        if let Some(i) = self.idx(active) {
+            let mut b = ui.new_child(UiBuilder::new().max_rect(btn(info_slot)));
+            let resp = widgets::icon_button(&mut b, Icon::Info, "About this panel", false);
+            let about = self.panes[i].kind.about();
+            egui::Popup::menu(&resp).show(|ui| {
+                ui.set_max_width(320.0);
+                ui.label(egui::RichText::new(about).font(ui_font(12.0)).color(text()));
+            });
         }
         let plus = btn(2.0);
         let mut b = ui.new_child(UiBuilder::new().max_rect(plus));

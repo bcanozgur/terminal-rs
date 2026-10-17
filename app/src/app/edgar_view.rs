@@ -36,6 +36,8 @@ pub struct EdgarPane {
     pub selected: Option<edgar::Metric>,
     /// Last live-quote request (price for market cap and multiples).
     pub quoted: Option<Instant>,
+    /// Ticker box in the header while it is being edited.
+    pub symbol_edit: Option<String>,
 }
 
 impl EdgarPane {
@@ -51,6 +53,7 @@ impl EdgarPane {
             tab: 0,
             selected: None,
             quoted: None,
+            symbol_edit: None,
         }
     }
 
@@ -191,8 +194,9 @@ fn note(ui: &mut Ui, msg: &str) {
 fn header(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote>, out: &mut EdgarOut) {
     ui.horizontal_wrapped(|ui| {
         let key = tr_data::security(&p.symbol);
+        symbol_box(ui, p, &key.ticker);
         if !p.symbol.is_empty() {
-            let r = ui.label(RichText::new(&key.ticker).font(mono(13.0)).color(amber())).interact(Sense::click());
+            let r = ui.label(RichText::new("↗").font(mono(13.0)).color(amber())).interact(Sense::click());
             if r.clicked() {
                 out.actions.push(Action::OpenChart(p.symbol.clone()));
             }
@@ -218,6 +222,29 @@ fn header(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote>, out: 
             out.refetch = true;
         }
     });
+}
+
+/// Editable ticker: type a symbol and press Enter to load it; Escape keeps the old one.
+fn symbol_box(ui: &mut Ui, p: &mut EdgarPane, ticker: &str) {
+    let mut buf = p.symbol_edit.take().unwrap_or_else(|| ticker.to_string());
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut buf)
+            .font(mono(13.0))
+            .text_color(amber())
+            .hint_text("AAPL")
+            .desired_width(theme::dp(72.0)),
+    );
+    let r = r.on_hover_text("Type a US ticker and press Enter");
+    if r.lost_focus() {
+        let entered = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let typed = buf.trim().to_ascii_uppercase();
+        if entered && !typed.is_empty() {
+            let key = tr_data::security(&typed).key();
+            p.set_symbol(&key);
+        }
+    } else if r.has_focus() {
+        p.symbol_edit = Some(buf);
+    }
 }
 
 /// The SEC User-Agent text field (Settings › Panels, and the pane's first-run prompt).
