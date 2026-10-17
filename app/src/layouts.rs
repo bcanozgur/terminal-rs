@@ -188,6 +188,11 @@ pub enum PaneSettings {
         #[serde(default)]
         window: usize,
     },
+    /// Audit log and market holidays: `tab` is `log` or `hol`.
+    Audit {
+        #[serde(default)]
+        tab: String,
+    },
 }
 
 fn yes() -> bool {

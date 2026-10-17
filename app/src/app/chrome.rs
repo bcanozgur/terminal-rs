@@ -131,11 +131,12 @@ impl TerminalApp {
             let next = if live_mode { crate::prefs::AccountMode::Demo } else { crate::prefs::AccountMode::Live };
             self.set_account_mode(next, false);
         }
+        let kill_x = self.kill_toolbar(ui, &p, badge.right() + 8.0, cy);
         if live_mode {
             // A red rule along the toolbar so live mode is never mistaken for the demo.
             p.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(2.0, theme::down()));
         }
-        x = badge.right() + 10.0;
+        x = kill_x + 2.0;
 
         // Right-hand cluster, laid out from the right edge: one-line clock (UTC on hover).
         let now = chrono::Local::now();
@@ -758,6 +759,7 @@ impl TerminalApp {
                 (Icon::Grid, "Market Movers", "MOST", Function::Most(String::new())),
                 (Icon::List, "Smart Money", "SMART", Function::Smart(String::new())),
                 (Icon::Gauge, "Portfolio Risk", "RISK", Function::Risk(String::new())),
+                (Icon::List, "Audit Log", "AUDIT", Function::Audit(String::new())),
             ];
             for (icon, label, code, f) in items {
                 if nav_row(ui, icon, label, Some(code), focused_code == Some(code)).clicked() {

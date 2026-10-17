@@ -21,6 +21,7 @@ mod palette_view;
 mod panels;
 mod portfolio_view;
 mod risk_view;
+mod safety_view;
 mod settings_view;
 mod smart_view;
 mod theming;
@@ -105,6 +106,8 @@ pub enum PaneKind {
     Smart(Box<smart_view::SmartPane>),
     /// Portfolio risk (`RISK`, `CORR`): VaR, beta, drawdown, risk contribution, correlation heatmap.
     Risk(Box<risk_view::RiskPane>),
+    /// Audit log of order attempts and safety changes, and market holidays (`AUDIT`, `HOL`).
+    Audit(Box<safety_view::AuditPane>),
 }
 
 pub struct OptionsPane {
@@ -260,6 +263,7 @@ impl PaneKind {
             PaneKind::Most(e) => e.title(),
             PaneKind::Smart(e) => e.title(),
             PaneKind::Risk(e) => e.title(),
+            PaneKind::Audit(e) => e.title(),
         }
     }
 
@@ -290,6 +294,7 @@ impl PaneKind {
             PaneKind::Most(e) => e.code(),
             PaneKind::Smart(e) => e.code(),
             PaneKind::Risk(e) => e.code(),
+            PaneKind::Audit(e) => e.code(),
         }
     }
 
@@ -404,6 +409,12 @@ impl PaneKind {
                  funds hold a BIST stock; 'Index curated list' downloads popular funds' reports to disk. Data: KAP \
                  'Portföy Dağılım Raporu' PDFs (published in the first days of each month) and fund information forms. \
                  Redemption valör comes from the fund's prospectus on KAP; purchase valör is not stated there (n/a)."
+            }
+            PaneKind::Audit(_) => {
+                "Audit log (AUDIT): every order attempt (time, account, symbol, side, size, type, price, the pre-trade checks, \
+                 whether you confirmed warnings, and the outcome) plus kill-switch and limit changes, newest first. Filter by \
+                 symbol or outcome; Export CSV writes the rows shown to the data folder. The files are append-only JSONL, one \
+                 per month, in the audit folder. The Holidays tab (HOL) lists NYSE and Borsa Istanbul closures and early closes."
             }
             PaneKind::Risk(_) => {
                 "Portfolio risk (RISK, CORR): computed locally from about two years of daily history of your positions, \
@@ -523,6 +534,7 @@ impl PaneKind {
                 let (tab, benchmark, window) = e.settings();
                 PaneSettings::Risk { tab: tab.into(), benchmark, window }
             }
+            PaneKind::Audit(e) => PaneSettings::Audit { tab: e.settings().into() },
         }
     }
 
@@ -596,6 +608,7 @@ impl PaneKind {
             PaneSettings::Risk { tab, benchmark, window } => {
                 PaneKind::Risk(Box::new(risk_view::RiskPane::new(&tab, &benchmark, window)))
             }
+            PaneSettings::Audit { tab } => PaneKind::Audit(Box::new(safety_view::AuditPane::new(&tab))),
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
             PaneSettings::Smart { symbol, tab } => {
@@ -829,6 +842,8 @@ pub struct TerminalApp {
     trading: trading::TradingState,
     /// The paper-trading demo account (selected by default).
     demo: demo::DemoState,
+    /// Pre-trade limits, kill switch and the audit log.
+    safety: safety_view::SafetyState,
     /// ⌘K command palette.
     palette: crate::palette::Palette,
 }
@@ -892,6 +907,7 @@ impl TerminalApp {
             broker,
             trading: Default::default(),
             demo,
+            safety: safety_view::SafetyState::load(),
             worker,
             provider,
             panes: Vec::new(),
@@ -1293,6 +1309,8 @@ impl TerminalApp {
             Function::Most(arg) => self.most_command(&arg),
             Function::Smart(arg) => self.smart_command(&arg, None),
             Function::Risk(arg) => self.risk_command(&arg),
+            Function::Audit(arg) => self.audit_command(&arg),
+            Function::Kill(arg) => self.kill_command(&arg),
         }
     }
 

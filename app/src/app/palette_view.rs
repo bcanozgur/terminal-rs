@@ -124,6 +124,20 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ),
     ("RISK QQQ", "Portfolio risk vs QQQ", "risk beta benchmark qqq spy xu100 alpha tracking", None),
     (
+        "AUDIT",
+        "Audit log: order attempts, kill switch, limit changes",
+        "audit log orders history export csv compliance",
+        None,
+    ),
+    (
+        "HOL",
+        "Market holidays and early closes: NYSE, Borsa Istanbul",
+        "hol holidays calendar early close bayram market closed",
+        None,
+    ),
+    ("KILL", "Kill switch: block every new order", "kill switch stop panic block orders halt", None),
+    ("KILL OFF", "Kill switch off: allow orders again", "kill off release resume orders", None),
+    (
         "CORR",
         "Correlation heatmap of the portfolio's holdings",
         "corr correlation matrix heatmap portfolio holdings",

@@ -426,7 +426,7 @@ impl TerminalApp {
     }
 
     /// Accounts orders can go to: the demo account, or the live (or sample) accounts.
-    fn trade_accounts(&self) -> Vec<Account> {
+    pub(super) fn trade_accounts(&self) -> Vec<Account> {
         if self.demo_mode() {
             return vec![self.demo.book.account()];
         }
@@ -434,7 +434,7 @@ impl TerminalApp {
     }
 
     /// Units held in `account` (positive for longs).
-    fn held_units(&self, account: &str, symbol: &str) -> Option<f64> {
+    pub(super) fn held_units(&self, account: &str, symbol: &str) -> Option<f64> {
         let pf = if account == demo::ACCOUNT_ID { Some(&*self.demo.pf) } else { self.broker.portfolio.as_deref() };
         pf?.positions.iter().find(|p| p.account_id == account && p.symbol.eq_ignore_ascii_case(symbol)).map(|p| p.units)
     }
@@ -583,7 +583,7 @@ impl TerminalApp {
     }
 
     /// The ticket's main button: place now (demo) or review and confirm (live).
-    fn ticket_submit(&mut self) {
+    fn ticket_submit(&mut self, confirmed: bool) {
         // One order per deliberate action: a held Enter or a double click is not a second order.
         if self.trading.last_submit.is_some_and(|t| t.elapsed() < Duration::from_millis(600)) {
             return;
@@ -595,8 +595,13 @@ impl TerminalApp {
             Ok(r) => r,
             Err(e) => return self.ticket_error(e),
         };
+        let assessment = match self.submit_gate(&req, quote, confirmed) {
+            Ok(a) => a,
+            Err(e) => return self.ticket_error(e.text().to_string()),
+        };
         if req.account_id == demo::ACCOUNT_ID {
             let result = self.demo_submit(&req, quote);
+            self.audit_demo_result(&req, &assessment, confirmed, quote, &result);
             if let Some(t) = self.trading.ticket.as_mut() {
                 match result {
                     Ok(o) => {
@@ -616,7 +621,9 @@ impl TerminalApp {
             return;
         }
         // Live: a current preview goes straight to the confirmation; otherwise preview first.
-        if let Some(p) = t.current_preview().filter(|p| !p.expired(chrono::Utc::now())) {
+        let fresh =
+            self.trading.ticket.as_ref().and_then(|t| t.current_preview()).filter(|p| !p.expired(chrono::Utc::now()));
+        if let Some(p) = fresh {
             return match self.over_limit(p, quote) {
                 Some(e) => self.ticket_error(e),
                 None => {
@@ -712,6 +719,12 @@ impl TerminalApp {
             Err(e) => return self.ticket_error(e),
         };
         let id = t.id;
+        // The last gate before anything is sent (kill switch, hard limits).
+        let gate = match self.submit_gate(&preview.request, quote, true) {
+            Ok(a) => a,
+            Err(e) => return self.ticket_error(e.text().to_string()),
+        };
+        self.set_live_ctx(id, &preview.request, &gate, quote);
         if preview.simulated {
             let result = match self.broker.portfolio.as_deref_mut() {
                 Some(pf) if pf.simulated => {
@@ -825,6 +838,7 @@ impl TerminalApp {
             TradeResponse::Placed { ticket, preview, result } => {
                 let summary = preview.request.summary();
                 let ok = result.is_ok();
+                self.audit_live_result(ticket, &preview.request, &result);
                 let msg = match &result {
                     Ok(Some(o)) => format!(
                         "Order {}: {summary}{}",
@@ -909,6 +923,7 @@ impl TerminalApp {
     /// The ticket window and the confirmation dialogs.
     pub(super) fn trading_windows(&mut self, ctx: &egui::Context) {
         self.trading_periodic(ctx);
+        self.safety_periodic();
         if self.trading.ticket.is_some() {
             self.ticket_window(ctx);
         }
@@ -953,7 +968,7 @@ impl TerminalApp {
             return;
         }
         match act {
-            Some(TicketAct::Submit) => self.ticket_submit(),
+            Some(TicketAct::Submit { confirmed }) => self.ticket_submit(confirmed),
             Some(TicketAct::EnableLive) => {
                 self.trading.enable_prompt = true;
                 self.trading.ack = false;
@@ -996,6 +1011,9 @@ impl TerminalApp {
         let demo_available = self.trading.ticket.as_ref().map(|t| self.demo.book.available(t.symbol.trim()));
         let demo_bp = self.demo.book.buying_power();
         let save_error = self.demo.save_error.clone();
+        // Pre-trade checks of the order as it stands (blocks, warnings, kill switch).
+        let checks = self.trading.ticket.as_ref().and_then(|t| t.request().ok()).map(|r| self.pretrade(&r, quote));
+        let kill = self.kill_on();
         let t = self.trading.ticket.as_mut()?;
         let mut act = None;
         let mut enter = false;
@@ -1353,6 +1371,31 @@ impl TerminalApp {
         if let Some(e) = &t.error {
             ui.label(RichText::new(e).font(ui_font(12.0)).color(theme::down()));
         }
+        if kill {
+            ui.label(
+                RichText::new("KILL SWITCH ON: new orders are blocked (KILL OFF releases it).")
+                    .font(ui_font(12.0))
+                    .color(theme::down()),
+            );
+        }
+        let mut blocked = false;
+        let mut warned = false;
+        if let Some(a) = &checks {
+            for f in &a.findings {
+                let (tag, color) = match f.verdict {
+                    crate::safety::Verdict::Block => ("Blocked", theme::down()),
+                    _ => ("Warning", amber()),
+                };
+                match f.verdict {
+                    crate::safety::Verdict::Block => blocked = true,
+                    _ => warned = true,
+                }
+                // The kill switch has its own line above.
+                if f.check != "kill switch" {
+                    ui.label(RichText::new(format!("{tag}: {}", f.reason)).font(ui_font(11.5)).color(color));
+                }
+            }
+        }
         if demo_mode && let Some(e) = &save_error {
             ui.label(
                 RichText::new(format!("The demo account could not be saved ({e}); retrying."))
@@ -1380,12 +1423,14 @@ impl TerminalApp {
             (_, true) => format!("{} (demo)", t.side.label()),
             (_, false) => format!("Review {}…", t.side.label()),
         };
-        let can = enabled && ready.is_ok() && blocker.is_none() && problem.is_none() && !busy;
+        let label = if warned && !blocked { format!("Place anyway: {label}") } else { label };
+        let can = enabled && ready.is_ok() && blocker.is_none() && problem.is_none() && !busy && !blocked;
         ui.horizontal(|ui| {
             let b = filled(&label, fill, can).min_size(egui::vec2(ui.available_width() - dp(24.0), dp(30.0)));
             let reason = match &ready {
                 Err(e) => e.clone(),
                 Ok(_) if !enabled => "Live orders are off".into(),
+                Ok(_) if blocked => "Blocked by a pre-trade check (see above)".into(),
                 Ok(_) => blocker.clone().or(problem.clone()).unwrap_or_else(|| "Working…".into()),
             };
             let tip = if demo_mode {
@@ -1394,14 +1439,15 @@ impl TerminalApp {
                 "Your broker checks the order and estimates cost; then one confirmation sends it"
             };
             if ui.add_enabled(can, b).on_hover_text(tip).on_disabled_hover_text(reason).clicked() {
-                act = Some(TicketAct::Submit);
+                act = Some(TicketAct::Submit { confirmed: warned });
             }
             if busy {
                 ui.add(egui::Spinner::new().size(14.0));
             }
         });
-        if enter && can {
-            act = Some(TicketAct::Submit);
+        // Enter never confirms a warning: that takes a click on 'Place anyway'.
+        if enter && can && !warned {
+            act = Some(TicketAct::Submit { confirmed: false });
         }
         if busy {
             ui.label(
@@ -1877,6 +1923,8 @@ impl TerminalApp {
             });
         }
 
+        self.safety_settings_ui(ui);
+
         section(ui, "Brokerage access");
         let live = self.broker.mode() == BrokerMode::Live;
         if live && !demo_mode {
@@ -1976,7 +2024,10 @@ impl TerminalApp {
 }
 
 enum TicketAct {
-    Submit,
+    /// `confirmed`: the user clicked the button while warnings were showing.
+    Submit {
+        confirmed: bool,
+    },
     EnableLive,
     Mode(AccountMode),
 }

@@ -277,6 +277,27 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   reason; benchmark figures show n/a with the reason when its history is missing or shares too few
   days. Values are not converted between currencies. The maths lives in `tr_core::risk`.
 
+- **Order safety rails (`KILL`, `AUDIT`, `HOL`)** — every order, demo or live, from the ticket, a
+  command-line order (`BUY NVDA $500` opens the ticket) or a Close button, passes one gate right
+  before it is sent. *Pre-trade checks* return Pass, Warn or Block, shown in the ticket and as the
+  refusal text: max order value, max shares per order, price collar (limit more than X% from last),
+  max orders per 24 h, buying power and no-short rules (blocks); max position size as % of the
+  portfolio, fat-finger (order > N x your recent average), duplicate order within 5 s, and
+  exchange closed / pre-market / after-hours (warnings, which need a click on *Place anyway*; Enter
+  never confirms). Limits are set in Settings › Trading › Pre-trade checks (untick one to switch it
+  off) and saved in `safety.json` in the data folder. *Kill switch*: the `KILL` chip in the toolbar,
+  or `KILL` / `KILL CANCEL` (also cancels open orders) / `KILL OFF`, blocks every new order while on
+  (cancelling stays possible); it survives restarts and a damaged `safety.json` comes up with it ON.
+  *Audit log*: append-only JSONL, one file per month in `<data folder>/audit/`, recording every order
+  attempt (time, account, symbol, side, size, type, price, checks, confirmation, outcome) and every
+  kill-switch and limit change; the `AUDIT` pane lists it newest first with symbol / outcome filters
+  and an Export CSV button (written next to the logs, path shown). *Calendar* (`HOL`, the pane's
+  Holidays tab): NYSE sessions, holidays (observed days, Good Friday) and early closes, Borsa
+  Istanbul sessions with fixed holidays and the Ramazan / Kurban Bayramı dates listed explicitly for
+  2026 and 2027 (Borsa Istanbul's 2026 tables; Diyanet dates for 2027), all computed locally in
+  `app/src/mktcal.rs`; add later years there when Borsa Istanbul publishes them. The ticket warns
+  when the exchange is closed.
+
 ## Running
 
 ```sh
