@@ -38,6 +38,7 @@ pub const PANELS: [(&str, &str); 22] = [
     ("ETFs", "ETF"),
     ("TR Funds", "TRF"),
     ("Market Movers", "MOST"),
+    ("Smart Money", "SMART"),
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
     ("Alerts", "ALRT"),
@@ -422,6 +423,7 @@ impl TerminalApp {
                 }
             }
             PaneKind::Edgar(e) => e.set_symbol(&key),
+            PaneKind::Smart(e) => e.set_symbol(&key),
             PaneKind::Earnings(e) if e.symbol.is_some() => e.set_symbol(&key),
             _ => return false,
         }
@@ -689,6 +691,10 @@ impl TerminalApp {
             "MOST" | "MOVERS" => {
                 PaneKind::Most(Box::new(super::most_view::MostPane::new(words.get(1).copied().unwrap_or(""))))
             }
+            "SMART" | "SMARTMONEY" => PaneKind::Smart(Box::new(super::smart_view::SmartPane::new(
+                current.as_deref().unwrap_or("AAPL US Equity"),
+                super::smart_view::Tab::Insiders,
+            ))),
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,
                 Some(words.get(1).map_or_else(|| "CPI".into(), |w| w.to_string())),

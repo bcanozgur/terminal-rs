@@ -25,6 +25,7 @@ pub mod markets;
 pub mod most;
 pub mod rss;
 pub mod sample;
+pub mod smartmoney;
 pub mod treasury;
 pub mod trfunds;
 pub mod yahoo;

@@ -171,6 +171,8 @@ pub enum Request {
     TrFunds(crate::trfunds::TrfReq),
     /// US market movers: the three Yahoo screener lists (`MOST`).
     Most(crate::most::MostReq),
+    /// Smart money: Form 4, 13F and FINRA short interest (`SMART`).
+    Smart(crate::smart::SmartReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -353,6 +355,7 @@ pub enum Response {
     Etf(crate::etf::EtfResp),
     TrFunds(crate::trfunds::TrfResp),
     Most(crate::most::MostResp),
+    Smart(crate::smart::SmartResp),
 }
 
 pub struct Worker {
@@ -980,6 +983,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
         Request::Most(r) => crate::most::handle(r, &|r| s.send(Response::Most(r))).await,
+        Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,
     }
 }
 

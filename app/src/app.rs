@@ -21,6 +21,7 @@ mod palette_view;
 mod panels;
 mod portfolio_view;
 mod settings_view;
+mod smart_view;
 mod theming;
 mod trading;
 mod trfunds_view;
@@ -99,6 +100,8 @@ pub enum PaneKind {
     TrFunds(Box<trfunds_view::TrfPane>),
     /// US market movers (`MOST`): day gainers, losers and most active from Yahoo screeners.
     Most(Box<most_view::MostPane>),
+    /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
+    Smart(Box<smart_view::SmartPane>),
 }
 
 pub struct OptionsPane {
@@ -228,6 +231,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
             PaneKind::Most(e) => e.title(),
+            PaneKind::Smart(e) => e.title(),
         }
     }
 
@@ -256,6 +260,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
             PaneKind::Most(e) => e.code(),
+            PaneKind::Smart(e) => e.code(),
         }
     }
 
@@ -353,6 +358,14 @@ impl PaneKind {
                  type in the filter box to narrow by symbol or name. Rel Vol is today's volume over the 3-month average. \
                  Refreshes every minute while visible. Prices are delayed about 15 minutes; pre-market and after-hours \
                  moves are not included."
+            PaneKind::Smart(_) => {
+                "Smart money (SMART): what insiders, big institutions and short sellers are doing in the active symbol. \
+                 Insiders: recent Form 4 transactions (buys, sells, size, shares owned after) and a net buy/sell \
+                 summary for the last 90 days. Institutions: the latest 13F-HR of ~18 well-known managers (top 25 \
+                 positions, new/added/reduced/sold vs the previous quarter) and which of them hold the symbol; use \
+                 'Index curated managers' to download them. Short interest: FINRA's twice-monthly short interest \
+                 and days to cover, plus daily short SALE volume (a different measure, labelled as such). 13F data is \
+                 6 weeks to 4½ months old. Sources: SEC EDGAR, FINRA. Follows the active symbol (Sync) or type a ticker."
             }
             PaneKind::TrFunds(_) => {
                 "Turkish funds (TRF): every investment fund on KAP with a search box; click a code for the fund card \
@@ -374,6 +387,7 @@ impl PaneKind {
             PaneKind::OrderBook(b) => Some(&b.symbol),
             PaneKind::Options(o) => Some(&o.symbol),
             PaneKind::Edgar(e) => Some(&e.symbol),
+            PaneKind::Smart(e) => Some(&e.symbol),
             PaneKind::Earnings(e) => e.symbol.as_deref(),
             _ => None,
         }
@@ -405,6 +419,7 @@ impl PaneKind {
                 | PaneKind::OrderBook(_)
                 | PaneKind::Options(_)
                 | PaneKind::Edgar(_)
+                | PaneKind::Smart(_)
         ) || matches!(self, PaneKind::Earnings(e) if e.symbol.is_some())
     }
 
@@ -464,6 +479,7 @@ impl PaneKind {
                 PaneSettings::TrFunds { mode: mode.into(), a }
             }
             PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
+            PaneKind::Smart(e) => e.settings(),
         }
     }
 
@@ -536,6 +552,9 @@ impl PaneKind {
             PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
+            PaneSettings::Smart { symbol, tab } => {
+                PaneKind::Smart(Box::new(smart_view::SmartPane::from_settings(&symbol, &tab)))
+            }
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
@@ -1057,6 +1076,7 @@ impl TerminalApp {
                 self.etf_command(&format!("HELD {ticker}"));
                 self.status = format!("{ticker}: ETFs that hold it");
             }
+            Command::SymbolFunction(s, Function::Smart(arg)) => self.smart_command(&arg, Some(s)),
             Command::SymbolFunction(s, Function::TrFunds(_)) => {
                 let ticker = tr_data::security(&s).ticker;
                 self.trf_held(&ticker);
@@ -1225,6 +1245,7 @@ impl TerminalApp {
             Function::Etf(arg) => self.etf_command(&arg),
             Function::TrFunds(arg) => self.trf_command(&arg),
             Function::Most(arg) => self.most_command(&arg),
+            Function::Smart(arg) => self.smart_command(&arg, None),
         }
     }
 
@@ -1442,6 +1463,7 @@ impl TerminalApp {
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
                 Response::Most(resp) => self.on_most(resp),
+                Response::Smart(resp) => self.on_smart(resp),
             }
         }
     }
@@ -1774,6 +1796,7 @@ impl TerminalApp {
         self.etf_periodic(&visible);
         self.trf_periodic(&visible);
         self.most_periodic(&visible);
+        self.smart_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

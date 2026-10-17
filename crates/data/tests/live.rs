@@ -261,4 +261,54 @@ async fn yahoo_most_movers() {
     assert!(b.gainers.len() >= 10 && b.losers.len() >= 10 && b.active.len() >= 10);
     assert!(b.gainers[0].change_pct >= b.gainers[b.gainers.len() - 1].change_pct);
     assert!(b.active.iter().all(|m| m.price > 0.0 && m.volume.is_some()));
+/// Needs `TR_SEC_USER_AGENT`. Form 4s of an active large issuer, a manager's 13F and the reverse lookup.
+#[tokio::test]
+#[ignore = "network"]
+async fn smartmoney_sec() {
+    use tr_data::smartmoney as sm;
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let ua = tr_data::edgar::user_agent("").expect("set TR_SEC_USER_AGENT to run this test");
+    let dir = std::env::temp_dir().join(format!("tr-smart-live-{}", std::process::id()));
+    let ins = sm::load_insiders(&dir, "AAPL", &ua).await.unwrap();
+    assert!(ins.read > 0 && !ins.txs.is_empty(), "AAPL Form 4s");
+    assert!(ins.txs.iter().all(|t| t.shares > 0.0));
+    let sum = sm::summarize(&ins.txs, chrono::Local::now().date_naive(), 90);
+    println!("AAPL: {} filings ({} read), {} txs, 90d {sum:?}", ins.filings, ins.read, ins.txs.len());
+    let berkshire = sm::load_manager(&dir, 1067983, &ua, false).await.unwrap();
+    let latest = berkshire.latest.as_ref().unwrap();
+    assert!(latest.positions.len() > 20 && latest.total > 1e11, "Berkshire 13F");
+    assert!(berkshire.prev.is_some());
+    assert!(berkshire.top(25).iter().any(|c| c.mv != sm::Move::Unchanged) || latest.positions.len() > 25);
+    let idx = sm::title_index(&dir, &ua).await.unwrap();
+    let tickers = idx.resolve(&latest.positions[..25]);
+    for c in berkshire.top(12) {
+        println!(
+            "{:>6} {:<28} {:>14.0} {:?} {:?}",
+            tickers.get(&c.position.cusip).map_or("-", |t| t.as_str()),
+            c.position.name,
+            c.position.value,
+            c.mv,
+            c.pct
+        );
+    }
+    println!("resolved {}/25 tickers", tickers.len());
+    for p in latest.positions[..25].iter().filter(|p| !tickers.contains_key(&p.cusip)) {
+        println!("unresolved: {} | {}", p.name, p.class);
+    }
+    let held = sm::holders_of(std::slice::from_ref(&berkshire), "AAPL", &idx);
+    assert_eq!(held.len(), 1, "Berkshire holds Apple");
+}
+
+/// FINRA files need no login or key.
+#[tokio::test]
+#[ignore = "network"]
+async fn smartmoney_finra() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let dir = std::env::temp_dir().join(format!("tr-finra-live-{}", std::process::id()));
+    let d = tr_data::smartmoney::load_short(&dir, "AAPL").await;
+    assert!(d.interest_error.is_none() && d.interest.len() >= 3, "short interest: {:?}", d.interest_error);
+    println!("{:?}\n{:?}", d.interest.first(), d.volume.first());
+    assert!(d.interest[0].short > 1e6 && d.interest[0].days_to_cover > 0.0);
+    assert!(d.volume_error.is_none() && d.volume.len() >= 5, "short volume: {:?}", d.volume_error);
+    assert!(d.volume.iter().all(|v| v.ratio().is_some_and(|r| r > 0.0 && r <= 100.0)));
 }

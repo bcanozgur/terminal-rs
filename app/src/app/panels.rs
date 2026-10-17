@@ -137,6 +137,7 @@ impl TerminalApp {
             PaneKind::Etf(e) => actions.extend(super::etf_view::etf(ui, e)),
             PaneKind::TrFunds(e) => actions.extend(super::trfunds_view::trfunds(ui, e)),
             PaneKind::Most(e) => actions.extend(super::most_view::most(ui, e)),
+            PaneKind::Smart(e) => actions.extend(super::smart_view::smart(ui, e)),
             PaneKind::Watchlist
             | PaneKind::List(_)
             | PaneKind::Settings
