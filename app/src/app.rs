@@ -5,6 +5,7 @@
 //! content) and `settings_view` (preferences UI).
 
 mod broker;
+mod changelog_view;
 mod chrome;
 mod demo;
 mod des_view;
@@ -71,6 +72,7 @@ pub enum PaneKind {
     /// A named sidebar list (see [`WatchGroup`]) shown as a pane.
     List(String),
     Help,
+    Changelog,
     Wei,
     Curve,
     Search {
@@ -192,6 +194,7 @@ impl PaneKind {
             PaneKind::Watchlist => "Watchlist".into(),
             PaneKind::List(name) => name.clone(),
             PaneKind::Help => "Help".into(),
+            PaneKind::Changelog => "What's New".into(),
             PaneKind::Wei => "World Markets".into(),
             PaneKind::Curve => "Yield Curve".into(),
             PaneKind::Search { query } if query.is_empty() => "Search".into(),
@@ -223,6 +226,7 @@ impl PaneKind {
             PaneKind::Watchlist => "WL",
             PaneKind::List(_) => "LST",
             PaneKind::Help => "HELP",
+            PaneKind::Changelog => "CHANGES",
             PaneKind::Wei => "WEI",
             PaneKind::Curve => "GC",
             PaneKind::Search { .. } => "SECF",
@@ -269,6 +273,7 @@ impl PaneKind {
                  delayed, stale (amber) or sample (red) prices; hover for the source and delay."
             }
             PaneKind::Help => "Commands and hotkeys (HELP): every function code and keyboard shortcut.",
+            PaneKind::Changelog => "What's new (CHANGES): the changes to the terminal, newest first.",
             PaneKind::Wei => {
                 "World equity indices (WEI): major indices by region with the day's change. Click one to chart it. \
                  A dot beside a ticker marks delayed, stale (amber) or sample (red) prices; hover for details."
@@ -387,6 +392,7 @@ impl PaneKind {
             PaneKind::Watchlist => PaneSettings::Watchlist,
             PaneKind::List(name) => PaneSettings::List(name.clone()),
             PaneKind::Help => PaneSettings::Help,
+            PaneKind::Changelog => PaneSettings::Changelog,
             PaneKind::Wei => PaneSettings::Wei,
             PaneKind::Curve => PaneSettings::Curve,
             PaneKind::Search { query } => PaneSettings::Search(query.clone()),
@@ -448,6 +454,7 @@ impl PaneKind {
             PaneSettings::Watchlist => PaneKind::Watchlist,
             PaneSettings::List(name) => PaneKind::List(name),
             PaneSettings::Help => PaneKind::Help,
+            PaneSettings::Changelog => PaneKind::Changelog,
             PaneSettings::Wei => PaneKind::Wei,
             PaneSettings::Curve => PaneKind::Curve,
             PaneSettings::Search(q) => PaneKind::Search { query: q },
@@ -1115,6 +1122,7 @@ impl TerminalApp {
                 }
             }
             Function::Help => self.open_panel(PaneKind::Help),
+            Function::Changelog => self.open_panel(PaneKind::Changelog),
             Function::Wei => {
                 self.last_wei = None;
                 self.open_panel(PaneKind::Wei);

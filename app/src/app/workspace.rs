@@ -614,6 +614,7 @@ impl TerminalApp {
                 head == "FA",
             ))),
             "HELP" => PaneKind::Help,
+            "CHANGES" | "CHANGELOG" | "WHATSNEW" => PaneKind::Changelog,
             "ECO" | "ECON" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(1, None))),
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,

@@ -130,7 +130,12 @@ impl TerminalApp {
                 actions.extend(crate::earnings_view::pane(ui, e, &cx));
             }
             PaneKind::Eco(e) => super::eco_view::eco(ui, e, q),
-            PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
+            PaneKind::Watchlist
+            | PaneKind::List(_)
+            | PaneKind::Settings
+            | PaneKind::Help
+            | PaneKind::Changelog
+            | PaneKind::Chart(_) => {}
             PaneKind::Edgar(e) => {
                 let out = super::edgar_view::edgar_pane(ui, e, &self.quotes, &mut self.prefs.panels);
                 actions.extend(out.actions);
@@ -151,6 +156,7 @@ impl TerminalApp {
                 actions.extend(self.watchlist(ui, gi, q))
             }
             PaneKind::Help => self.help_panel(ui),
+            PaneKind::Changelog => self.changelog_panel(ui),
             PaneKind::Settings => {
                 let cmds = self.settings_panel(ui);
                 self.run_settings_cmds(cmds);

@@ -856,6 +856,9 @@ impl TerminalApp {
             if nav_row(ui, Icon::Gear, "Settings", Some("PDF"), is_focused(&PaneKind::Settings)).clicked() {
                 out.push(SidebarCmd::Function(Function::Settings));
             }
+            if nav_row(ui, Icon::List, "What's New", Some("CHANGES"), is_focused(&PaneKind::Changelog)).clicked() {
+                out.push(SidebarCmd::Function(Function::Changelog));
+            }
             if nav_row(ui, Icon::Star, "Commands & Hotkeys", Some("HELP"), is_focused(&PaneKind::Help)).clicked() {
                 out.push(SidebarCmd::Function(Function::Help));
             }

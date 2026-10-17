@@ -84,6 +84,7 @@ pub enum PaneSettings {
     Watchlist,
     List(String),
     Help,
+    Changelog,
     Wei,
     Curve,
     Search(String),

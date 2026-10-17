@@ -295,6 +295,8 @@ pub enum Function {
     Title(String),
     ClosePane,
     Help,
+    /// What's new.
+    Changelog,
     /// World equity indices / markets overview.
     Wei,
     /// US Treasury yield curve.
@@ -394,6 +396,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "TITLE" | "RENAME" => Function::Title(joined()),
         "CLOSE" => Function::ClosePane,
         "HELP" | "?" | "H" => Function::Help,
+        "CHANGES" | "CHANGELOG" | "WHATSNEW" => Function::Changelog,
         "WEI" | "MARKETS" | "WORLD" => Function::Wei,
         "GC" | "YCRV" | "CURVE" | "YC" => Function::Curve,
         "SECF" | "SEARCH" | "FIND" => Function::Search(joined()),
@@ -554,6 +557,7 @@ fn describe(f: &Function) -> String {
         Function::Title(t) => format!("Rename tab to {t:?}"),
         Function::ClosePane => "Close focused pane".into(),
         Function::Help => "Help".into(),
+        Function::Changelog => "What's new: changes to the terminal".into(),
         Function::Earnings => "Earnings calendar by week; after a symbol, its report history".into(),
         Function::EarningsMarkers => "Toggle earnings markers on the chart".into(),
         Function::Wei => "World markets overview".into(),
@@ -689,6 +693,7 @@ mod tests {
         assert_eq!(parse("AAPL DES"), edgar(false));
         assert_eq!(parse("aapl fa"), edgar(true));
         assert_eq!(parse("FA"), Some(Command::Function(Function::Edgar { fa: true })));
+        assert_eq!(parse("CHANGES"), Some(Command::Function(Function::Changelog)));
         // Right-click menus run "<market key> DES|FA".
         assert_eq!(
             parse("THYAO US Equity DES"),
