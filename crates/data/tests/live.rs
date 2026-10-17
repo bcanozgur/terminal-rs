@@ -330,3 +330,17 @@ async fn smartmoney_all_managers() {
         assert!(!l.positions.is_empty());
     }
 }
+
+/// A Yahoo-hosted article page reduces to readable paragraphs.
+#[tokio::test]
+#[ignore = "network"]
+async fn news_article_reader() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let url = "https://finance.yahoo.com/markets/stocks/articles/p-500-just-hit-record-130532681.html";
+    let a = tr_data::article::fetch(url).await.unwrap();
+    println!("{}: {} blocks", a.title, a.blocks.len());
+    for b in a.blocks.iter().take(6) {
+        println!("{b:?}");
+    }
+    assert!(a.blocks.len() >= 8);
+}

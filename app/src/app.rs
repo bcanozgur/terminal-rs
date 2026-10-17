@@ -172,11 +172,35 @@ pub struct NewsPane {
     pub error: Option<String>,
     pub loading: bool,
     pub fetched: Option<Instant>,
+    /// The headline open for reading in place of the list (not saved with the layout).
+    pub reading: Option<Reading>,
+    /// Link of the article last requested from the worker.
+    pub read_requested: Option<String>,
+}
+
+/// An article opened inside the News pane.
+pub struct Reading {
+    pub item: NewsItem,
+    pub state: ReadState,
+}
+
+pub enum ReadState {
+    Loading,
+    Ready(tr_data::article::Article),
+    Failed(String),
 }
 
 impl NewsPane {
     pub fn new(symbol: Option<String>) -> Self {
-        Self { symbol, items: Vec::new(), error: None, loading: true, fetched: None }
+        Self {
+            symbol,
+            items: Vec::new(),
+            error: None,
+            loading: true,
+            fetched: None,
+            reading: None,
+            read_requested: None,
+        }
     }
 }
 
@@ -1401,6 +1425,17 @@ impl TerminalApp {
                                 o.loading = false;
                             }
                         }
+                    }
+                }
+                Response::Article { pane, url, article } => {
+                    if let Some(p) = self.panes.iter_mut().find(|p| p.id == pane)
+                        && let PaneKind::News(n) = &mut p.kind
+                        && let Some(r) = n.reading.as_mut().filter(|r| r.item.link == url)
+                    {
+                        r.state = match article {
+                            Ok(a) => ReadState::Ready(a),
+                            Err(e) => ReadState::Failed(e),
+                        };
                     }
                 }
                 Response::News { pane, symbol, items } => {

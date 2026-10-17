@@ -5,7 +5,7 @@ use std::time::Instant;
 use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 use tr_data::OrderBook;
 
-use super::{PaneKind, TerminalApp};
+use super::{PaneKind, ReadState, Reading, TerminalApp};
 use crate::congress_view::{self, Action};
 use crate::markets_view;
 use crate::quote_tag;
@@ -75,9 +75,17 @@ impl TerminalApp {
             }
             PaneKind::News(n) => {
                 let offline = self.provider.eq_ignore_ascii_case("sample");
-                if let Some(refresh) = news(ui, n, offline, q) {
+                if n.reading.is_some() {
+                    reader(ui, n);
+                } else if let Some(refresh) = news(ui, n, offline, q) {
                     n.fetched = None;
                     n.loading = refresh;
+                }
+                if let Some(r) = n.reading.as_ref().filter(|r| matches!(r.state, ReadState::Loading))
+                    && n.read_requested.as_deref() != Some(r.item.link.as_str())
+                {
+                    n.read_requested = Some(r.item.link.clone());
+                    self.worker.send(Request::Article { pane: id, url: r.item.link.clone() });
                 }
             }
             PaneKind::Options(o) => {
@@ -384,6 +392,7 @@ fn news(ui: &mut Ui, n: &mut super::NewsPane, offline: bool, q: &str) -> Option<
         ui.label(RichText::new(msg).font(ui_font(12.0)).color(muted()));
     }
     let now = chrono::Utc::now().timestamp();
+    let mut open: Option<tr_data::NewsItem> = None;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let w = ui.available_width();
         let shown = n.items.iter().filter(|it| {
@@ -412,9 +421,13 @@ fn news(ui: &mut Ui, n: &mut super::NewsPane, offline: bool, q: &str) -> Option<
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if resp.clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(&item.link));
+                open = Some(item.clone());
             }
-            resp.on_hover_text(&item.link).context_menu(|ui| {
+            resp.on_hover_text("Click to read here · right-click for more").context_menu(|ui| {
+                if ui.button("Read Here").clicked() {
+                    open = Some(item.clone());
+                    ui.close();
+                }
                 if ui.button("Open in Browser").clicked() {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(&item.link));
                     ui.close();
@@ -427,7 +440,88 @@ fn news(ui: &mut Ui, n: &mut super::NewsPane, offline: bool, q: &str) -> Option<
             p.hline(r.x_range(), r.bottom(), Stroke::new(1.0, theme::border()));
         }
     });
+    if let Some(item) = open {
+        n.read_requested = None;
+        n.reading = Some(Reading { item, state: ReadState::Loading });
+    }
     refresh
+}
+
+/// One article open in the News pane, with a Back button to the headline list.
+fn reader(ui: &mut Ui, n: &mut super::NewsPane) {
+    let mut back = false;
+    let Some(r) = n.reading.as_ref() else { return };
+    let link = r.item.link.clone();
+    ui.horizontal(|ui| {
+        if ui.button("◀ Back").clicked() {
+            back = true;
+        }
+        if ui.small_button("Open in Browser").clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(&link));
+        }
+        if ui.small_button("Copy Link").clicked() {
+            ui.ctx().copy_text(link.clone());
+        }
+        if matches!(r.state, ReadState::Loading) {
+            ui.add(egui::Spinner::new().size(12.0));
+            ui.label(RichText::new("loading article…").font(ui_font(11.5)).color(muted()));
+        }
+    });
+    ui.add_space(4.0);
+    egui::ScrollArea::vertical().id_salt(("news-reader", &link)).auto_shrink([false, false]).show(ui, |ui| {
+        ui.set_max_width(ui.available_width() - 6.0);
+        let item = &r.item;
+        ui.add(egui::Label::new(RichText::new(&item.title).font(ui_font(17.0)).color(text())).wrap());
+        let when = chrono::DateTime::from_timestamp(item.ts, 0)
+            .map(|d| d.with_timezone(&chrono::Local).format("%b %d, %Y %H:%M").to_string())
+            .unwrap_or_default();
+        ui.label(RichText::new(format!("{} · {when}", item.publisher)).font(ui_font(11.5)).color(muted()));
+        if !item.tickers.is_empty() {
+            ui.label(RichText::new(item.tickers.join("  ")).font(mono(11.0)).color(amber()));
+        }
+        ui.add_space(8.0);
+        match &r.state {
+            ReadState::Loading => {}
+            ReadState::Failed(e) => {
+                ui.label(
+                    RichText::new(format!("Could not read the article here: {e}"))
+                        .font(ui_font(12.0))
+                        .color(theme::down()),
+                );
+                ui.label(
+                    RichText::new("Use Open in Browser to read it on the publisher's site.")
+                        .font(ui_font(12.0))
+                        .color(muted()),
+                );
+            }
+            ReadState::Ready(a) => {
+                for b in &a.blocks {
+                    match b {
+                        tr_data::article::Block::Heading(t) => {
+                            ui.add_space(6.0);
+                            ui.add(egui::Label::new(RichText::new(t).font(ui_font(14.0)).color(text())).wrap());
+                        }
+                        tr_data::article::Block::Paragraph(t) => {
+                            ui.add(egui::Label::new(RichText::new(t).font(ui_font(13.0)).color(text())).wrap());
+                            ui.add_space(6.0);
+                        }
+                        tr_data::article::Block::Bullet(t) => {
+                            ui.horizontal_top(|ui| {
+                                ui.label(RichText::new("•").font(ui_font(13.0)).color(muted()));
+                                ui.add(egui::Label::new(RichText::new(t).font(ui_font(13.0)).color(text())).wrap());
+                            });
+                        }
+                    }
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new(format!("Source: {}", item.publisher)).font(ui_font(11.0)).color(muted()));
+            }
+        }
+    });
+    if back {
+        n.reading = None;
+        n.read_requested = None;
+    }
 }
 
 /// Bucket sizes offered for a book around `mid`: raw plus three decades of the price scale.

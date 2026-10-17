@@ -42,6 +42,8 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \
              its timeframe; click an ALRT row to open that chart.",
             "Portfolio positions table has a Day P&L column.",
+            "News: click a headline to read the article inside the pane (Back returns to the list); Open in \
+             Browser stays one click away.",
             "Info (i) button on every pane header explains what the panel shows.",
             "Combo 11 chart study, with its table kept clear of the latest bars.",
             "Default zoom setting, search inside list panels, app icon, and a toolbar flush with the top in full \

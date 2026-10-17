@@ -13,6 +13,7 @@
 //! unreachable, so the terminal always has something to draw.
 
 pub mod alpaca;
+pub mod article;
 pub mod bist;
 pub mod cache;
 pub mod crypto;

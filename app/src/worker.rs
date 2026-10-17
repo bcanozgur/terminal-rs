@@ -64,6 +64,11 @@ pub enum Request {
         pane: PaneId,
         symbol: Option<String>,
     },
+    /// Readable text of a news article.
+    Article {
+        pane: PaneId,
+        url: String,
+    },
     OrderBook {
         pane: PaneId,
         symbol: String,
@@ -265,6 +270,11 @@ pub enum Response {
         pane: PaneId,
         symbol: Option<String>,
         items: Result<Vec<tr_data::NewsItem>, String>,
+    },
+    Article {
+        pane: PaneId,
+        url: String,
+        article: Result<tr_data::article::Article, String>,
     },
     OrderBook {
         pane: PaneId,
@@ -957,6 +967,10 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::News { pane, symbol } => {
             let items = s.provider.news(symbol.as_deref()).await.map_err(|e| format!("{e:#}"));
             s.send(Response::News { pane, symbol, items });
+        }
+        Request::Article { pane, url } => {
+            let article = tr_data::article::fetch(&url).await.map_err(|e| format!("{e:#}"));
+            s.send(Response::Article { pane, url, article });
         }
         Request::OrderBook { pane, symbol, depth } => {
             let book = s.provider.order_book(&symbol, depth).await.map_err(|e| format!("{e:#}"));
