@@ -925,6 +925,9 @@ mod tests {
         assert_eq!(parse("HOL"), Some(Command::Function(Function::Audit("hol".into()))));
         assert!(hint("KILL OFF").contains("OFF"));
         assert!(hint("HOL").contains("holidays"));
+    }
+
+    #[test]
     fn fut_commands() {
         assert_eq!(parse("FUT"), Some(Command::Function(Function::Fut(String::new()))));
         assert_eq!(parse("fut cl"), Some(Command::Function(Function::Fut("cl".into()))));
