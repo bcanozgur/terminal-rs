@@ -54,6 +54,14 @@ fn kv(ui: &mut Ui, k: &str, v: impl Into<String>, color: egui::Color32) {
     ui.end_row();
 }
 
+/// [`kv`] for long values (addresses): wraps inside the column instead of widening it, which
+/// would push the profile over the stats column beside it.
+fn kv_wrap(ui: &mut Ui, k: &str, v: &str) {
+    ui.label(RichText::new(k).font(ui_font(11.5)).color(muted()));
+    ui.add(egui::Label::new(RichText::new(v).font(mono(12.0)).color(text())).wrap());
+    ui.end_row();
+}
+
 pub(super) fn des(ui: &mut Ui, c: &Company, quote: Option<&Quote>) {
     let p = &c.profile;
     let wide = ui.available_width() > 720.0;
@@ -84,7 +92,7 @@ pub(super) fn des(ui: &mut Ui, c: &Company, quote: Option<&Quote>) {
                     kv(ui, "Fiscal year end", p.fiscal_year_end_label(), text());
                 }
                 if !p.business_address.is_empty() {
-                    kv(ui, "Address", &p.business_address, text());
+                    kv_wrap(ui, "Address", &p.business_address);
                 }
                 if !p.phone.is_empty() {
                     kv(ui, "Phone", &p.phone, text());
@@ -213,7 +221,7 @@ pub(super) fn des_bist(ui: &mut Ui, c: &BistCompany, price: Option<f64>, quote: 
                         kv(ui, "Founded", &p.founded, text());
                     }
                     if !p.address.is_empty() {
-                        kv(ui, "Address", &p.address, text());
+                        kv_wrap(ui, "Address", &p.address);
                     }
                     if !p.phone.is_empty() {
                         kv(ui, "Phone", &p.phone, text());
