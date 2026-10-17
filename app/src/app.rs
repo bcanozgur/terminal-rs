@@ -7,6 +7,9 @@
 mod broker;
 mod chrome;
 mod demo;
+mod des_view;
+mod edgar_view;
+mod fa_view;
 mod hotkeys_view;
 mod options_view;
 mod palette_view;
@@ -76,6 +79,8 @@ pub enum PaneKind {
     /// Brokerage accounts through SnapTrade (`PORT`, `ACCT`, `POS`, `ORD`, `ACTV`).
     Portfolio(Box<broker::PortfolioPane>),
     Settings,
+    /// SEC EDGAR security description (`DES`) or financial analysis (`FA`).
+    Edgar(Box<edgar_view::EdgarPane>),
 }
 
 pub struct OptionsPane {
@@ -192,6 +197,7 @@ impl PaneKind {
             PaneKind::Options(o) => format!("{} Options", short(&o.symbol)),
             PaneKind::Portfolio(p) => p.title(),
             PaneKind::Settings => "Settings".into(),
+            PaneKind::Edgar(e) => e.title(),
         }
     }
 
@@ -213,6 +219,7 @@ impl PaneKind {
             PaneKind::Options(_) => "OMON",
             PaneKind::Portfolio(p) => p.view.code(),
             PaneKind::Settings => "PDF",
+            PaneKind::Edgar(e) => e.code(),
         }
     }
 
@@ -224,6 +231,7 @@ impl PaneKind {
             PaneKind::News(n) => n.symbol.as_deref(),
             PaneKind::OrderBook(b) => Some(&b.symbol),
             PaneKind::Options(o) => Some(&o.symbol),
+            PaneKind::Edgar(e) => Some(&e.symbol),
             _ => None,
         }
     }
@@ -252,6 +260,7 @@ impl PaneKind {
                 | PaneKind::News(_)
                 | PaneKind::OrderBook(_)
                 | PaneKind::Options(_)
+                | PaneKind::Edgar(_)
         )
     }
 
@@ -298,6 +307,7 @@ impl PaneKind {
                 sort: p.sort,
                 open_only: p.open_only,
             },
+            PaneKind::Edgar(e) => e.settings(),
         }
     }
 
@@ -358,6 +368,9 @@ impl PaneKind {
                     open_only,
                     query: String::new(),
                 }))
+            }
+            PaneSettings::Edgar { symbol, fa, quarterly, tab } => {
+                PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab)))
             }
         }
     }
@@ -852,6 +865,10 @@ impl TerminalApp {
                 t.symbol = Some(s);
                 self.open_ticket(t, None);
             }
+            Command::SymbolFunction(s, Function::Edgar { fa }) => {
+                self.open_panel(PaneKind::Edgar(Box::new(edgar_view::EdgarPane::new(&s, fa))));
+                self.status = format!("{s}: {}", if fa { "financial analysis" } else { "description" });
+            }
             Command::SymbolFunction(s, f @ (Function::NewPanel(_) | Function::Split { .. })) => {
                 self.apply_with_symbol(f, Some(s));
             }
@@ -992,6 +1009,10 @@ impl TerminalApp {
                     self.status = format!("Already using the {} account", if live { "LIVE" } else { "DEMO" });
                 }
                 self.set_account_mode(mode, false);
+            }
+            Function::Edgar { fa } => {
+                let sym = self.focused_symbol().unwrap_or_default();
+                self.open_panel(PaneKind::Edgar(Box::new(edgar_view::EdgarPane::new(&sym, fa))));
             }
         }
     }
@@ -1157,6 +1178,14 @@ impl TerminalApp {
                     self.congress_checked = Some(chrono::Local::now());
                     self.status = format!("Congress disclosures updated: {summary}");
                     self.refresh_congress_views();
+                }
+                Response::Edgar { pane, symbol, company } => {
+                    if let Some(p) = self.panes.iter_mut().find(|p| p.id == pane)
+                        && let PaneKind::Edgar(e) = &mut p.kind
+                        && e.symbol == symbol
+                    {
+                        e.set_result(company);
+                    }
                 }
             }
         }
@@ -1451,6 +1480,18 @@ impl TerminalApp {
                 PaneKind::OrderBook(b) if b.fetched.is_none_or(|t| t.elapsed() > Duration::from_millis(1000)) => {
                     b.fetched = Some(Instant::now());
                     self.worker.send(Request::OrderBook { pane: p.id, symbol: b.symbol.clone(), depth: b.depth });
+                }
+                PaneKind::Edgar(e) => {
+                    if e.due(&self.prefs.panels.sec_user_agent) {
+                        e.fetched = Some(Instant::now());
+                        e.loading = true;
+                        let user_agent = self.prefs.panels.sec_user_agent.clone();
+                        self.worker.send(Request::Edgar { pane: p.id, symbol: e.symbol.clone(), user_agent });
+                    }
+                    if e.quote_due() {
+                        e.quoted = Some(Instant::now());
+                        self.worker.send(Request::Quotes(vec![tr_data::security(&e.symbol).key()]));
+                    }
                 }
                 _ => {}
             }

@@ -305,6 +305,10 @@ pub enum Function {
     Trade(TradeArgs),
     /// Switch between the demo account and live accounts (`DEMO`, `MODE LIVE`); `true` = live.
     AccountMode(bool),
+    /// SEC EDGAR company description (`DES`) or financial analysis (`FA`, `fa: true`).
+    Edgar {
+        fa: bool,
+    },
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -400,6 +404,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             _ => return None,
         },
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
+        "DES" | "DESC" => Function::Edgar { fa: false },
+        "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
         _ if crate::studies::by_command(&up).is_some() => {
             Function::Study(crate::studies::by_command(&up)?.id().to_string())
         }
@@ -570,6 +576,8 @@ fn describe(f: &Function) -> String {
         }
         Function::AccountMode(false) => "Switch to the DEMO account (paper trading)".into(),
         Function::AccountMode(true) => "Switch to LIVE brokerage accounts (asks first)".into(),
+        Function::Edgar { fa: false } => "Security description: SEC profile, key stats, recent filings".into(),
+        Function::Edgar { fa: true } => "Financial analysis: statements and ratios from SEC XBRL filings".into(),
     }
 }
 
@@ -647,6 +655,10 @@ mod tests {
         assert_eq!(parse("SPX INDEX OMON"), Some(Command::SymbolFunction("SPX Index".into(), Function::Options)));
         assert_eq!(parse("OMON"), Some(Command::Function(Function::Options)));
         assert_eq!(parse("SIDEBAR RIGHT"), Some(Command::Function(Function::Sidebar("RIGHT".into()))));
+        let edgar = |fa| Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Edgar { fa }));
+        assert_eq!(parse("AAPL DES"), edgar(false));
+        assert_eq!(parse("aapl fa"), edgar(true));
+        assert_eq!(parse("FA"), Some(Command::Function(Function::Edgar { fa: true })));
     }
 
     #[test]

@@ -119,6 +119,17 @@ impl TerminalApp {
                 }
             }
             PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
+            PaneKind::Edgar(e) => {
+                let out = super::edgar_view::edgar_pane(ui, e, &self.quotes, &mut self.prefs.panels);
+                actions.extend(out.actions);
+                if out.refetch {
+                    e.fetched = None;
+                    e.loading = false;
+                }
+                if out.save_prefs {
+                    self.save_prefs();
+                }
+            }
         }
         match self.panes[i].kind {
             PaneKind::Watchlist => actions.extend(self.watchlist(ui, None, q)),

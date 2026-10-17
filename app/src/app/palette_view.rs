@@ -28,6 +28,8 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("PORT REFRESH", "", "brokerage sync reload", None),
     ("PORT CONNECT", "", "brokerage link snaptrade", None),
     ("OMON", "", "options chain calls puts greeks", Some(Action::NewOptions)),
+    ("DES", "", "description company profile sec edgar filings 10-k 10-q", None),
+    ("FA", "", "financial analysis statements income balance sheet cash flow ratios sec edgar", None),
     ("CONG", "Congressional trades feed", "congress disclosures", Some(Action::Congress)),
     ("POL", "Politicians", "congress members profile", Some(Action::Politicians)),
     ("ALRT", "", "alerts tracked filings", Some(Action::Alerts)),

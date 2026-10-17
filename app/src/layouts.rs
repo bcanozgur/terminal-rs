@@ -119,6 +119,17 @@ pub enum PaneSettings {
         #[serde(default)]
         open_only: bool,
     },
+    /// SEC EDGAR description (`DES`) or financial analysis (`FA`).
+    Edgar {
+        symbol: String,
+        #[serde(default)]
+        fa: bool,
+        #[serde(default)]
+        quarterly: bool,
+        /// FA statement tab (0 income, 1 balance, 2 cash flow, 3 ratios).
+        #[serde(default)]
+        tab: usize,
+    },
 }
 
 fn yes() -> bool {

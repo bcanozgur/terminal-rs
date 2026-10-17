@@ -160,6 +160,18 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
 - **Hotkeys and preferences** — every hotkey is rebindable from a native shortcut table in
   Settings › Hotkeys and Help (click a binding, press the new keys); defaults for new charts and
   order books; everything persists in `prefs.json`.
+- **Company description and financials (SEC EDGAR)** — `AAPL DES` shows the SEC profile (name,
+  CIK, listings, SIC industry, filer category, state, fiscal year end, address, website), live
+  market cap, enterprise value, P/E, P/S and P/B from the terminal's own quote and the latest
+  cover-page share count, and recent 10-K/10-Q/8-K filings (click to open on sec.gov). `AAPL FA`
+  rebuilds the income statement, balance sheet, cash flow and ratios (margins, ROE, debt/equity,
+  FCF margin) from XBRL company facts: 10 annual or quarterly periods, year-over-year change, and
+  a bar chart of any line you click. Quarterly cash flows and Q4 are derived from year-to-date
+  totals; tag variants (`Revenues` vs `RevenueFromContract…`) and duplicate/restated facts are
+  merged. US-listed companies only; both panes follow link groups and are saved in layouts. SEC
+  requires a User-Agent with your name and email: set it in Settings › Panels (or
+  `TR_SEC_USER_AGENT`). Requests are throttled below SEC's 10/s limit and cached under the app data
+  folder (`edgar/`).
 
 ## Running
 

@@ -118,3 +118,24 @@ mod markets {
         assert!(m.options("BTCUSD Curncy", None).await.is_err());
     }
 }
+
+/// Needs `TR_SEC_USER_AGENT` (name and contact email), per SEC fair-access rules.
+#[tokio::test]
+#[ignore = "network"]
+async fn edgar_profile_and_financials() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let ua = tr_data::edgar::user_agent("").expect("set TR_SEC_USER_AGENT to run this test");
+    let dir = std::env::temp_dir().join(format!("tr-edgar-live-{}", std::process::id()));
+    let c = tr_data::edgar::company(&dir, "AAPL US Equity", &ua).await.unwrap();
+    assert_eq!(c.profile.cik, 320193);
+    assert!(c.profile.filings_of(&["10-K"]).next().is_some());
+    let f = c.financials.unwrap();
+    assert!(f.annual.len() >= 10 && f.quarterly.len() >= 10);
+    assert!(f.annual.last().unwrap().get(tr_data::edgar::Metric::Revenue).is_some_and(|r| r > 100e9));
+    assert!(f.shares_outstanding.is_some_and(|s| s > 1e9));
+    // Served from the disk cache the second time.
+    let again = tr_data::edgar::company(&dir, "AAPL", &ua).await.unwrap();
+    assert_eq!(again.profile.name, c.profile.name);
+    assert!(tr_data::edgar::company(&dir, "BTCUSD Curncy", &ua).await.is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
