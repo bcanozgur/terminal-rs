@@ -284,6 +284,9 @@ impl TerminalApp {
                         out.push(Action::OpenChartNew(s.clone()));
                         ui.close();
                     }
+                    if let Some(code) = widgets::research_menu(ui, s) {
+                        out.push(Action::Command(format!("{s} {code}")));
+                    }
                     if sec.has_congress_trades() && ui.button("Who in Congress Traded This").clicked() {
                         out.push(Action::OpenTicker(sec.ticker.clone()));
                         ui.close();

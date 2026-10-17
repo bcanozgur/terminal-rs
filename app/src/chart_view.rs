@@ -1185,6 +1185,9 @@ impl ChartState {
             self.actions.push(Action::AddToWatchlist(self.symbol.clone()));
             ui.close();
         }
+        if let Some(code) = crate::widgets::research_menu(ui, &self.symbol) {
+            self.actions.push(Action::Command(format!("{} {code}", self.symbol)));
+        }
         if self.sec.has_congress_trades() {
             ui.checkbox(&mut self.show_congress, "Congress Trade Markers");
             if ui.button("Who in Congress Traded This…").clicked() {

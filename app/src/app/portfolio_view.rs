@@ -336,6 +336,9 @@ fn security_menu(ui: &mut Ui, key: &str, symbol: &str, out: &mut Vec<PortAction>
         out.push(PortAction::News(key.to_string()));
         ui.close();
     }
+    if let Some(code) = crate::widgets::research_menu(ui, key) {
+        out.push(PortAction::Core(Action::Command(format!("{key} {code}"))));
+    }
     if sec.has_congress_trades() && ui.button("Who in Congress Traded This").clicked() {
         out.push(PortAction::Core(Action::OpenTicker(sec.ticker.clone())));
         ui.close();

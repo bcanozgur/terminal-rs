@@ -418,6 +418,24 @@ impl Reorder {
     }
 }
 
+/// "Research" submenu for a security's right-click menu: DES and FA for US- and
+/// Borsa Istanbul-listed companies. Returns the function code picked (`DES` or `FA`).
+pub fn research_menu(ui: &mut Ui, key: &str) -> Option<&'static str> {
+    if tr_data::edgar::edgar_ticker(key).is_none() && tr_data::bist::bist_ticker(key).is_none() {
+        return None;
+    }
+    let mut picked = None;
+    ui.menu_button("Research", |ui| {
+        for (label, code) in [("Description (DES)", "DES"), ("Financials (FA)", "FA")] {
+            if ui.button(label).clicked() {
+                picked = Some(code);
+                ui.close();
+            }
+        }
+    });
+    picked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -689,6 +689,15 @@ mod tests {
         assert_eq!(parse("AAPL DES"), edgar(false));
         assert_eq!(parse("aapl fa"), edgar(true));
         assert_eq!(parse("FA"), Some(Command::Function(Function::Edgar { fa: true })));
+        // Right-click menus run "<market key> DES|FA".
+        assert_eq!(
+            parse("THYAO US Equity DES"),
+            Some(Command::SymbolFunction("THYAO US Equity".into(), Function::Edgar { fa: false }))
+        );
+        assert_eq!(
+            parse("AAPL US Equity FA"),
+            Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Edgar { fa: true }))
+        );
     }
 
     #[test]

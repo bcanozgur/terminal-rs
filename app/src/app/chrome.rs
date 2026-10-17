@@ -589,6 +589,9 @@ impl TerminalApp {
                         out.push(SidebarCmd::Action(Action::OpenChartNew(key.clone())));
                         ui.close();
                     }
+                    if let Some(code) = widgets::research_menu(ui, key) {
+                        out.push(SidebarCmd::Action(Action::Command(format!("{key} {code}"))));
+                    }
                     if sec.has_congress_trades() && ui.button("Who in Congress Traded This").clicked() {
                         out.push(SidebarCmd::Action(Action::OpenTicker(sec.ticker.clone())));
                         ui.close();
