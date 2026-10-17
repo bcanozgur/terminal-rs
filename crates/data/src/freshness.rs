@@ -197,11 +197,16 @@ impl Quote {
             QuoteSource::Binance | QuoteSource::Coinbase | QuoteSource::Alpaca => Timeliness::Live,
             QuoteSource::Treasury | QuoteSource::Fred => Timeliness::EndOfDay,
             QuoteSource::Sample => Timeliness::Simulated,
-            // Yahoo documents ~15 minutes for NASDAQ/NYSE and Borsa Istanbul; for FX, futures
-            // and other indices the delay varies, so those are only called delayed.
-            QuoteSource::Yahoo => match market_of(&self.symbol) {
-                Market::UsEquity | Market::Bist => Timeliness::Delayed(Some(15)),
-                _ => Timeliness::Delayed(None),
+            // Yahoo reports each instrument's delay (`exchangeDataDelayedBy`); 0 is not trusted to
+            // mean real-time, so it stays "delayed". Without it, NASDAQ/NYSE and Borsa Istanbul
+            // are taken as ~15 minutes and the rest (FX, futures, other indices) as unknown.
+            QuoteSource::Yahoo => match self.delay_min {
+                Some(n) if n > 0 => Timeliness::Delayed(Some(n)),
+                Some(_) => Timeliness::Delayed(None),
+                None => match market_of(&self.symbol) {
+                    Market::UsEquity | Market::Bist => Timeliness::Delayed(Some(15)),
+                    _ => Timeliness::Delayed(None),
+                },
             },
         }
     }
@@ -232,8 +237,13 @@ impl Quote {
         };
         // Only a reported trade time can be judged; a session's first minutes are measured
         // from its open, since the last trade is from the day before.
+        // A delayed feed's trade times are already that old, so its delay adds to the limit.
+        let delay = match self.timeliness() {
+            Timeliness::Delayed(Some(n)) => i64::from(n) * 60,
+            _ => 0,
+        };
         match (self.traded, stale_after(m)) {
-            (Some(t), Some(limit)) if now - t.max(since) > limit => Health::Stale { age: now - t.max(since) },
+            (Some(t), Some(limit)) if now - t.max(since) > limit + delay => Health::Stale { age: now - t.max(since) },
             _ => Health::Fresh,
         }
     }
@@ -268,6 +278,7 @@ mod tests {
             extended: None,
             source,
             traded,
+            delay_min: None,
         }
     }
 
@@ -344,12 +355,28 @@ mod tests {
     }
 
     #[test]
+    fn reported_delay_wins_over_the_table() {
+        let with = |s: &str, d| Quote { delay_min: d, ..q(s, QuoteSource::Yahoo, Some(0)) };
+        assert_eq!(with("CL1 Comdty", Some(10)).timeliness(), Timeliness::Delayed(Some(10)));
+        assert_eq!(with(AAPL, Some(20)).timeliness(), Timeliness::Delayed(Some(20)));
+        // Zero is not taken as proof of real-time.
+        assert_eq!(with("SPY US Equity", Some(0)).timeliness(), Timeliness::Delayed(None));
+        assert_eq!(with(AAPL, None).timeliness(), Timeliness::Delayed(Some(15)));
+        // A 20m feed tolerates 20m more quiet than a real-time one.
+        let now = utc(2026, 10, 14, 17, 0);
+        let age =
+            |d, mins: i64| Quote { delay_min: d, ..q(AAPL, QuoteSource::Yahoo, Some(now - mins * 60)) }.health(now);
+        assert_eq!(age(Some(20), 39), Health::Fresh);
+        assert!(matches!(age(Some(20), 41), Health::Stale { .. }));
+    }
+
+    #[test]
     fn stale_only_while_the_market_is_open() {
         let now = utc(2026, 10, 14, 17, 0); // Wed 13:00 EDT
-        let fresh = q(AAPL, QuoteSource::Yahoo, Some(now - 16 * 60));
+        let fresh = q(AAPL, QuoteSource::Yahoo, Some(now - 30 * 60)); // 15m feed delay + 15m quiet
         assert_eq!(fresh.health(now), Health::Fresh);
-        let stale = q(AAPL, QuoteSource::Yahoo, Some(now - 25 * 60));
-        assert_eq!(stale.health(now), Health::Stale { age: 25 * 60 });
+        let stale = q(AAPL, QuoteSource::Yahoo, Some(now - 40 * 60));
+        assert_eq!(stale.health(now), Health::Stale { age: 40 * 60 });
         // After the close the same old trade is simply the closing price.
         let after = utc(2026, 10, 14, 22, 0);
         assert_eq!(q(AAPL, QuoteSource::Yahoo, Some(utc(2026, 10, 14, 20, 0))).health(after), Health::Closed);
@@ -364,9 +391,9 @@ mod tests {
         let now = utc(2026, 10, 14, 13, 40);
         let prev_close = utc(2026, 10, 13, 20, 0);
         assert_eq!(q(AAPL, QuoteSource::Yahoo, Some(prev_close)).health(now), Health::Fresh);
-        // Half an hour in, still nothing: stale, aged from the open.
-        let later = utc(2026, 10, 14, 14, 0);
-        assert_eq!(q(AAPL, QuoteSource::Yahoo, Some(prev_close)).health(later), Health::Stale { age: 30 * 60 });
+        // Past the limit plus the feed delay, still nothing: stale, aged from the open.
+        let later = utc(2026, 10, 14, 14, 10);
+        assert_eq!(q(AAPL, QuoteSource::Yahoo, Some(prev_close)).health(later), Health::Stale { age: 40 * 60 });
     }
 
     #[test]
@@ -377,8 +404,8 @@ mod tests {
         assert_eq!(at("BTCUSD Curncy", QuoteSource::Binance, 130), Health::Stale { age: 130 });
         assert_eq!(at("EURUSD Curncy", QuoteSource::Yahoo, 9 * 60), Health::Fresh);
         assert_eq!(at("EURUSD Curncy", QuoteSource::Yahoo, 11 * 60), Health::Stale { age: 660 });
-        assert_eq!(at("THYAO TR Equity", QuoteSource::Yahoo, 19 * 60), Health::Fresh);
-        assert_eq!(at("THYAO TR Equity", QuoteSource::Yahoo, 21 * 60), Health::Stale { age: 1260 });
+        assert_eq!(at("THYAO TR Equity", QuoteSource::Yahoo, 34 * 60), Health::Fresh);
+        assert_eq!(at("THYAO TR Equity", QuoteSource::Yahoo, 36 * 60), Health::Stale { age: 2160 });
         // Crypto never closes, even on a weekend.
         let sat = utc(2026, 10, 17, 12, 0);
         assert_eq!(q("BTCUSD Curncy", QuoteSource::Binance, Some(sat - 600)).health(sat), Health::Stale { age: 600 });

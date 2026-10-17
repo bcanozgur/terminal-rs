@@ -18,6 +18,8 @@ pub fn now() -> i64 {
 /// A short label and its colour.
 pub struct Tag {
     pub text: String,
+    /// A compact form for tight spaces: `Yahoo 15m`, `closed 23:00`, `EOD 15 Oct`.
+    pub short: String,
     pub color: Color32,
 }
 
@@ -50,21 +52,40 @@ pub fn source_text(q: &Quote) -> String {
     }
 }
 
+/// `15m` / `live` / `delayed`: the delay without the word "delayed".
+fn short_delay(q: &Quote) -> String {
+    match q.timeliness() {
+        Timeliness::Live => "live".into(),
+        Timeliness::Delayed(Some(m)) => format!("{m}m"),
+        _ => "delayed".into(),
+    }
+}
+
 /// The tag for a chart or pane header (`None` for quotes whose source was never recorded).
 pub fn tag(q: &Quote, now: i64) -> Option<Tag> {
-    let (text, color) = match q.health(now) {
-        Health::Simulated => ("SAMPLE DATA".to_string(), theme::down()),
-        Health::Stale { age } => (format!("stale {} · {}", fmt_age(age), q.source.name()), amber()),
+    let (text, short, color) = match q.health(now) {
+        Health::Simulated => ("SAMPLE DATA".to_string(), "SAMPLE".to_string(), theme::down()),
+        Health::Stale { age } => {
+            let a = fmt_age(age);
+            (format!("stale {a} · {}", q.source.name()), format!("stale {a}"), amber())
+        }
         Health::Closed => {
             // A daily bar's time is its open, so without a trade time only the day is known.
             let at = if q.traded.is_some() { when(q.as_of(), now) } else { day(q.ts) };
-            (format!("closed · as of {at}"), muted())
+            let short = if q.traded.is_some() { local(q.as_of()).format("%H:%M").to_string() } else { day(q.ts) };
+            (format!("closed · as of {at}"), format!("closed {short}"), muted())
         }
-        Health::EndOfDay => (format!("{} · as of {}", source_text(q), day(q.ts)), muted()),
+        Health::EndOfDay => {
+            (format!("{} · as of {}", source_text(q), day(q.ts)), format!("EOD {}", day(q.ts)), muted())
+        }
         Health::Fresh if q.source == QuoteSource::Unknown => return None,
-        Health::Fresh => (source_text(q), if q.timeliness() == Timeliness::Live { theme::up() } else { muted() }),
+        Health::Fresh => (
+            source_text(q),
+            format!("{} {}", q.source.name(), short_delay(q)),
+            if q.timeliness() == Timeliness::Live { theme::up() } else { muted() },
+        ),
     };
-    Some(Tag { text, color })
+    Some(Tag { text, short, color })
 }
 
 /// The row marker: nothing for live, current data; grey for delayed, closed or end-of-day;
@@ -142,7 +163,17 @@ mod tests {
     use super::*;
 
     fn quote(sym: &str, source: QuoteSource, ts: i64, traded: Option<i64>) -> Quote {
-        Quote { symbol: sym.into(), last: 1.0, prev_close: 1.0, ts, spark: vec![], extended: None, source, traded }
+        Quote {
+            symbol: sym.into(),
+            last: 1.0,
+            prev_close: 1.0,
+            ts,
+            spark: vec![],
+            extended: None,
+            source,
+            traded,
+            delay_min: None,
+        }
     }
 
     #[test]

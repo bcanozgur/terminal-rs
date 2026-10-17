@@ -525,6 +525,7 @@ pub fn parse_spark(json: &str) -> Result<Vec<Quote>> {
             extended: None,
             source: QuoteSource::Yahoo,
             traded: None,
+            delay_min: None,
         });
     }
     Ok(out)
@@ -541,10 +542,7 @@ impl YahooProvider {
 
     /// Extended-hours trades plus each symbol's last regular-session trade time, from the
     /// same request (the spark endpoint only dates its daily bars).
-    pub async fn extended_and_times(
-        &self,
-        symbols: &[String],
-    ) -> Result<(Vec<(String, Extended)>, Vec<(String, i64)>)> {
+    pub async fn extended_and_times(&self, symbols: &[String]) -> Result<(Vec<(String, Extended)>, Vec<QuoteMeta>)> {
         let (mut ext, mut times) = (Vec::new(), Vec::new());
         for chunk in symbols.chunks(50) {
             let (e, t) = self.extended_chunk(chunk).await?;
@@ -554,8 +552,8 @@ impl YahooProvider {
         Ok((ext, times))
     }
 
-    async fn extended_chunk(&self, symbols: &[String]) -> Result<(Vec<(String, Extended)>, Vec<(String, i64)>)> {
-        let fields = "marketState,regularMarketPrice,regularMarketTime,preMarketPrice,preMarketChange,\
+    async fn extended_chunk(&self, symbols: &[String]) -> Result<(Vec<(String, Extended)>, Vec<QuoteMeta>)> {
+        let fields = "marketState,regularMarketPrice,regularMarketTime,exchangeDataDelayedBy,preMarketPrice,preMarketChange,\
                       preMarketChangePercent,preMarketTime,postMarketPrice,postMarketChange,\
                       postMarketChangePercent,postMarketTime";
         let mut last_err = None;
@@ -572,19 +570,31 @@ impl YahooProvider {
             if !status.is_success() {
                 bail!("yahoo quote: HTTP {status}");
             }
-            return Ok((parse_extended(&body, chrono::Utc::now().timestamp())?, parse_trade_times(&body)?));
+            return Ok((parse_extended(&body, chrono::Utc::now().timestamp())?, parse_quote_meta(&body)?));
         }
         Err(last_err.unwrap_or_else(|| anyhow!("yahoo quote failed")))
     }
 }
 
-/// Last regular-session trade time (`regularMarketTime`) per symbol from `/v7/finance/quote`.
-pub fn parse_trade_times(json: &str) -> Result<Vec<(String, i64)>> {
+/// Per-symbol facts from `/v7/finance/quote`: last regular-session trade time and the
+/// exchange's feed delay in minutes (`exchangeDataDelayedBy`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuoteMeta {
+    pub symbol: String,
+    pub traded: Option<i64>,
+    pub delay_min: Option<u32>,
+}
+
+pub fn parse_quote_meta(json: &str) -> Result<Vec<QuoteMeta>> {
     let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo quote")?;
     let rows = v["quoteResponse"]["result"].as_array().ok_or_else(|| anyhow!("unexpected quote payload"))?;
     Ok(rows
         .iter()
-        .filter_map(|r| Some((r["symbol"].as_str()?.to_string(), r["regularMarketTime"].as_i64().filter(|t| *t > 0)?)))
+        .filter_map(|r| {
+            let traded = r["regularMarketTime"].as_i64().filter(|t| *t > 0);
+            let delay_min = r["exchangeDataDelayedBy"].as_u64().and_then(|d| u32::try_from(d).ok());
+            Some(QuoteMeta { symbol: r["symbol"].as_str()?.to_string(), traded, delay_min })
+        })
         .collect())
 }
 
@@ -843,10 +853,14 @@ mod tests {
     }
 
     #[test]
-    fn trade_times_come_from_the_quote_payload() {
-        let json = r#"{"quoteResponse":{"result":[{"symbol":"AAPL","regularMarketTime":1791000000},
-            {"symbol":"EURUSD=X","regularMarketTime":0},{"symbol":"X"}]}}"#;
-        assert_eq!(parse_trade_times(json).unwrap(), vec![("AAPL".to_string(), 1_791_000_000)]);
+    fn trade_times_and_delays_come_from_the_quote_payload() {
+        let json = r#"{"quoteResponse":{"result":[{"symbol":"AAPL","regularMarketTime":1791000000,"exchangeDataDelayedBy":15},
+            {"symbol":"EURUSD=X","regularMarketTime":0,"exchangeDataDelayedBy":0},{"symbol":"X"}]}}"#;
+        let m = |symbol: &str, traded, delay_min| QuoteMeta { symbol: symbol.into(), traded, delay_min };
+        assert_eq!(
+            parse_quote_meta(json).unwrap(),
+            vec![m("AAPL", Some(1_791_000_000), Some(15)), m("EURUSD=X", None, Some(0)), m("X", None, None)]
+        );
     }
 
     #[test]

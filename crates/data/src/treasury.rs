@@ -238,6 +238,7 @@ impl TreasuryProvider {
                 extended: None,
                 source,
                 traded: None,
+                delay_min: None,
             });
         }
         match (out.is_empty(), rows) {

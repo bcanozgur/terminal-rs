@@ -417,6 +417,7 @@ mod tests {
             extended: None,
             source: Default::default(),
             traded: None,
+            delay_min: None,
         };
         assert_eq!(change_text(&Security::parse("US10Y Govt").unwrap(), &q), "+3.0bp");
         let q = Quote {
@@ -428,6 +429,7 @@ mod tests {
             extended: None,
             source: Default::default(),
             traded: None,
+            delay_min: None,
         };
         assert_eq!(change_text(&Security::parse("EURUSD Curncy").unwrap(), &q), "+0.0012");
     }

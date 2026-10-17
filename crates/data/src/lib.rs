@@ -57,6 +57,9 @@ pub struct Quote {
     /// daily bar's time.
     #[serde(default)]
     pub traded: Option<i64>,
+    /// The feed's delay in minutes as the provider reports it (Yahoo `exchangeDataDelayedBy`).
+    #[serde(default)]
+    pub delay_min: Option<u32>,
 }
 
 /// A US extended-hours session (Eastern time; Turkey is +7h, or +6h while the US is on
@@ -318,6 +321,7 @@ pub trait MarketData: Send + Sync {
                     extended: None,
                     source: self.quote_source(),
                     traded: None,
+                    delay_min: None,
                 });
             }
         }
@@ -700,6 +704,7 @@ mod tests {
             extended: None,
             source: QuoteSource::Unknown,
             traded: None,
+            delay_min: None,
         };
         assert_eq!(q.change(), 10.0);
         assert!((q.change_pct() - 10.0).abs() < 1e-9);

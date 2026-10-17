@@ -1249,6 +1249,7 @@ mod tests {
                 extended: None,
                 source: Default::default(),
                 traded: None,
+                delay_min: None,
             }],
         );
         let fired: Vec<_> = rx

@@ -116,7 +116,10 @@ impl MarketData for Markets {
                 match ext {
                     Ok((ext, times)) => {
                         for q in &mut quotes {
-                            q.traded = times.iter().find(|(s, _)| *s == q.symbol).map(|(_, t)| *t);
+                            if let Some(m) = times.iter().find(|m| m.symbol == q.symbol) {
+                                q.traded = m.traded;
+                                q.delay_min = m.delay_min;
+                            }
                             if stocks.contains(&q.symbol) {
                                 q.extended = ext.iter().find(|(s, _)| *s == q.symbol).map(|(_, e)| *e);
                             }

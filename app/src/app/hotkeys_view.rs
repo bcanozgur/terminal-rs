@@ -369,11 +369,11 @@ impl TerminalApp {
             section(ui, "Data delay and freshness");
             para(
                 ui,
-                "Every price carries its source. Binance and Coinbase are live; Yahoo is delayed (about 15 minutes \
-                 for US and Borsa Istanbul stocks, varies for FX, futures and other indices); Treasury.gov and FRED \
+                "Every price carries its source. Binance and Coinbase are live; Yahoo is delayed (by the minutes \
+                 Yahoo reports per instrument, about 15 for US and Borsa Istanbul stocks); Treasury.gov and FRED \
                  are end of day. A dot beside a watchlist row or a tag in the chart legend shows it: grey = delayed, \
                  closed or end of day, amber = stale (the market is open but the last trade is older than 2 min for \
-                 crypto, 10 min for FX, 20 min for stocks and futures), red = SAMPLE DATA. Sample data is simulated: \
+                 crypto, 10 min for FX, 20 min for stocks and futures, each plus the feed's delay), red = SAMPLE DATA. Sample data is simulated: \
                  it appears when a source is unreachable (or with TR_PROVIDER=sample) and the status bar then shows \
                  a red notice naming the source. Sessions: US stocks 09:30-16:00 ET and Borsa Istanbul 10:00-18:00 \
                  Istanbul time, Mon-Fri; FX and futures Sun 17:00 - Fri 17:00 ET; crypto 24/7. Exchange holidays \
