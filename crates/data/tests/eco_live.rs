@@ -40,8 +40,8 @@ async fn release_day_vintage_and_history() {
     let e = eco();
     let cpi = event("CPI").unwrap();
     let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
-    let day = e.observations(cpi.series, d(2026, 1, 1), Some(d(2026, 9, 11)), now()).await.unwrap();
+    let day = e.observations(None, cpi.series, d(2026, 1, 1), Some(d(2026, 9, 11)), now()).await.unwrap();
     assert_eq!(day.last().unwrap().0, d(2026, 8, 1), "the Sep 11 vintage ends with August");
-    let s = e.series(cpi, now()).await.unwrap();
+    let s = e.series(None, cpi, now()).await.unwrap();
     assert!(s.values.len() > 100);
 }

@@ -53,7 +53,9 @@ pub async fn fetch(req: EcoRequest) -> EcoResponse {
         }
         EcoRequest::Series { code } => {
             let series = match (eco::event(&code), client()) {
-                (Some(ev), Some(c)) => c.series(ev, now).await.map(Box::new).map_err(|e| format!("{e:#}")),
+                (Some(ev), Some(c)) => {
+                    c.series(key_store().key().as_deref(), ev, now).await.map(Box::new).map_err(|e| format!("{e:#}"))
+                }
                 (None, _) => Err(format!("unknown release {code}")),
                 (_, None) => Err("HTTP client unavailable".into()),
             };

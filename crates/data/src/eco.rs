@@ -3,9 +3,10 @@
 //! - Release dates: the FRED API (`fred/releases/dates`, free key in `FRED_API_KEY` or the
 //!   settings) or, without a key, FRED's public release-calendar page for each release. FOMC
 //!   decisions come from the Fed's published meeting schedule ([`FOMC_DECISIONS`]).
-//! - Actual and prior: ALFRED's keyless `alfredgraph.csv` with `vintage_date` = the release
+//! - Actual and prior: with a key, `fred/series/observations` with the release day as the
+//!   real-time period (what ALFRED calls a vintage); without one, ALFRED's keyless `alfredgraph.csv` with `vintage_date` = the release
 //!   day, so each row shows what was published that day, not today's revised numbers.
-//! - History: FRED's keyless `fredgraph.csv`.
+//! - History: `fred/series/observations` with a key, FRED's keyless `fredgraph.csv` without.
 //!
 //! There is no consensus/forecast column: survey expectations are not available for free.
 //! Everything fetched is cached in SQLite; settled releases are cached for good.
@@ -237,6 +238,36 @@ pub fn parse_api_dates(json: &str) -> Result<Vec<ReleaseDate>> {
             })
         })
         .collect())
+}
+
+#[derive(Deserialize)]
+struct ApiObs {
+    #[serde(default)]
+    observations: Vec<ApiOb>,
+}
+
+#[derive(Deserialize)]
+struct ApiOb {
+    date: String,
+    value: String,
+}
+
+/// Parse a FRED API `fred/series/observations` JSON response; missing values (`.`) are
+/// skipped. Ascending by date.
+pub fn parse_api_observations(json: &str) -> Result<Vec<(NaiveDate, f64)>> {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json)
+        && let Some(msg) = v.get("error_message").and_then(|m| m.as_str())
+    {
+        bail!("FRED: {msg}");
+    }
+    let r: ApiObs = serde_json::from_str(json).context("FRED observations")?;
+    let mut v: Vec<(NaiveDate, f64)> = r
+        .observations
+        .into_iter()
+        .filter_map(|o| Some((NaiveDate::parse_from_str(&o.date, "%Y-%m-%d").ok()?, o.value.trim().parse().ok()?)))
+        .collect();
+    v.sort_by_key(|o| o.0);
+    Ok(v)
 }
 
 fn strip_tags(html: &str) -> String {
@@ -633,19 +664,25 @@ impl EcoCache {
 pub struct Eco {
     client: reqwest::Client,
     cache: Option<EcoCache>,
+    /// Hosts that recently failed to connect or answer, with the time they may be tried again.
+    down: Mutex<HashMap<String, i64>>,
 }
 
 const HOUR: i64 = 3600;
 /// Requests in flight at once; FRED's edge drops clients that burst.
 const CONCURRENCY: usize = 2;
+/// How long a host that timed out is skipped, so one dead host costs one timeout, not one
+/// per request.
+const DOWN_FOR: i64 = 120;
 
 impl Eco {
     pub fn new(cache: Option<EcoCache>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .user_agent(concat!("terminal-rs/", env!("CARGO_PKG_VERSION")))
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(20))
             .build()?;
-        Ok(Self { client, cache })
+        Ok(Self { client, cache, down: Mutex::new(HashMap::new()) })
     }
 
     /// GET `url` as text, served from the cache when younger than `max_age` seconds. A stale
@@ -655,8 +692,22 @@ impl Eco {
         if let Some(body) = self.cache.as_ref().and_then(|c| c.get(label, now, max_age)) {
             return Ok(body);
         }
+        let host = reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
         let fetched = async {
-            let resp = self.client.get(url).send().await.map_err(|e| anyhow!("{label}: {:?}", e.without_url()))?;
+            if self.down.lock().ok().and_then(|d| d.get(&host).copied()).is_some_and(|t| t > now) {
+                bail!("{host} is unreachable");
+            }
+            let resp = match self.client.get(url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    if (e.is_timeout() || e.is_connect())
+                        && let Ok(mut d) = self.down.lock()
+                    {
+                        d.insert(host.clone(), chrono::Utc::now().timestamp() + DOWN_FOR);
+                    }
+                    bail!("{host} did not answer ({})", if e.is_timeout() { "timed out" } else { "connection failed" });
+                }
+            };
             let status = resp.status();
             let body = resp.text().await.map_err(|e| anyhow!("{label}: {:?}", e.without_url()))?;
             if !status.is_success() {
@@ -707,23 +758,36 @@ impl Eco {
         Ok(parse_calendar_html(&body).into_iter().filter(|d| d.release_id == rid).collect())
     }
 
-    /// Observations of `series` from `from`, as published on `vintage` (ALFRED), or the
-    /// current revised data when `vintage` is `None`.
+    /// Observations of `series` from `from`, as published on `vintage` (real-time period of
+    /// that day, ALFRED's "vintage date"), or the current revised data when `vintage` is
+    /// `None`. With a `key` this uses the FRED API, otherwise the keyless CSV downloads.
     pub async fn observations(
         &self,
+        key: Option<&str>,
         series: &str,
         from: NaiveDate,
         vintage: Option<NaiveDate>,
         now: i64,
     ) -> Result<Vec<(NaiveDate, f64)>> {
-        let (url, label, max_age) = match vintage {
-            // Past vintages never change; today's may still gain the release.
+        // Past vintages never change; today's may still gain the release.
+        let max_age = if vintage.is_some() { Some(10 * 60) } else { Some(HOUR) };
+        if let Some(k) = key {
+            let real = vintage.map(|v| format!("&realtime_start={v}&realtime_end={v}")).unwrap_or_default();
+            let url = format!(
+                "{FRED_API}/series/observations?series_id={series}&observation_start={from}{real}&file_type=json&api_key={k}"
+            );
+            let label = match vintage {
+                Some(v) => format!("fred api {series} {from} @{v}"),
+                None => format!("fred api {series} {from}"),
+            };
+            return parse_api_observations(&self.text(&url, &label, now, max_age).await?);
+        }
+        let (url, label) = match vintage {
             Some(v) => (
                 format!("{ALFRED_CSV}?id={series}&cosd={from}&vintage_date={v}"),
                 format!("alfred {series} {from} @{v}"),
-                Some(10 * 60),
             ),
-            None => (format!("{FRED_CSV}?id={series}&cosd={from}"), format!("fred {series} {from}"), Some(HOUR)),
+            None => (format!("{FRED_CSV}?id={series}&cosd={from}"), format!("fred {series} {from}")),
         };
         parse_obs_csv(&self.text(&url, &label, now, max_age).await?)
     }
@@ -769,14 +833,21 @@ impl Eco {
             }
         }
         let mut rows = schedule(monday, &dates);
-        let jobs: Vec<_> = rows.iter_mut().map(|r| self.fill(r, now)).collect();
+        let jobs: Vec<_> = rows.iter_mut().map(|r| self.fill(key, r, now)).collect();
         futures::stream::iter(jobs).buffer_unordered(CONCURRENCY).collect::<Vec<()>>().await;
-        let latest = if source == DateSource::Unavailable { self.latest(now).await } else { Vec::new() };
+        let latest = if source == DateSource::Unavailable { self.latest(key, now).await } else { Vec::new() };
+        if let Ok(d) = self.down.lock() {
+            let mut hosts: Vec<&String> = d.iter().filter(|&(_, &t)| t > now).map(|(h, _)| h).collect();
+            hosts.sort();
+            for h in hosts {
+                notes.push(format!("{h} is not answering from this network; values from it are unavailable"));
+            }
+        }
         EcoWeek { monday, rows, source, latest, notes }
     }
 
     /// Fill a row's values once its release time has passed.
-    async fn fill(&self, row: &mut EcoRow, now: i64) {
+    async fn fill(&self, key: Option<&str>, row: &mut EcoRow, now: i64) {
         if row.ts > now {
             row.state = RowState::Upcoming;
             return;
@@ -789,13 +860,13 @@ impl Eco {
         // Two years of history covers year-over-year and quarterly priors.
         let from = row.date - chrono::Days::new(800);
         let values = if ev.release_id == 0 {
-            self.observations(ev.series, from, None, now).await.map(|obs| fomc_values(&obs, row.date))
+            self.observations(key, ev.series, from, None, now).await.map(|obs| fomc_values(&obs, row.date))
         } else {
-            let day = self.observations(ev.series, from, Some(row.date), now).await;
+            let day = self.observations(key, ev.series, from, Some(row.date), now).await;
             // On the day itself, compare with the day before to tell a posted release from one
             // FRED has not picked up yet; later, the day's vintage is enough.
             let before = if now - row.ts < 24 * HOUR {
-                self.observations(ev.series, from, Some(row.date - chrono::Days::new(1)), now).await
+                self.observations(key, ev.series, from, Some(row.date - chrono::Days::new(1)), now).await
             } else {
                 Ok(Vec::new())
             };
@@ -822,10 +893,10 @@ impl Eco {
     }
 
     /// Latest actual/prior of every event from current data (no dates needed).
-    pub async fn latest(&self, now: i64) -> Vec<Latest> {
+    pub async fn latest(&self, key: Option<&str>, now: i64) -> Vec<Latest> {
         let today = chrono::DateTime::from_timestamp(now, 0).map_or(NaiveDate::MIN, |t| t.date_naive());
         let from = today - chrono::Days::new(800);
-        let jobs: Vec<_> = EVENTS.iter().map(|e| self.observations(e.series, from, None, now)).collect();
+        let jobs: Vec<_> = EVENTS.iter().map(|e| self.observations(key, e.series, from, None, now)).collect();
         let fetched: Vec<_> = futures::stream::iter(jobs).buffered(CONCURRENCY).collect().await;
         EVENTS
             .iter()
@@ -839,9 +910,9 @@ impl Eco {
     }
 
     /// History for `ECOF`: about 15 years of the event's series.
-    pub async fn series(&self, ev: &'static EcoEvent, now: i64) -> Result<EcoSeries> {
+    pub async fn series(&self, key: Option<&str>, ev: &'static EcoEvent, now: i64) -> Result<EcoSeries> {
         let today = chrono::DateTime::from_timestamp(now, 0).map_or(NaiveDate::MIN, |t| t.date_naive());
-        let raw = self.observations(ev.series, today - chrono::Days::new(15 * 366), None, now).await?;
+        let raw = self.observations(key, ev.series, today - chrono::Days::new(15 * 366), None, now).await?;
         if raw.is_empty() {
             bail!("no observations for {}", ev.series);
         }
@@ -968,6 +1039,18 @@ mod tests {
         assert!((actual - 0.6485).abs() < 1e-3, "{actual}");
         assert!((prior.unwrap() - (334.131 / 332.813 - 1.0) * 100.0).abs() < 1e-9);
         assert_eq!(released_values(cpi, &before, &before), None, "unchanged vintage = not posted yet");
+    }
+
+    #[test]
+    fn parses_api_observations() {
+        let obs = parse_api_observations(include_str!("../tests/fixtures/fred_observations_cpi.json")).unwrap();
+        assert_eq!(obs.len(), 3, "the `.` row is skipped");
+        assert_eq!(obs[0], (d(2026, 7, 1), 332.813));
+        assert_eq!(obs[2], (d(2026, 9, 1), 334.131));
+        let err = parse_api_observations(
+            r#"{"error_code":400,"error_message":"Bad Request. The value for variable api_key is not registered."}"#,
+        );
+        assert!(format!("{:#}", err.unwrap_err()).contains("not registered"));
     }
 
     #[test]
