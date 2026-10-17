@@ -43,6 +43,32 @@ pub struct Quote {
     pub spark: Vec<f64>,
 }
 
+/// Trading session of an extended-hours quote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Session {
+    Pre,
+    Regular,
+    Post,
+}
+
+/// Pre/post-market price of a security against its regular-session reference.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ExtendedQuote {
+    pub session: Session,
+    /// Latest extended-hours trade (the regular price during the session).
+    pub price: f64,
+    /// Close the move is measured from: the previous close before the open, today's close after.
+    pub reference: f64,
+    pub ts: i64,
+}
+
+impl ExtendedQuote {
+    /// Percent move from the reference (`None` during the regular session).
+    pub fn move_pct(&self) -> Option<f64> {
+        (self.session != Session::Regular && self.reference > 0.0).then(|| (self.price / self.reference - 1.0) * 100.0)
+    }
+}
+
 /// A symbol-search result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchHit {
@@ -234,6 +260,22 @@ pub trait MarketData: Send + Sync {
         None
     }
 
+    /// Quotes from the real source only, never synthesised (alerts must not fire on sample
+    /// prices). The default is [`MarketData::quotes`].
+    async fn real_quotes(&self, symbols: &[String]) -> Result<Vec<Quote>> {
+        self.quotes(symbols).await
+    }
+
+    /// Latest history from the real source only (see [`MarketData::real_quotes`]).
+    async fn real_history(&self, symbol: &str, tf: Timeframe, limit: usize) -> Result<Vec<Bar>> {
+        self.history(symbol, tf, None, limit).await
+    }
+
+    /// Pre/post-market state of a security (`None` = the source has none for it).
+    async fn extended(&self, _symbol: &str) -> Result<Option<ExtendedQuote>> {
+        Ok(None)
+    }
+
     /// Search securities beyond the built-in catalog (network sources).
     async fn search(&self, _query: &str) -> Result<Vec<SearchHit>> {
         Ok(Vec::new())
@@ -336,6 +378,18 @@ impl<P: MarketData> MarketData for Fallback<P> {
 
     fn live(&self, symbol: &str, tf: Timeframe) -> Option<LiveFeed> {
         self.primary.live(symbol, tf)
+    }
+
+    async fn real_quotes(&self, symbols: &[String]) -> Result<Vec<Quote>> {
+        self.primary.real_quotes(symbols).await
+    }
+
+    async fn real_history(&self, symbol: &str, tf: Timeframe, limit: usize) -> Result<Vec<Bar>> {
+        self.primary.real_history(symbol, tf, limit).await
+    }
+
+    async fn extended(&self, symbol: &str) -> Result<Option<ExtendedQuote>> {
+        self.primary.extended(symbol).await
     }
 
     async fn search(&self, query: &str) -> Result<Vec<SearchHit>> {

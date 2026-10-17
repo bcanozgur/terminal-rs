@@ -18,6 +18,7 @@ use tr_congress::{Db, Politician, Trade};
 use tr_core::{Bar, Security, Series, Timeframe, indicators};
 use tr_data::{BarCache, Provider, Quote, SearchHit, YieldCurves};
 
+use crate::alerts::{self, AlertBook, Ext, Market, RuleOp};
 use crate::command::IndicatorSpec;
 use crate::theme;
 
@@ -25,6 +26,13 @@ pub type PaneId = u64;
 
 /// Minutes between Congress disclosure checks (`TR_CONGRESS_REFRESH_MIN`; 0 disables).
 pub const CONGRESS_REFRESH_MIN: u64 = 30;
+
+/// Seconds between price-alert quote checks (`TR_ALERT_POLL_SECS`; 0 disables polling, live
+/// ticks still count).
+pub const ALERT_POLL_SECS: u64 = 15;
+
+/// Daily closes behind indicator alerts are refetched this often.
+const ALERT_CLOSES_TTL: Duration = Duration::from_secs(600);
 
 pub enum Request {
     /// Load the brokerage portfolio through SnapTrade (`None` = the simulated sample).
@@ -127,7 +135,10 @@ pub enum Request {
         on: bool,
     },
     Alerts,
+    /// Marks Congress and price alerts read.
     MarkAlertsSeen,
+    /// Change the price/indicator alert rules ([`crate::alerts`]).
+    AlertRules(RuleOp),
     RefreshCongress,
     /// A pane closed or changed: stop its live feed and drop its series.
     Forget(PaneId),
@@ -286,6 +297,10 @@ pub enum Response {
     Politicians(Vec<PoliticianSummary>),
     Alerts(Vec<Alert>),
     NewAlerts(Vec<NewTradeAlert>),
+    /// The price-alert rule book after a change.
+    AlertBook(Box<AlertBook>),
+    /// Price/indicator rules that just fired.
+    PriceAlerts(Vec<alerts::Fired>),
     Status(String),
     CongressRefreshed(String),
     Curves(Box<YieldCurves>),
@@ -312,8 +327,29 @@ struct Shared {
     series: std::sync::Mutex<SeriesMap>,
     cache: std::sync::Mutex<Option<BarCache>>,
     db: Mutex<Db>,
+    alerts: std::sync::Mutex<PriceAlerts>,
     out: mpsc::Sender<Response>,
     ctx: egui::Context,
+}
+
+/// Price-alert rules and the market data they are evaluated against.
+#[derive(Default)]
+struct PriceAlerts {
+    book: AlertBook,
+    /// Where the book is saved (`None` in tests).
+    path: Option<PathBuf>,
+    markets: HashMap<String, Market>,
+    closes_at: HashMap<String, std::time::Instant>,
+}
+
+impl PriceAlerts {
+    fn save(&self) {
+        if let Some(path) = &self.path
+            && let Err(e) = self.book.save(path)
+        {
+            tracing::warn!("saving alert rules: {e}");
+        }
+    }
 }
 
 impl Shared {
@@ -355,11 +391,15 @@ impl Worker {
             .build()?;
         let (tx, mut req_rx) = tokio::sync::mpsc::unbounded_channel::<Request>();
         let (out, rx) = mpsc::channel();
+        let alerts_path = dir.join("alerts.json");
+        let book = AlertBook::load(&alerts_path);
+        let _ = out.send(Response::AlertBook(Box::new(book.clone())));
         let shared = Arc::new(Shared {
             provider,
             series: Default::default(),
             cache: std::sync::Mutex::new(cache),
             db: Mutex::new(db),
+            alerts: std::sync::Mutex::new(PriceAlerts { book, path: Some(alerts_path), ..Default::default() }),
             out,
             ctx,
         });
@@ -390,6 +430,23 @@ impl Worker {
                 congress_refresh(&s).await;
             }
         });
+
+        // Price alerts: quote the securities with rules on a timer (live ticks and the
+        // app's own quote requests are checked as they arrive too).
+        let s = shared.clone();
+        rt.spawn(async move {
+            let secs: u64 =
+                std::env::var("TR_ALERT_POLL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(ALERT_POLL_SECS);
+            if secs == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let mut tick = tokio::time::interval(Duration::from_secs(secs));
+            loop {
+                tick.tick().await;
+                poll_alerts(&s).await;
+            }
+        });
         Ok(Self { tx, rx, _rt: rt })
     }
 
@@ -413,6 +470,86 @@ async fn congress_refresh(s: &Shared) {
             s.send(Response::CongressRefreshed(report.summary()));
         }
         Err(e) => s.send(Response::Status(format!("congress refresh failed: {e:#}"))),
+    }
+}
+
+/// Update what is known about `symbol`, evaluate its alert rules and publish what fired.
+fn alert_update(s: &Shared, symbol: &str, update: impl FnOnce(&mut Market)) {
+    let now = chrono::Utc::now().timestamp();
+    let (fired, book) = {
+        let mut a = s.alerts.lock().expect("alerts lock");
+        if !a.book.watches(symbol) {
+            return;
+        }
+        let a = &mut *a;
+        let m = a.markets.entry(symbol.to_string()).or_default();
+        update(m);
+        let (fired, changed) = a.book.evaluate(symbol, m, now);
+        if changed {
+            a.save();
+        }
+        (fired, changed.then(|| a.book.clone()))
+    };
+    if let Some(book) = book {
+        if book.notify {
+            for f in &fired {
+                let msg = f.message.clone();
+                tokio::task::spawn_blocking(move || tr_macos::notify("terminal-rs alert", &msg));
+            }
+        }
+        if !fired.is_empty() {
+            s.send(Response::PriceAlerts(fired));
+        }
+        s.send(Response::AlertBook(Box::new(book)));
+    }
+}
+
+fn alert_quotes(s: &Shared, quotes: &[Quote]) {
+    for q in quotes {
+        alert_update(s, &q.symbol, |m| {
+            m.last = Some(q.last);
+            m.prev_close = (q.prev_close > 0.0).then_some(q.prev_close);
+        });
+    }
+}
+
+/// Quote every security with an enabled rule, refreshing the daily closes and extended-hours
+/// prices the rules need. Real sources only: alerts never fire on sample fallback data.
+async fn poll_alerts(s: &Shared) {
+    let watched = s.alerts.lock().expect("alerts lock").book.watched();
+    if watched.is_empty() {
+        return;
+    }
+    let symbols: Vec<String> = watched.iter().map(|(k, ..)| k.clone()).collect();
+    match s.provider.real_quotes(&symbols).await {
+        Ok(q) => alert_quotes(s, &q),
+        Err(e) => tracing::debug!("alert quotes: {e:#}"),
+    }
+    for (symbol, closes, ext) in watched {
+        let stale = || {
+            s.alerts.lock().expect("alerts lock").closes_at.get(&symbol).is_none_or(|t| t.elapsed() > ALERT_CLOSES_TTL)
+        };
+        if closes && stale() {
+            match s.provider.real_history(&symbol, Timeframe::D1, 400).await {
+                Ok(bars) if !bars.is_empty() => {
+                    s.alerts.lock().expect("alerts lock").closes_at.insert(symbol.clone(), std::time::Instant::now());
+                    alert_update(s, &symbol, |m| m.closes = bars.iter().map(|b| b.close).collect());
+                }
+                Ok(_) => {}
+                Err(e) => tracing::debug!("alert history {symbol}: {e:#}"),
+            }
+        }
+        if ext {
+            let state = match s.provider.extended(&symbol).await {
+                Ok(Some(q)) => q.move_pct().map_or(Ext::Regular, Ext::Move),
+                Ok(None) => Ext::Unknown,
+                Err(e) => {
+                    tracing::debug!("alert extended hours {symbol}: {e:#}");
+                    continue;
+                }
+            };
+            alert_update(s, &symbol, |m| m.ext = state);
+        }
     }
 }
 
@@ -659,10 +796,20 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             };
             s.send(Response::Markers { pane, symbol, trades });
         }
-        Request::Quotes(symbols) => match s.provider.quotes(&symbols).await {
-            Ok(q) => s.send(Response::Quotes(q)),
-            Err(e) => s.send(Response::Status(format!("quotes: {e:#}"))),
-        },
+        Request::Quotes(symbols) => {
+            // Real quotes feed the alert rules; sample stand-ins (offline) only fill the panels.
+            let quotes = match s.provider.real_quotes(&symbols).await {
+                Ok(q) if !q.is_empty() => {
+                    alert_quotes(s, &q);
+                    Ok(q)
+                }
+                _ => s.provider.quotes(&symbols).await,
+            };
+            match quotes {
+                Ok(q) => s.send(Response::Quotes(q)),
+                Err(e) => s.send(Response::Status(format!("quotes: {e:#}"))),
+            }
+        }
         Request::Latest { limit } => {
             let t = s.db.lock().await.latest_trades(limit).unwrap_or_default();
             s.send(Response::Latest(t));
@@ -699,9 +846,20 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             s.send(Response::Alerts(a));
         }
         Request::MarkAlertsSeen => {
-            let db = s.db.lock().await;
-            let _ = db.mark_alerts_seen();
-            s.send(Response::Alerts(db.alerts(false, 200).unwrap_or_default()));
+            {
+                let db = s.db.lock().await;
+                let _ = db.mark_alerts_seen();
+                s.send(Response::Alerts(db.alerts(false, 200).unwrap_or_default()));
+            }
+            alert_rules(s, RuleOp::MarkSeen);
+        }
+        Request::AlertRules(op) => {
+            // A new or re-enabled rule is checked against fresh quotes straight away.
+            let check = matches!(op, RuleOp::Add(_) | RuleOp::Enable(_, true));
+            alert_rules(s, op);
+            if check {
+                poll_alerts(s).await;
+            }
         }
         Request::RefreshCongress => congress_refresh(s).await,
         Request::Forget(pane) => {
@@ -760,6 +918,18 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         }
         Request::Trade(t) => s.send(Response::Trade(Box::new(trade(t).await))),
     }
+}
+
+fn alert_rules(s: &Shared, op: RuleOp) {
+    let book = {
+        let mut a = s.alerts.lock().expect("alerts lock");
+        if !a.book.apply(op, chrono::Utc::now().timestamp()) {
+            return;
+        }
+        a.save();
+        a.book.clone()
+    };
+    s.send(Response::AlertBook(Box::new(book)));
 }
 
 async fn trade(t: TradeRequest) -> TradeResponse {
@@ -842,11 +1012,15 @@ fn start_live(s: Arc<Shared>, pane: PaneId, generation: u64, symbol: String, tf:
             tokio::select! {
                 bar = feed.recv() => {
                     let Some(bar) = bar else { break };
-                    let mut map = s.series.lock().expect("series lock");
-                    match map.get_mut(&pane) {
-                        Some((g, bars)) if *g == generation => dirty |= Series::apply_live(Arc::make_mut(bars), bar),
-                        _ => break,
+                    {
+                        let mut map = s.series.lock().expect("series lock");
+                        match map.get_mut(&pane) {
+                            Some((g, bars)) if *g == generation => dirty |= Series::apply_live(Arc::make_mut(bars), bar),
+                            _ => break,
+                        }
                     }
+                    // Every tick is the latest price for this security's alert rules.
+                    alert_update(&s, &symbol, |m| m.last = Some(bar.close));
                 }
                 _ = tick.tick() => {
                     if !dirty {
@@ -980,6 +1154,7 @@ mod tests {
             series: Default::default(),
             cache: std::sync::Mutex::new(None),
             db: Mutex::new(Db::open_in_memory().unwrap()),
+            alerts: Default::default(),
             out,
             ctx: egui::Context::default(),
         };
@@ -990,6 +1165,43 @@ mod tests {
         assert!(store_series(&s, 1, 2, Arc::new(vec![Bar::new(0, 1.0, 1.0, 1.0, 1.0, 1.0)])));
         assert_eq!(current_series(&s, 1, 2).unwrap().len(), 1);
         assert!(current_series(&s, 1, 1).is_none());
+    }
+
+    #[test]
+    fn price_alerts_fire_once_from_ticks() {
+        let (out, rx) = mpsc::channel();
+        let mut book = AlertBook::default();
+        book.notify = false;
+        let spec = crate::alerts::parse(&["AAPL", ">", "250"]).unwrap();
+        book.add("AAPL US Equity", spec.cond, false, 0);
+        let s = Shared {
+            provider: std::sync::Arc::new(tr_data::sample::SampleProvider::at(0, 10)),
+            series: Default::default(),
+            cache: std::sync::Mutex::new(None),
+            db: Mutex::new(Db::open_in_memory().unwrap()),
+            alerts: std::sync::Mutex::new(PriceAlerts { book, ..Default::default() }),
+            out,
+            ctx: egui::Context::default(),
+        };
+        for p in [240.0, 251.0, 252.0, 249.0, 255.0] {
+            alert_update(&s, "AAPL US Equity", |m| m.last = Some(p));
+        }
+        // Quotes for other securities are ignored.
+        alert_quotes(
+            &s,
+            &[Quote { symbol: "MSFT US Equity".into(), last: 900.0, prev_close: 1.0, ts: 0, spark: vec![] }],
+        );
+        let fired: Vec<_> = rx
+            .try_iter()
+            .filter_map(|r| match r {
+                Response::PriceAlerts(f) => Some(f),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].message, "AAPL: Last >= 250 (now 251.00)");
+        assert!(!s.alerts.lock().unwrap().book.rules[0].enabled, "one-shot switched off");
     }
 
     #[test]

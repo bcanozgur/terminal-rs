@@ -254,6 +254,10 @@ impl TerminalApp {
                     (&["OMON", "AAPL OMON", "SPX INDEX OMON"], "Option chain: calls/puts by strike, IV, greeks"),
                     (&["CONG", "NVDA CONG"], "Congress trades feed / who traded a ticker"),
                     (&["POL", "POL PELOSI", "TRACK PELOSI"], "Politicians, profiles and alerts"),
+                    (
+                        &["ALRT AAPL > 250", "ALRT NVDA RSI > 70", "ALRT MSFT > SMA 50 REPEAT"],
+                        "Price / indicator alerts",
+                    ),
                     (&["WL", "WL ADD SOLUSD CRNCY"], "Watchlist"),
                     (&["PREFS"], "Settings: theme, fonts, density, hotkeys, layouts"),
                 ],

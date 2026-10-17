@@ -1,7 +1,7 @@
 //! Bloomberg-style command line: `<SECURITY> [<FUNCTION> args] <GO>`.
 //!
 //! Examples: `AAPL`, `AAPL US EQUITY <GO>`, `5`, `1W`, `RSI`, `SMA 50`, `CMP MSFT`,
-//! `AAPL CONG`, `CONG`, `POL PELOSI`, `TRACK PELOSI`, `LAYOUT 4`, `FIB`, `HELP`.
+//! `AAPL CONG`, `CONG`, `POL PELOSI`, `TRACK PELOSI`, `ALRT AAPL > 250`, `LAYOUT 4`, `FIB`, `HELP`.
 
 use tr_chart::drawings::Tool;
 use tr_chart::scene::ChartType;
@@ -259,6 +259,8 @@ pub enum Function {
     Track(String),
     Untrack(String),
     Alerts,
+    /// Arm a price/indicator alert (`ALRT AAPL > 250`, `ALRT NVDA RSI > 70`).
+    AddAlert(crate::alerts::Spec),
     Refresh,
     Watchlist,
     WatchAdd(Vec<String>),
@@ -348,7 +350,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "POL" | "PROFILE" => Function::Politician(joined()),
         "TRACK" => Function::Track(joined()),
         "UNTRACK" => Function::Untrack(joined()),
-        "ALRT" | "ALERTS" | "ALERT" => Function::Alerts,
+        "ALRT" | "ALERTS" | "ALERT" if rest.is_empty() => Function::Alerts,
+        "ALRT" | "ALERT" => Function::AddAlert(crate::alerts::parse(rest)?),
         "REFRESH" | "SYNC" => Function::Refresh,
         "W" | "WL" | "WATCH" | "WATCHLIST" | "MON" => match words().first().map(String::as_str) {
             Some("ADD") => Function::WatchAdd(words()[1..].to_vec()),
@@ -497,6 +500,13 @@ fn describe(f: &Function) -> String {
         Function::Track(n) => format!("Track {n} (alert on new filings)"),
         Function::Untrack(n) => format!("Stop tracking {n}"),
         Function::Alerts => "Alerts".into(),
+        Function::AddAlert(a) => {
+            let on = a
+                .symbol
+                .as_deref()
+                .map_or_else(|| "focused chart".into(), |k| Security::parse(k).map_or(k.to_string(), |x| x.ticker));
+            format!("Alert {on}: {}{}", a.cond.label(), if a.repeat { " (repeating)" } else { " (once)" })
+        }
         Function::Refresh => "Refresh congressional disclosures now".into(),
         Function::Watchlist => "Watchlist".into(),
         Function::WatchAdd(s) => format!("Add {} to watchlist", s.join(", ")),
@@ -720,6 +730,35 @@ mod tests {
         assert_eq!(t("SELL ALL TSLA 5"), None);
         assert_eq!(parse("DEMO"), Some(Command::Function(Function::AccountMode(false))));
         assert_eq!(parse("MODE LIVE"), Some(Command::Function(Function::AccountMode(true))));
+    }
+
+    #[test]
+    fn alert_commands() {
+        use crate::alerts::{Metric, Op, Target};
+        let add = |s: &str| match parse(s) {
+            Some(Command::Function(Function::AddAlert(a))) => Some(a),
+            Some(Command::SymbolFunction(k, Function::AddAlert(mut a))) if a.symbol.is_none() => {
+                a.symbol = Some(k);
+                Some(a)
+            }
+            _ => None,
+        };
+        let a = add("ALRT AAPL > 250").unwrap();
+        assert_eq!(a.symbol.as_deref(), Some("AAPL US Equity"));
+        assert_eq!((a.cond.metric, a.cond.op, a.cond.target), (Metric::Price, Op::Above, Target::Level(250.0)));
+        assert_eq!(add("AAPL ALRT > 250"), Some(a.clone()), "after a security");
+        assert_eq!(add("ALRT AAPL US Equity > 250"), Some(a), "a market key from the chart menu");
+        let b = add("ALRT BTCUSD CRNCY < 60000").unwrap();
+        assert_eq!((b.symbol.as_deref(), b.cond.op), (Some("BTCUSD Curncy"), Op::Below));
+        let r = add("ALRT NVDA RSI > 70").unwrap();
+        assert_eq!((r.symbol.as_deref(), r.cond.metric), (Some("NVDA US Equity"), Metric::Rsi(14)));
+        assert_eq!(add("NVDA ALRT RSI > 70 REPEAT").map(|a| a.repeat), Some(true));
+        assert_eq!(add("ALRT > 250").unwrap().symbol, None);
+        assert_eq!(parse("ALRT"), Some(Command::Function(Function::Alerts)));
+        assert_eq!(parse("ALERTS"), Some(Command::Function(Function::Alerts)));
+        assert_eq!(parse("ALRT AAPL 250"), None);
+        assert_eq!(hint("ALRT AAPL > 250"), "Alert AAPL: Last >= 250 (once)");
+        assert_eq!(hint("ALRT RSI < 30 RPT"), "Alert focused chart: RSI(14) <= 30 (repeating)");
     }
 
     #[test]

@@ -49,6 +49,11 @@ pub struct ChartState {
     pub currency: Option<String>,
     /// Whether the symbol is already on the watchlist (set by the app each frame).
     pub watched: bool,
+    /// Price levels of armed alerts on this security (set by the app each frame).
+    pub alert_levels: Vec<f64>,
+    /// Price under the pointer at the last right-click, and the price of a horizontal line
+    /// drawn there (the context menu's "Alert at" entries).
+    menu_at: Option<(f64, Option<f64>)>,
     pub show_volume: bool,
     pub show_congress: bool,
     pub indicators: Vec<IndicatorSpec>,
@@ -109,6 +114,8 @@ impl ChartState {
             magnet: false,
             currency: None,
             watched: false,
+            alert_levels: Vec::new(),
+            menu_at: None,
             show_volume: true,
             show_congress: true,
             indicators: vec![IndicatorSpec::Sma(20), IndicatorSpec::Sma(50)],
@@ -655,9 +662,8 @@ impl ChartState {
             clicked = true;
         }
         let hover = plot_resp.hover_pos().filter(|p| self.hover_enabled && plot_all.contains(*p));
-        if self.draw.tool.is_none() {
-            plot_resp.context_menu(|ui| self.context_menu(ui, w));
-        }
+        // The menu opens after the drawings pass has recorded the right-clicked price.
+        let menu_ok = self.draw.tool.is_none();
 
         if plot_resp.hovered() || axis_resp.hovered() || time_resp.hovered() {
             let (scroll, zoom_delta) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta()));
@@ -903,6 +909,10 @@ impl ChartState {
 
         // ---- drawings ----
         self.paint_drawings(ui, price_rect, &v, &scale, hover, &plot_resp);
+        self.paint_alert_levels(ui, price_rect, &scale);
+        if menu_ok {
+            plot_resp.context_menu(|ui| self.context_menu(ui, w));
+        }
 
         // ---- congress markers ----
         self.hover_marker = None;
@@ -1004,11 +1014,57 @@ impl ChartState {
         clicked
     }
 
+    /// Dashed lines with an `ALRT` tag at each armed price alert.
+    fn paint_alert_levels(&self, ui: &Ui, rect: Rect, s: &PriceScale) {
+        if self.currency.is_some() {
+            return; // levels are in the quoted currency
+        }
+        let p = ui.painter_at(rect.expand2(vec2(AXIS_W, 0.0)));
+        let color = theme::cyan().gamma_multiply(0.8);
+        for &level in &self.alert_levels {
+            let y = rect.top() + s.y_of(level) as f32;
+            if y < rect.top() || y > rect.bottom() {
+                continue;
+            }
+            dashed_h(&p, rect.x_range(), y, Stroke::new(1.0, color));
+            let label = format!("ALRT {}", scale::format_price(level, self.sec.decimals(level)));
+            p.text(pos2(rect.right() - 4.0, y - 2.0), Align2::RIGHT_BOTTOM, label, mono(10.0), color);
+        }
+    }
+
+    /// Arm a one-shot alert at `price`, above or below the last price.
+    fn alert_at(&mut self, price: f64) {
+        let last = self.bars.last().map(|b| b.close);
+        let op = if last.is_some_and(|l| price < l) { "<" } else { ">" };
+        let d = self.sec.decimals(price);
+        self.actions.push(Action::Command(format!("ALRT {} {op} {price:.d$}", self.symbol)));
+    }
+
     fn context_menu(&mut self, ui: &mut Ui, w: &Worker) {
         ui.set_min_width(190.0);
         if ui.button("Reset View").clicked() {
             self.reset_view();
             ui.close();
+        }
+        if let Some((price, line)) = self.menu_at.filter(|(p, _)| *p > 0.0) {
+            let sec = self.sec.clone();
+            let fmt = |p: f64| format!("{p:.d$}", d = sec.decimals(p));
+            if self.currency.is_some() {
+                ui.add_enabled(false, egui::Button::new(format!("Alert at {}", fmt(price))))
+                    .on_disabled_hover_text("Alerts use the quoted currency: set Currency to As quoted");
+            } else {
+                if ui.button(format!("Alert at {}", fmt(price))).on_hover_text("One-shot price alert (ALRT)").clicked()
+                {
+                    self.alert_at(price);
+                    ui.close();
+                }
+                if let Some(l) = line
+                    && ui.button(format!("Alert at Line {}", fmt(l))).clicked()
+                {
+                    self.alert_at(l);
+                    ui.close();
+                }
+            }
         }
         ui.menu_button("Chart Type", |ui| {
             for ct in ChartType::ALL {
@@ -1292,6 +1348,19 @@ impl ChartState {
             }
             Anchor { ts: this.ts_of_index(idx), price }
         };
+
+        if resp.secondary_clicked() {
+            self.menu_at = resp.interact_pointer_pos().filter(|p| rect.contains(*p)).map(|pos| {
+                let price = s.price_at((pos.y - rect.top()) as f64);
+                let line = self
+                    .drawings
+                    .iter()
+                    .filter(|d| d.tool == Tool::Horizontal)
+                    .find(|d| (rect.top() as f64 + s.y_of(d.a.price) - pos.y as f64).abs() < 6.0)
+                    .map(|d| d.a.price);
+                (price, line)
+            });
+        }
 
         // Placement.
         if let (Some(tool), true, Some(pos)) = (self.draw.tool, resp.clicked(), resp.interact_pointer_pos()) {

@@ -545,6 +545,8 @@ pub struct TerminalApp {
     /// Pane whose filter box takes the keyboard on its next draw.
     search_focus: Option<PaneId>,
     alerts: Vec<Alert>,
+    /// Price/indicator alert rules (the worker owns and evaluates them; this is its latest copy).
+    price_alerts: crate::alerts::AlertBook,
     congress_status: String,
     /// When the last Congress ingest finished.
     congress_checked: Option<chrono::DateTime<chrono::Local>>,
@@ -691,6 +693,7 @@ impl TerminalApp {
             pane_search: HashMap::new(),
             search_focus: None,
             alerts: Vec::new(),
+            price_alerts: Default::default(),
             congress_status: String::new(),
             congress_checked: None,
             watchlist: DEFAULT_WATCHLIST.map(String::from).to_vec(),
@@ -851,6 +854,10 @@ impl TerminalApp {
                 t.symbol = Some(s);
                 self.open_ticket(t, None);
             }
+            Command::SymbolFunction(s, Function::AddAlert(mut a)) => {
+                a.symbol.get_or_insert(s);
+                self.add_alert(a);
+            }
             Command::SymbolFunction(s, f @ (Function::NewPanel(_) | Function::Split { .. })) => {
                 self.apply_with_symbol(f, Some(s));
             }
@@ -887,6 +894,12 @@ impl TerminalApp {
             Function::Alerts => {
                 self.worker.send(Request::Alerts);
                 self.open_panel(PaneKind::Alerts);
+            }
+            Function::AddAlert(mut a) => {
+                if a.symbol.is_none() {
+                    a.symbol = symbol.or_else(|| self.focused_symbol());
+                }
+                self.add_alert(a);
             }
             Function::Refresh => self.worker.send(Request::RefreshCongress),
             Function::Watchlist => self.open_panel(PaneKind::Watchlist),
@@ -993,6 +1006,29 @@ impl TerminalApp {
                 self.set_account_mode(mode, false);
             }
         }
+    }
+
+    /// Arm a price/indicator alert from the command line or a chart.
+    fn add_alert(&mut self, a: crate::alerts::Spec) {
+        let Some(key) = a.symbol.clone() else {
+            self.status = "ALRT needs a security: ALRT AAPL > 250 (or focus a chart)".into();
+            return;
+        };
+        let sec = tr_data::security(&key);
+        let mode = if a.repeat { "repeating" } else { "once" };
+        self.status = format!("Alert set: {} {} ({mode}) — ALRT lists rules", sec.ticker, a.cond.label());
+        if let Some(q) = self.quotes.get(&key) {
+            let m = crate::alerts::Market { last: Some(q.last), prev_close: Some(q.prev_close), ..Default::default() };
+            if a.cond.state(&m) == Some(true) && a.cond.triggers(None, true) {
+                self.status += " — already met, fires on the next quote";
+            }
+        }
+        self.worker.send(Request::AlertRules(crate::alerts::RuleOp::Add(a)));
+    }
+
+    /// Unread Congress and price alerts (the ALERTS badge).
+    pub(super) fn unread_alerts(&self) -> usize {
+        self.alerts.iter().filter(|a| !a.seen).count() + self.price_alerts.unseen()
     }
 
     // ---- worker responses ----------------------------------------------------------------
@@ -1146,6 +1182,14 @@ impl TerminalApp {
                         self.toasts.push((a.message, Instant::now()));
                     }
                     self.worker.send(Request::Alerts);
+                }
+                Response::AlertBook(b) => self.price_alerts = *b,
+                Response::PriceAlerts(fired) => {
+                    for f in fired {
+                        tracing::info!("PRICE ALERT: {}", f.message);
+                        self.status = format!("Alert: {}", f.message);
+                        self.toasts.push((format!("{}{}", crate::alerts::TOAST_PREFIX, f.message), Instant::now()));
+                    }
                 }
                 Response::Status(s) => self.status = s,
                 Response::Curves(c) => self.curves = Some(c),
@@ -1615,6 +1659,7 @@ impl eframe::App for TerminalApp {
         for p in &mut self.panes {
             if let PaneKind::Chart(c) = &mut p.kind {
                 c.watched = self.watchlist.contains(&c.symbol);
+                c.alert_levels = self.price_alerts.levels(&c.symbol);
             }
         }
         actions.extend(self.render_dock(ui, area, gap));

@@ -4,6 +4,8 @@
 //! The binary is `terminal_rs::run(Vec::new())`. Another crate can build the terminal with
 //! its own chart studies by passing them to [`run`]; see [`tr_study`].
 
+mod alerts;
+mod alerts_view;
 mod anim;
 mod app;
 mod chart_view;

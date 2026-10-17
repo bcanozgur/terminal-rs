@@ -15,7 +15,9 @@ use crate::alpaca::AlpacaProvider;
 use crate::crypto::CryptoProvider;
 use crate::treasury::TreasuryProvider;
 use crate::yahoo::{YahooProvider, yahoo_symbol};
-use crate::{LiveFeed, MarketData, NewsItem, OptionChain, OrderBook, Quote, SearchHit, YieldCurves, security};
+use crate::{
+    ExtendedQuote, LiveFeed, MarketData, NewsItem, OptionChain, OrderBook, Quote, SearchHit, YieldCurves, security,
+};
 
 pub struct Markets {
     yahoo: YahooProvider,
@@ -142,6 +144,16 @@ impl MarketData for Markets {
 
     async fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
         self.yahoo.search(query).await
+    }
+
+    /// US stocks and ETFs trade pre- and post-market (Yahoo); other classes have no
+    /// extended session.
+    async fn extended(&self, symbol: &str) -> Result<Option<ExtendedQuote>> {
+        let sec = security(symbol);
+        match sec.class {
+            AssetClass::Equity | AssetClass::Etf => self.yahoo.extended(&yahoo_symbol(&sec)).await,
+            _ => Ok(None),
+        }
     }
 
     async fn news(&self, symbol: Option<&str>) -> Result<Vec<NewsItem>> {

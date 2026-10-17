@@ -155,7 +155,7 @@ impl TerminalApp {
             .on_hover_text(format!("{} UTC", chrono::Utc::now().format("%H:%M:%S")));
         right -= cw + 10.0;
 
-        let unread = self.alerts.iter().filter(|a| !a.seen).count();
+        let unread = self.unread_alerts();
         let buttons: [(Icon, &str, bool); 3] = [
             (Icon::Gauge, "Frame Timing (F12)", self.show_perf),
             (Icon::Bell, "Alerts (F4)", unread > 0),
@@ -768,7 +768,7 @@ impl TerminalApp {
             }
 
             section(ui, "Congress");
-            let unread = self.alerts.iter().filter(|a| !a.seen).count();
+            let unread = self.unread_alerts();
             if nav_row(
                 ui,
                 Icon::List,
@@ -971,15 +971,18 @@ impl TerminalApp {
                 vec2(420.0, 50.0),
             );
             widgets::card_on(&p, r, 0.0);
-            // Order entry prefixes its toasts (`+` filled/ok, `!` rejected); everything else
-            // is a Congress alert.
+            // Order entry prefixes its toasts (`+` filled/ok, `!` rejected), price alerts have
+            // their own prefix; everything else is a Congress alert.
             let (title, msg, color) = match msg.strip_prefix(super::trading::TOAST_PREFIX) {
                 Some(rest) => match rest.split_at_checked(1) {
                     Some(("+", m)) => ("Trading", m, theme::up()),
                     Some(("!", m)) => ("Trading · not done", m, theme::down()),
                     _ => ("Trading", rest, amber()),
                 },
-                None => ("Congress Alert", msg.as_str(), amber()),
+                None => match msg.strip_prefix(crate::alerts::TOAST_PREFIX) {
+                    Some(m) => ("Price Alert", m, theme::cyan()),
+                    None => ("Congress Alert", msg.as_str(), amber()),
+                },
             };
             p.rect_filled(Rect::from_min_size(r.min + vec2(1.0, 6.0), vec2(3.0, r.height() - 12.0)), 1.5, color);
             widgets::draw_icon(
