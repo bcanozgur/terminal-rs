@@ -24,6 +24,12 @@ pub enum Action {
     LinkedSymbol(crate::layouts::Link, String),
     /// Run a command line (`AAPL OMON`, `PORT REFRESH`) without adding it to the history.
     Command(String),
+    /// Arm a price alert created on a chart (carries the chart's timeframe).
+    AddAlert(crate::alerts::Spec),
+    /// Show the chart of a rule's security at its stored timeframe (ALRT row click).
+    OpenAlertChart(u64),
+    /// Edit or delete a price alert from a chart.
+    AlertOp(crate::alerts::RuleOp),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

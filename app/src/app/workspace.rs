@@ -441,6 +441,36 @@ impl TerminalApp {
         self.status = format!("{key} opened in a new chart");
     }
 
+    /// Show a rule's security on a chart at the rule's stored timeframe: a chart pane that
+    /// already shows it, else any chart pane, else a new one. Rules without a timeframe keep
+    /// the chart's current one.
+    pub(super) fn open_alert_chart(&mut self, rule: u64) {
+        let Some((key, tf)) = self.price_alerts.rules.iter().find(|r| r.id == rule).map(|r| (r.symbol.clone(), r.tf))
+        else {
+            return;
+        };
+        let showing = |p: &Pane| matches!(&p.kind, PaneKind::Chart(c) if c.symbol == key);
+        let id = match self.panes.iter().find(|p| showing(p)).map(|p| p.id) {
+            Some(id) => {
+                self.reveal(id);
+                id
+            }
+            None => {
+                self.open_security(&key);
+                self.chart_target()
+            }
+        };
+        self.focus = id;
+        if let Some(i) = self.idx(id)
+            && let PaneKind::Chart(c) = &mut self.panes[i].kind
+        {
+            if let Some(tf) = tf {
+                c.set_timeframe(tf, &self.worker);
+            }
+            self.status = format!("{} {} — alert chart", c.symbol, c.tf.label());
+        }
+    }
+
     pub(super) fn open_security(&mut self, symbol: &str) {
         let key = tr_data::security(symbol).key();
         if let Some(i) = self.idx(self.focus) {

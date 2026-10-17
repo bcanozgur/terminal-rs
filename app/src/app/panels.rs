@@ -48,8 +48,12 @@ impl TerminalApp {
             }
             PaneKind::Politicians => actions.extend(congress_view::politicians(ui, &self.politicians, q)),
             PaneKind::Alerts => {
-                for op in crate::alerts_view::rules(ui, &self.price_alerts, q) {
+                let (ops, open) = crate::alerts_view::rules(ui, &self.price_alerts, q);
+                for op in ops {
                     self.worker.send(Request::AlertRules(op));
+                }
+                if let Some(id) = open {
+                    actions.push(Action::OpenAlertChart(id));
                 }
                 let (a, seen) = congress_view::alerts(ui, &self.alerts, q);
                 actions.extend(a);

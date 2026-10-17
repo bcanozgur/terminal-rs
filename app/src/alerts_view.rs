@@ -35,9 +35,10 @@ fn pad(s: &str, n: usize) -> String {
 }
 
 /// The rules table and fired history. `q` is the pane's lowercase filter. Returns the changes
-/// the user asked for.
-pub fn rules(ui: &mut Ui, book: &AlertBook, q: &str) -> Vec<RuleOp> {
+/// the user asked for and the rule whose row was clicked (to show it on a chart).
+pub fn rules(ui: &mut Ui, book: &AlertBook, q: &str) -> (Vec<RuleOp>, Option<u64>) {
     let mut ops = Vec::new();
+    let mut open = None;
     ui.horizontal(|ui| {
         cell(ui, "PRICE & INDICATOR ALERTS", amber());
         let mut notify = book.notify;
@@ -60,7 +61,7 @@ pub fn rules(ui: &mut Ui, book: &AlertBook, q: &str) -> Vec<RuleOp> {
         } else {
             ui.add(
                 egui::Label::new(
-                    RichText::new(" ON   SECURITY  CONDITION                          MODE    STATUS")
+                    RichText::new(" ON   SECURITY  CONDITION                          TF    MODE    STATUS")
                         .font(mono(11.5))
                         .color(amber())
                         .background_color(theme::header()),
@@ -76,8 +77,16 @@ pub fn rules(ui: &mut Ui, book: &AlertBook, q: &str) -> Vec<RuleOp> {
                     ops.push(RuleOp::Enable(r.id, !r.enabled));
                 }
                 let fg = if r.enabled { text() } else { muted() };
-                cell(ui, pad(&r.ticker(), 8), if r.enabled { amber() } else { muted() });
-                cell(ui, pad(&r.cond.label(), 33), fg);
+                let tip = "Open a chart of this security";
+                if button(ui, &pad(&r.ticker(), 8), if r.enabled { amber() } else { muted() }, tip) {
+                    open = Some(r.id);
+                }
+                let label =
+                    if r.note.is_empty() { r.cond.label() } else { format!("{} · {}", r.cond.label(), r.note) };
+                if button(ui, &pad(&label, 33), fg, tip) {
+                    open = Some(r.id);
+                }
+                cell(ui, pad(r.tf.map_or("", |t| t.label()), 4), muted());
                 let mode = if r.repeat { "REPEAT" } else { "ONCE  " };
                 if button(ui, mode, theme::cyan(), "One-shot or repeating: click to switch") {
                     ops.push(RuleOp::Repeat(r.id, !r.repeat));
@@ -113,5 +122,5 @@ pub fn rules(ui: &mut Ui, book: &AlertBook, q: &str) -> Vec<RuleOp> {
     });
     ui.separator();
     cell(ui, "CONGRESS FILINGS", amber());
-    ops
+    (ops, open)
 }
