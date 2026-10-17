@@ -3,7 +3,8 @@
 //! selected line.
 
 use egui::{Align2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
-use tr_data::edgar::{Company, Metric, Period, Statement, Unit, prior_year};
+use tr_data::bist::{BistCompany, Currency};
+use tr_data::edgar::{Company, Financials, Metric, Period, Statement, Unit, prior_year};
 
 use super::edgar_view::EdgarPane;
 use crate::theme::{self, amber, dp, mono, muted, text, ui_font};
@@ -32,7 +33,53 @@ pub(super) fn fmt_compact(v: f64) -> String {
 
 /// `$391.04B`.
 pub(super) fn fmt_money(v: f64) -> String {
-    if v < 0.0 { format!("-${}", fmt_compact(-v)) } else { format!("${}", fmt_compact(v)) }
+    fmt_money_in(v, "$")
+}
+
+/// An amount with a currency prefix: `$391.04B`, `TRY 391.04B`.
+pub(super) fn fmt_money_in(v: f64, prefix: &str) -> String {
+    if v < 0.0 { format!("-{prefix}{}", fmt_compact(-v)) } else { format!("{prefix}{}", fmt_compact(v)) }
+}
+
+/// How an FA table is presented for its data source.
+pub(super) struct FaOpts<'a> {
+    /// Column header unit (`USD`, `TRY`).
+    pub unit: &'a str,
+    /// Prefix for valuation amounts.
+    pub prefix: &'a str,
+    /// Bank statements use other names for the same lines.
+    pub bank: bool,
+    /// Drop lines the source does not report (e.g. cash flow for banks).
+    pub hide_empty: bool,
+    pub note_annual: &'a str,
+    pub note_quarterly: &'a str,
+}
+
+impl FaOpts<'_> {
+    const SEC: FaOpts<'static> = FaOpts {
+        unit: "USD",
+        prefix: "$",
+        bank: false,
+        hide_empty: false,
+        note_annual: "Source: SEC XBRL company facts (10-K) · latest filed values, including restatements",
+        note_quarterly: "Source: SEC XBRL company facts · Q4 and cash-flow quarters derived from year-to-date totals",
+    };
+
+    fn label(&self, m: Metric) -> &'static str {
+        if !self.bank {
+            return m.label();
+        }
+        match m {
+            Metric::Revenue => "Total Operating Income",
+            Metric::CostOfRevenue => "Interest Expense",
+            Metric::GrossProfit => "Net Interest Income",
+            Metric::OperatingIncome => "Net Operating Income",
+            Metric::Cash => "Cash & Central Bank",
+            Metric::Debt => "Borrowings + Bonds",
+            Metric::GrossMargin => "NII / Op. Income",
+            m => m.label(),
+        }
+    }
 }
 
 /// A ratio metric's value: `46.2%` or `1.45x`.
@@ -72,15 +119,44 @@ fn fmt_yoy(m: Metric, d: f64) -> String {
 }
 
 pub(super) fn fa(ui: &mut Ui, p: &mut EdgarPane, c: &Company, price: Option<f64>) {
-    let f = match &c.financials {
-        Ok(f) => f,
-        Err(e) => {
-            ui.label(
-                RichText::new(format!("No financial statements available: {e}")).font(ui_font(12.0)).color(muted()),
-            );
-            return;
-        }
+    match &c.financials {
+        Ok(f) => fa_body(ui, p, f, price, &FaOpts::SEC),
+        Err(e) => no_statements(ui, e),
+    }
+}
+
+/// FA for a Borsa Istanbul company: statements in TRY or USD from İş Yatırım.
+pub(super) fn fa_bist(ui: &mut Ui, p: &mut EdgarPane, c: &BistCompany, price: Option<f64>) {
+    let (unit, prefix) = match c.currency {
+        Currency::Try => ("TRY", "TRY "),
+        Currency::Usd => ("USD", "$"),
     };
+    let template = if c.bank { "bank template (UFRS)" } else { "industrial template (XI_29)" };
+    let opts = FaOpts {
+        unit,
+        prefix,
+        bank: c.bank,
+        hide_empty: true,
+        note_annual: &format!(
+            "Source: İş Yatırım MaliTablo · {template} · {unit}, as reported (TMS 29 inflation-adjusted in TRY) · \
+             EPS = net income / paid-in capital at 1 TL nominal"
+        ),
+        note_quarterly: &format!(
+            "Source: İş Yatırım MaliTablo · {template} · {unit} · quarters de-cumulated from year-to-date \
+             figures · EPS = net income / paid-in capital at 1 TL nominal"
+        ),
+    };
+    match &c.financials {
+        Ok(f) => fa_body(ui, p, f, price, &opts),
+        Err(e) => no_statements(ui, e),
+    }
+}
+
+fn no_statements(ui: &mut Ui, e: &str) {
+    ui.label(RichText::new(format!("No financial statements available: {e}")).font(ui_font(12.0)).color(muted()));
+}
+
+fn fa_body(ui: &mut Ui, p: &mut EdgarPane, f: &Financials, price: Option<f64>, o: &FaOpts) {
     ui.horizontal_wrapped(|ui| {
         let labels: Vec<&str> = Statement::ALL.iter().map(|s| s.label()).collect();
         if let Some(i) = widgets::segmented(ui, ("fa-tab", &p.symbol), &labels, Some(p.tab), 20.0) {
@@ -101,7 +177,7 @@ pub(super) fn fa(ui: &mut Ui, p: &mut EdgarPane, c: &Company, price: Option<f64>
         let v = f.valuation(price);
         let mut parts = Vec::new();
         if let Some(m) = v.market_cap {
-            parts.push(format!("Mkt cap {}", fmt_money(m)));
+            parts.push(format!("Mkt cap {}", fmt_money_in(m, o.prefix)));
         }
         for (name, x) in [("P/E", v.pe), ("P/S", v.ps), ("P/B", v.pb)] {
             if let Some(x) = x {
@@ -118,13 +194,23 @@ pub(super) fn fa(ui: &mut Ui, p: &mut EdgarPane, c: &Company, price: Option<f64>
 
     let periods = if p.quarterly { &f.quarterly } else { &f.annual };
     if periods.is_empty() {
-        ui.label(RichText::new("No periods reported in XBRL.").font(ui_font(12.0)).color(muted()));
+        ui.label(RichText::new("No periods reported.").font(ui_font(12.0)).color(muted()));
         return;
     }
     let w = ui.available_width();
     let n = (((w - LABEL_W) / COL_W).floor().max(1.0) as usize).min(PERIODS).min(periods.len());
     let first = periods.len() - n;
-    let metrics: Vec<Metric> = Metric::of(p.statement()).collect();
+    let shown = &periods[first..];
+    let metrics: Vec<Metric> =
+        Metric::of(p.statement()).filter(|m| !o.hide_empty || shown.iter().any(|per| per.get(*m).is_some())).collect();
+    if metrics.is_empty() {
+        ui.label(
+            RichText::new("This statement is not reported in the source's template for this company.")
+                .font(ui_font(12.0))
+                .color(muted()),
+        );
+        return;
+    }
     let row_h = dp(18.0);
     let col_x = |left: f32, j: usize| left + LABEL_W + (j + 1) as f32 * COL_W - 6.0;
 
@@ -133,7 +219,7 @@ pub(super) fn fa(ui: &mut Ui, p: &mut EdgarPane, c: &Company, price: Option<f64>
         let (hdr, _) = ui.allocate_exact_size(vec2(w, row_h * 2.0), Sense::hover());
         let painter = ui.painter_at(hdr);
         painter.rect_filled(hdr, theme::CONTROL_RADIUS, theme::header());
-        painter.text(pos2(hdr.left() + 6.0, hdr.center().y), Align2::LEFT_CENTER, "USD", ui_font(11.0), muted());
+        painter.text(pos2(hdr.left() + 6.0, hdr.center().y), Align2::LEFT_CENTER, o.unit, ui_font(11.0), muted());
         for (j, per) in periods[first..].iter().enumerate() {
             let x = col_x(hdr.left(), j);
             painter.text(pos2(x, hdr.top() + row_h * 0.5), Align2::RIGHT_CENTER, &per.label, mono(11.5), amber());
@@ -147,7 +233,7 @@ pub(super) fn fa(ui: &mut Ui, p: &mut EdgarPane, c: &Company, price: Option<f64>
             widgets::hover_wash(ui, r, &resp, selected);
             let painter = ui.painter_at(r);
             let label_col = if selected { amber() } else { text() };
-            painter.text(pos2(r.left() + 6.0, r.center().y), Align2::LEFT_CENTER, m.label(), ui_font(12.0), label_col);
+            painter.text(pos2(r.left() + 6.0, r.center().y), Align2::LEFT_CENTER, o.label(m), ui_font(12.0), label_col);
             for (j, per) in periods[first..].iter().enumerate() {
                 let s = per.get(m).map_or_else(|| "–".into(), |v| fmt_value(m, v));
                 let col = if per.get(m).is_some_and(|v| v < 0.0) { theme::down() } else { text() };
@@ -178,25 +264,21 @@ pub(super) fn fa(ui: &mut Ui, p: &mut EdgarPane, c: &Company, price: Option<f64>
 
         if let Some(m) = p.selected.filter(|m| metrics.contains(m)) {
             ui.add_space(8.0);
-            bar_chart(ui, m, &periods[first..], w);
+            bar_chart(ui, o.label(m), m, &periods[first..], w);
         }
         ui.add_space(4.0);
-        let note = if p.quarterly {
-            "Source: SEC XBRL company facts · Q4 and cash-flow quarters derived from year-to-date totals"
-        } else {
-            "Source: SEC XBRL company facts (10-K) · latest filed values, including restatements"
-        };
+        let note = if p.quarterly { o.note_quarterly } else { o.note_annual };
         ui.label(RichText::new(note).font(ui_font(10.5)).color(muted()));
     });
 }
 
 /// Bars of one metric across the shown periods.
-fn bar_chart(ui: &mut Ui, m: Metric, periods: &[Period], w: f32) {
+fn bar_chart(ui: &mut Ui, label: &str, m: Metric, periods: &[Period], w: f32) {
     let h = dp(120.0);
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let painter = ui.painter_at(r);
     painter.rect_filled(r, theme::CONTROL_RADIUS, theme::card());
-    painter.text(pos2(r.left() + 6.0, r.top() + 9.0), Align2::LEFT_CENTER, m.label(), ui_font(11.5), amber());
+    painter.text(pos2(r.left() + 6.0, r.top() + 9.0), Align2::LEFT_CENTER, label, ui_font(11.5), amber());
     let vals: Vec<Option<f64>> = periods.iter().map(|p| p.get(m)).collect();
     let hi = vals.iter().flatten().fold(0.0f64, |a, v| a.max(*v));
     let lo = vals.iter().flatten().fold(0.0f64, |a, v| a.min(*v));

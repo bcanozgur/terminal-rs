@@ -282,14 +282,16 @@ impl PaneKind {
             }
             PaneKind::Settings => "Settings (PDF): appearance, panels, data keys, trading and layouts.",
             PaneKind::Edgar(e) if e.fa => {
-                "Financials (FA): income statement, balance sheet, cash flow and ratios from the company's SEC \
-                 filings (XBRL), annual or quarterly. US-listed companies only. Type a ticker in the box and \
-                 press Enter; click a row to chart that line."
+                "Financials (FA): income statement, balance sheet, cash flow and ratios, annual or quarterly. US \
+                 companies from SEC filings (XBRL); Borsa Istanbul companies (e.g. THYAO, AKBNK) from İş Yatırım, \
+                 with a TRY / USD switch because TMS 29 inflation accounting distorts TRY comparisons, and banks \
+                 on their own template. Type a ticker in the box and press Enter; click a row to chart that line."
             }
             PaneKind::Edgar(_) => {
-                "Description (DES): company profile from SEC EDGAR: business, sector, fiscal year, key figures, \
-                 valuation at the live price and recent filings. US-listed companies only. Type a ticker in the \
-                 box and press Enter."
+                "Description (DES): company profile, key figures and valuation at the live price. US companies \
+                 from SEC EDGAR (business, sector, fiscal year, recent filings); Borsa Istanbul companies from \
+                 İş Yatırım (address, capital, free float, shareholders). Type a ticker in the box and press \
+                 Enter."
             }
             PaneKind::Earnings(e) if e.symbol.is_some() => {
                 "Earnings history (TICKER ERN): past and next report dates with EPS estimate vs actual, the \
@@ -462,8 +464,8 @@ impl PaneKind {
                     query: String::new(),
                 }))
             }
-            PaneSettings::Edgar { symbol, fa, quarterly, tab } => {
-                PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab)))
+            PaneSettings::Edgar { symbol, fa, quarterly, tab, usd } => {
+                PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd)))
             }
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
@@ -1339,6 +1341,14 @@ impl TerminalApp {
                         e.set_result(company);
                     }
                 }
+                Response::Bist { pane, symbol, usd, company } => {
+                    if let Some(p) = self.panes.iter_mut().find(|p| p.id == pane)
+                        && let PaneKind::Edgar(e) = &mut p.kind
+                        && e.symbol == symbol
+                    {
+                        e.set_bist_result(usd, company);
+                    }
+                }
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
             }
         }
@@ -1638,8 +1648,12 @@ impl TerminalApp {
                     if e.due(&self.prefs.panels.sec_user_agent) {
                         e.fetched = Some(Instant::now());
                         e.loading = true;
-                        let user_agent = self.prefs.panels.sec_user_agent.clone();
-                        self.worker.send(Request::Edgar { pane: p.id, symbol: e.symbol.clone(), user_agent });
+                        if e.bist_code().is_some() {
+                            self.worker.send(Request::Bist { pane: p.id, symbol: e.symbol.clone(), usd: e.usd });
+                        } else {
+                            let user_agent = self.prefs.panels.sec_user_agent.clone();
+                            self.worker.send(Request::Edgar { pane: p.id, symbol: e.symbol.clone(), user_agent });
+                        }
                     }
                     if e.quote_due() {
                         e.quoted = Some(Instant::now());
