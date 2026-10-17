@@ -1013,6 +1013,26 @@ pub async fn cik(dir: &Path, ticker: &str, ua: &str) -> Result<u64> {
         .ok_or_else(|| anyhow!("{ticker} is not an SEC registrant (no EDGAR filings)"))
 }
 
+/// The raw `submissions` JSON document for a ticker (throttled, cached).
+pub async fn submissions_json(dir: &Path, ticker: &str, ua: &str) -> Result<String> {
+    if !valid_user_agent(ua) {
+        bail!("set an SEC User-Agent with a contact email (Settings › Panels, or {UA_ENV})");
+    }
+    let cik = cik(dir, ticker, ua).await?;
+    let url = format!("https://data.sec.gov/submissions/CIK{cik:010}.json");
+    cached(dir, &format!("submissions_{cik}.json"), SUBMISSIONS_TTL, &url, ua).await
+}
+
+/// The raw XBRL `companyfacts` JSON document for a ticker (throttled, cached).
+pub async fn companyfacts_json(dir: &Path, ticker: &str, ua: &str) -> Result<String> {
+    if !valid_user_agent(ua) {
+        bail!("set an SEC User-Agent with a contact email (Settings › Panels, or {UA_ENV})");
+    }
+    let cik = cik(dir, ticker, ua).await?;
+    let url = format!("https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010}.json");
+    cached(dir, &format!("companyfacts_{cik}.json"), FACTS_TTL, &url, ua).await
+}
+
 /// The cache directory under the app's data directory.
 pub fn cache_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("edgar")
