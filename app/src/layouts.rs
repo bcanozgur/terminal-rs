@@ -119,6 +119,15 @@ pub enum PaneSettings {
         #[serde(default)]
         open_only: bool,
     },
+    /// Earnings calendar (`None`) or one ticker's history.
+    Earnings {
+        #[serde(default)]
+        symbol: Option<String>,
+        #[serde(default)]
+        scope: crate::earnings_view::Scope,
+        #[serde(default)]
+        cap: usize,
+    },
 }
 
 fn yes() -> bool {
@@ -575,5 +584,16 @@ mod tests {
         assert_eq!(Store::file_stem("  "), "Untitled");
         assert_eq!(Store::file_stem("My Layout 2"), "My Layout 2");
         assert_eq!(Store::file_stem(".hidden"), "hidden");
+    }
+
+    #[test]
+    fn earnings_panes_round_trip() {
+        let panes = vec![
+            PaneSettings::Earnings { symbol: None, scope: crate::earnings_view::Scope::Mine, cap: 2 },
+            PaneSettings::Earnings { symbol: Some("AAPL US Equity".into()), scope: Default::default(), cap: 0 },
+        ];
+        let doc = LayoutDoc::preset("Earn", Layout::Grid2x2, panes.clone());
+        let back = LayoutDoc::from_json(&doc.to_json()).unwrap();
+        assert_eq!(back.panes.iter().map(|p| p.settings.clone()).collect::<Vec<_>>(), panes);
     }
 }

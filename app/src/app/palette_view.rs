@@ -30,6 +30,8 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("OMON", "", "options chain calls puts greeks", Some(Action::NewOptions)),
     ("CONG", "Congressional trades feed", "congress disclosures", Some(Action::Congress)),
     ("POL", "Politicians", "congress members profile", Some(Action::Politicians)),
+    ("ERN", "Earnings calendar", "earnings evts calendar eps reports week", None),
+    ("EE", "Toggle chart earnings markers", "earnings markers e chart", None),
     ("ALRT", "", "alerts tracked filings", Some(Action::Alerts)),
     ("REFRESH", "", "congress disclosures sync", Some(Action::Refresh)),
     ("WL", "", "watchlist monitor", Some(Action::Watchlist)),

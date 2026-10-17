@@ -1,0 +1,123 @@
+{
+ "data": {
+  "asOf": "Thu, Oct 15, 2026",
+  "headers": {
+   "time": "Time",
+   "symbol": "Symbol",
+   "name": "Company Name",
+   "eps": "EPS",
+   "surprise": "% Surprise",
+   "marketCap": "Market Cap",
+   "fiscalQuarterEnding": "Fiscal Quarter Ending",
+   "epsForecast": "Consensus EPS* Forecast",
+   "noOfEsts": "# of Ests"
+  },
+  "rows": [
+   {
+    "eps": "$2.92",
+    "surprise": "N/A",
+    "time": "time-pre-market",
+    "symbol": "TSM",
+    "name": "Taiwan Semiconductor Manufacturing Company Ltd.",
+    "marketCap": "$2,230,197,160,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$4.45",
+    "noOfEsts": "6"
+   },
+   {
+    "eps": "$1.31",
+    "surprise": "N/A",
+    "time": "time-pre-market",
+    "symbol": "SCHW",
+    "name": "The Charles Schwab Corporation",
+    "marketCap": "$167,399,703,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$1.66",
+    "noOfEsts": "11"
+   },
+   {
+    "eps": "$1.49",
+    "surprise": "N/A",
+    "time": "time-pre-market",
+    "symbol": "PLD",
+    "name": "Prologis, Inc.",
+    "marketCap": "$123,685,994,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$1.58",
+    "noOfEsts": "2"
+   },
+   {
+    "eps": "$1.91",
+    "surprise": "N/A",
+    "time": "time-pre-market",
+    "symbol": "BNY",
+    "name": "The Bank Of New York Mellon Corporation ",
+    "marketCap": "$93,389,308,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$2.26",
+    "noOfEsts": "7"
+   },
+   {
+    "eps": "$1.22",
+    "surprise": "N/A",
+    "time": "time-pre-market",
+    "symbol": "USB",
+    "name": "U.S. Bancorp",
+    "marketCap": "$87,655,973,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$1.32",
+    "noOfEsts": "10"
+   },
+   {
+    "eps": "$4.35",
+    "surprise": "N/A",
+    "time": "time-pre-market",
+    "symbol": "PNC",
+    "name": "PNC Financial Services Group, Inc. (The)",
+    "marketCap": "$86,092,046,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$4.97",
+    "noOfEsts": "8"
+   },
+   {
+    "eps": "$0.57",
+    "surprise": "N/A",
+    "time": "time-after-hours",
+    "symbol": "IBKR",
+    "name": "Interactive Brokers Group, Inc.",
+    "marketCap": "$38,121,996,000",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$0.67",
+    "noOfEsts": "3"
+   },
+   {
+    "eps": "$1.76",
+    "surprise": "N/A",
+    "time": "time-after-hours",
+    "symbol": "JBHT",
+    "name": "J.B. Hunt Transport Services, Inc.",
+    "marketCap": "$21,803,292,700",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$1.81",
+    "noOfEsts": "7"
+   },
+   {
+    "eps": "($0.02)",
+    "surprise": "N/A",
+    "time": "time-after-hours",
+    "symbol": "AA",
+    "name": "Alcoa Corporation",
+    "marketCap": "$10,577,490,900",
+    "fiscalQuarterEnding": "Sep/2026",
+    "epsForecast": "$1.65",
+    "noOfEsts": "5"
+   }
+  ]
+ },
+ "message": null,
+ "status": {
+  "rCode": 200,
+  "bCodeMessage": null,
+  "developerMessage": null
+ }
+}

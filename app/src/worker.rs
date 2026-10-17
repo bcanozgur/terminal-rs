@@ -135,6 +135,8 @@ pub enum Request {
     Search(String),
     /// Order entry (see `app::trading`); only sent once trading is enabled.
     Trade(TradeRequest),
+    /// Earnings calendar and history (see `earnings_worker`).
+    Earnings(crate::earnings_worker::EarnReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -294,6 +296,7 @@ pub enum Response {
         hits: Vec<SearchHit>,
     },
     Trade(Box<TradeResponse>),
+    Earnings(crate::earnings_worker::EarnResp),
 }
 
 pub struct Worker {
@@ -759,6 +762,9 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             s.send(Response::SearchHits { query, hits });
         }
         Request::Trade(t) => s.send(Response::Trade(Box::new(trade(t).await))),
+        Request::Earnings(r) => {
+            crate::earnings_worker::handle(r, &s.provider, &|r| s.send(Response::Earnings(r))).await
+        }
     }
 }
 

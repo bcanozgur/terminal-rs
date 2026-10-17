@@ -305,6 +305,10 @@ pub enum Function {
     Trade(TradeArgs),
     /// Switch between the demo account and live accounts (`DEMO`, `MODE LIVE`); `true` = live.
     AccountMode(bool),
+    /// Earnings calendar (alone) or a security's earnings history (after a symbol).
+    Earnings,
+    /// Toggle the earnings "E" markers on the focused chart.
+    EarningsMarkers,
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -399,6 +403,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             "LIVE" | "REAL" => Function::AccountMode(true),
             _ => return None,
         },
+        "ERN" | "EVTS" | "EARN" | "EARNINGS" => Function::Earnings,
+        "EE" => Function::EarningsMarkers,
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         _ if crate::studies::by_command(&up).is_some() => {
             Function::Study(crate::studies::by_command(&up)?.id().to_string())
@@ -526,6 +532,8 @@ fn describe(f: &Function) -> String {
         Function::Title(t) => format!("Rename tab to {t:?}"),
         Function::ClosePane => "Close focused pane".into(),
         Function::Help => "Help".into(),
+        Function::Earnings => "Earnings calendar by week; after a symbol, its report history".into(),
+        Function::EarningsMarkers => "Toggle earnings markers on the chart".into(),
         Function::Wei => "World markets overview".into(),
         Function::Curve => "US Treasury yield curve".into(),
         Function::Search(q) => format!("Search securities: {q}"),
@@ -752,5 +760,13 @@ mod tests {
         assert!(IndicatorSpec::Rsi(14).same_kind(&IndicatorSpec::Rsi(21)));
         assert!(!IndicatorSpec::Sma(20).same_kind(&IndicatorSpec::Sma(50)));
         assert!(IndicatorSpec::Macd(12, 26, 9).is_pane());
+    }
+
+    #[test]
+    fn earnings_commands() {
+        assert_eq!(parse("ERN"), Some(Command::Function(Function::Earnings)));
+        assert_eq!(parse("EVTS <GO>"), Some(Command::Function(Function::Earnings)));
+        assert_eq!(parse("EE"), Some(Command::Function(Function::EarningsMarkers)));
+        assert_eq!(parse("AAPL ERN"), Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Earnings)));
     }
 }
