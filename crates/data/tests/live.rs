@@ -199,3 +199,46 @@ mod earnings {
         let _ = Timing::Unknown;
     }
 }
+
+#[tokio::test]
+#[ignore = "network"]
+async fn trfunds_kap() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let dir = std::env::temp_dir().join(format!("tr-trfunds-live-{}", std::process::id()));
+    let list = tr_data::trfunds::fund_list(&dir).await.unwrap();
+    assert!(list.len() > 1000, "{} funds", list.len());
+    assert!(list.iter().any(|f| f.code == "TI2"));
+    let f = tr_data::trfunds::load(&dir, "TI2", false).await.unwrap();
+    println!("{:?}\n{:?}", f.profile, f.latest().map(|s| (s.label(), s.report.positions.len(), s.report.net_assets)));
+    let snap = f.latest().expect("a monthly report");
+    assert!(snap.report.positions.len() > 10, "{:?}", f.note);
+    assert!(f.profile.mgmt_fee.is_some());
+    assert!(!f.changes().is_empty() || f.previous().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Indexes the curated list and prints how many funds' reports parse (slow: ~50 funds).
+#[tokio::test]
+#[ignore = "network, slow"]
+async fn trfunds_curated_coverage() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let dir = std::env::temp_dir().join("tr-trfunds-coverage");
+    let mut ok = 0;
+    for code in tr_data::trfunds::CURATED {
+        match tr_data::trfunds::load(&dir, code, false).await {
+            Ok(f) => {
+                let n = f.latest().map_or(0, |s| s.report.positions.len());
+                println!(
+                    "{code}: {} · {n} stocks · {} reports · {:?}",
+                    f.latest().map_or("-".into(), |s| s.label()),
+                    f.reports.len(),
+                    f.note
+                );
+                ok += usize::from(n > 0);
+            }
+            Err(e) => println!("{code}: ERROR {e:#}"),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+    }
+    println!("{ok}/{} funds with stock positions", tr_data::trfunds::CURATED.len());
+}

@@ -102,6 +102,9 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("ETF", "US ETFs: holdings, sectors, overlap", "etf fund holdings sector overlap spy qqq voo", None),
     ("ETF SPY", "ETF holdings and sectors: SPY", "etf fund holdings sector spy", None),
     ("ETF VOO QQQ", "ETF overlap: VOO vs QQQ", "etf overlap compare shared holdings", None),
+    ("TRF", "Turkish funds (KAP): allocation, buys and sells", "trf turkish funds fon kap portfoy yatirim", None),
+    ("TRF TI2", "Turkish fund detail: TI2", "trf fon detail kap portfolio allocation", None),
+    ("TRF HELD THYAO", "Turkish funds holding THYAO", "trf funds reverse search holders bist hisse", None),
 ];
 
 /// Workspace actions run through their hotkey handler, with extra search words.

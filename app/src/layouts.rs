@@ -160,6 +160,13 @@ pub enum PaneSettings {
         #[serde(default)]
         b: String,
     },
+    /// Turkish funds: `mode` is `list`, `detail` (`a` = fund code) or `reverse` (`a` = stock).
+    TrFunds {
+        #[serde(default)]
+        mode: String,
+        #[serde(default)]
+        a: String,
+    },
 }
 
 fn yes() -> bool {

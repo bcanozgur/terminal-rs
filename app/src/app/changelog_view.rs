@@ -27,6 +27,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
              flagged and simulated data shows a red warning.",
             "ETF: US ETF contents from SEC N-PORT and Yahoo. Click a fund for a top-10 donut chart and list plus \
              sector weights; reverse search (which ETFs hold a stock) and two-fund overlap.",
+            "TRF: Turkish mutual funds from KAP. Search the fund list, open a fund for its card, asset and stock \
+             allocation donuts and the buys and sells between the latest two monthly reports; reverse search \
+             (which funds hold a BIST stock, also THYAO TRFS).",
             "Sync button on symbol panes (News, Options, DES/FA, Order Book, ...) shows the active chart's symbol; \
              Options now has a ticker box too.",
             "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \

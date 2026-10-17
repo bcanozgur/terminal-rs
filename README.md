@@ -227,6 +227,17 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   cached in `<data dir>/etf/`; reverse search and overlap cover the funds cached there ("Index
   curated list" fetches the popular ones one at a time).
 
+- **Turkish funds (`TRF`)** — every investment fund on KAP (kap.org.tr) in a searchable list; click a
+  code for the fund card (founder, fund manager, management/entry/exit fee from the fund's KAP
+  information form, fund size, units and price from the report), the asset allocation and the top-10 stock
+  allocation as donut charts plus lists (positions under 0.1% ignored), and the buys and sells between
+  the latest two monthly reports (by share count, else by weight). `THYAO TRFS` (or the "Held by" tab)
+  lists which indexed funds hold a BIST stock. Data are KAP's own endpoints, no login: the fund list, the
+  general information form and the monthly "Portföy Dağılım Raporu" PDF, whose text is rebuilt from glyph
+  positions and parsed (three manager layouts are recognised; a fund in another layout is shown without
+  stock rows). The settlement day (valör) is not in KAP's structured data and shows n/a. Funds are cached
+  in `<data dir>/trfunds/`; "Index curated list" fetches ~50 popular funds one at a time with a pause.
+
 ## Running
 
 ```sh

@@ -167,6 +167,8 @@ pub enum Request {
     },
     /// ETF contents: disk cache, one fund or an index run (`ETF`).
     Etf(crate::etf::EtfReq),
+    /// Turkish fund list, one fund or an index run (`TRF`).
+    TrFunds(crate::trfunds::TrfReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -347,6 +349,7 @@ pub enum Response {
         resp: crate::eco::EcoResponse,
     },
     Etf(crate::etf::EtfResp),
+    TrFunds(crate::trfunds::TrfResp),
 }
 
 pub struct Worker {
@@ -972,6 +975,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         }
         Request::Eco { pane, req } => s.send(Response::Eco { pane, resp: crate::eco::fetch(req).await }),
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
+        Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
     }
 }
 
