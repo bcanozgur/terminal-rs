@@ -757,6 +757,7 @@ impl TerminalApp {
                 (Icon::Grid, "TR Funds", "TRF", Function::TrFunds(String::new())),
                 (Icon::Grid, "Market Movers", "MOST", Function::Most(String::new())),
                 (Icon::List, "Smart Money", "SMART", Function::Smart(String::new())),
+                (Icon::Gauge, "Portfolio Risk", "RISK", Function::Risk(String::new())),
             ];
             for (icon, label, code, f) in items {
                 if nav_row(ui, icon, label, Some(code), focused_code == Some(code)).clicked() {

@@ -177,6 +177,14 @@ pub enum PaneSettings {
         symbol: String,
         #[serde(default)]
         tab: String,
+    /// Portfolio risk: `tab` is `overview`, `contrib` or `corr`; `window` is trading days.
+    Risk {
+        #[serde(default)]
+        tab: String,
+        #[serde(default)]
+        benchmark: String,
+        #[serde(default)]
+        window: usize,
     },
 }
 

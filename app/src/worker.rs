@@ -173,6 +173,8 @@ pub enum Request {
     Most(crate::most::MostReq),
     /// Smart money: Form 4, 13F and FINRA short interest (`SMART`).
     Smart(crate::smart::SmartReq),
+    /// Daily history for the portfolio risk pane (`RISK`).
+    Risk(crate::risk::RiskReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -356,6 +358,7 @@ pub enum Response {
     TrFunds(crate::trfunds::TrfResp),
     Most(crate::most::MostResp),
     Smart(crate::smart::SmartResp),
+    Risk(crate::risk::RiskResp),
 }
 
 pub struct Worker {
@@ -984,6 +987,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
         Request::Most(r) => crate::most::handle(r, &|r| s.send(Response::Most(r))).await,
         Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,
+        Request::Risk(r) => crate::risk::handle(r, &s.provider, &s.cache, &|r| s.send(Response::Risk(r))).await,
     }
 }
 

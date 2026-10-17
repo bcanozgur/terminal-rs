@@ -29,6 +29,7 @@ pub const PANELS: [(&str, &str); 22] = [
     ("Order Book", "BOOK"),
     ("Options", "OMON"),
     ("Portfolio", "PORT"),
+    ("Portfolio Risk", "RISK"),
     ("World Markets", "WEI"),
     ("Yield Curve", "GC"),
     ("Description", "DES"),
@@ -695,6 +696,14 @@ impl TerminalApp {
                 current.as_deref().unwrap_or("AAPL US Equity"),
                 super::smart_view::Tab::Insiders,
             ))),
+            "RISK" | "VAR" | "CORR" => {
+                let mut r = super::risk_view::RiskPane::new("overview", "", 252);
+                if head == "CORR" {
+                    r.apply_args("CORR");
+                }
+                r.apply_args(&words[1..].join(" "));
+                PaneKind::Risk(Box::new(r))
+            }
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,
                 Some(words.get(1).map_or_else(|| "CPI".into(), |w| w.to_string())),

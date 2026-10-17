@@ -329,6 +329,8 @@ pub enum Function {
     Most(String),
     /// Smart money (`SMART`, `SMART SHORT`, `SMART 13F`, `AAPL SMART`): Form 4, 13F and FINRA short interest.
     Smart(String),
+    /// Portfolio risk (`RISK`, `RISK QQQ 2Y`; `CORR` opens the correlation heatmap).
+    Risk(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -433,6 +435,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
         "MOST" | "MOVERS" => Function::Most(joined()),
         "SMART" | "SMARTMONEY" => Function::Smart(joined()),
+        "RISK" | "VAR" => Function::Risk(joined()),
+        "CORR" => Function::Risk(format!("CORR {}", joined())),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -636,6 +640,8 @@ fn describe(f: &Function) -> String {
             Some("active" | "actives" | "volume") => "Market movers: US most active by volume".into(),
             _ => "Market movers: US day gainers, losers and most active (Yahoo)".into(),
         },
+        Function::Risk(a) if a.trim().is_empty() => "Portfolio risk: VaR, beta, drawdown, risk contribution".into(),
+        Function::Risk(a) => format!("Portfolio risk: {}", a.trim().to_ascii_uppercase()),
         Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
             Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
             None => format!("Release history: unknown release {n}"),
@@ -911,6 +917,11 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Smart(String::new())))
         );
         assert!(hint("SMART 13F").contains("13F"));
+    fn risk_commands() {
+        assert_eq!(parse("RISK"), Some(Command::Function(Function::Risk(String::new()))));
+        assert_eq!(parse("risk qqq 2y"), Some(Command::Function(Function::Risk("qqq 2y".into()))));
+        assert!(matches!(parse("CORR"), Some(Command::Function(Function::Risk(a))) if a.trim() == "CORR"));
+        assert!(hint("RISK QQQ").contains("QQQ"));
     }
 
     #[test]

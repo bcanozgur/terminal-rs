@@ -20,6 +20,7 @@ mod options_view;
 mod palette_view;
 mod panels;
 mod portfolio_view;
+mod risk_view;
 mod settings_view;
 mod smart_view;
 mod theming;
@@ -102,6 +103,8 @@ pub enum PaneKind {
     Most(Box<most_view::MostPane>),
     /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
     Smart(Box<smart_view::SmartPane>),
+    /// Portfolio risk (`RISK`, `CORR`): VaR, beta, drawdown, risk contribution, correlation heatmap.
+    Risk(Box<risk_view::RiskPane>),
 }
 
 pub struct OptionsPane {
@@ -232,6 +235,7 @@ impl PaneKind {
             PaneKind::TrFunds(e) => e.title(),
             PaneKind::Most(e) => e.title(),
             PaneKind::Smart(e) => e.title(),
+            PaneKind::Risk(e) => e.title(),
         }
     }
 
@@ -261,6 +265,7 @@ impl PaneKind {
             PaneKind::TrFunds(e) => e.code(),
             PaneKind::Most(e) => e.code(),
             PaneKind::Smart(e) => e.code(),
+            PaneKind::Risk(e) => e.code(),
         }
     }
 
@@ -375,6 +380,15 @@ impl PaneKind {
                  'Portföy Dağılım Raporu' PDFs (published in the first days of each month) and fund information forms. \
                  Redemption valör comes from the fund's prospectus on KAP; purchase valör is not stated there (n/a)."
             }
+            PaneKind::Risk(_) => {
+                "Portfolio risk (RISK, CORR): computed locally from about two years of daily history of your positions, \
+                 weighted by current market value. Overview: annualised volatility, historical and parametric VaR \
+                 (95/99%), expected shortfall, beta, alpha, R\u{b2}, tracking error and Sharpe/Sortino against a benchmark \
+                 (SPY, QQQ, XU100 or RISK <ticker>; the risk-free rate is a fixed 4% assumption), max/current drawdown and \
+                 an equity/drawdown chart. Contribution: each position's share of portfolio volatility. Correlation: \
+                 heatmap of daily returns, click a cell to chart that symbol. Options, cash and instruments without \
+                 price history are listed as not included with the reason; values are not currency-converted."
+            }
         }
     }
 
@@ -480,6 +494,10 @@ impl PaneKind {
             }
             PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
             PaneKind::Smart(e) => e.settings(),
+            PaneKind::Risk(e) => {
+                let (tab, benchmark, window) = e.settings();
+                PaneSettings::Risk { tab: tab.into(), benchmark, window }
+            }
         }
     }
 
@@ -550,6 +568,9 @@ impl PaneKind {
                 PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd)))
             }
             PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
+            PaneSettings::Risk { tab, benchmark, window } => {
+                PaneKind::Risk(Box::new(risk_view::RiskPane::new(&tab, &benchmark, window)))
+            }
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
             PaneSettings::Smart { symbol, tab } => {
@@ -1246,6 +1267,7 @@ impl TerminalApp {
             Function::TrFunds(arg) => self.trf_command(&arg),
             Function::Most(arg) => self.most_command(&arg),
             Function::Smart(arg) => self.smart_command(&arg, None),
+            Function::Risk(arg) => self.risk_command(&arg),
         }
     }
 
@@ -1464,6 +1486,7 @@ impl TerminalApp {
                 Response::TrFunds(resp) => self.on_trfunds(resp),
                 Response::Most(resp) => self.on_most(resp),
                 Response::Smart(resp) => self.on_smart(resp),
+                Response::Risk(resp) => self.on_risk(resp),
             }
         }
     }

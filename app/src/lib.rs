@@ -24,6 +24,7 @@ mod palette;
 mod prefs;
 mod quote_tag;
 mod smart;
+mod risk;
 mod studies;
 mod theme;
 mod themes;

@@ -261,6 +261,22 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
   A failed refresh shows the error and keeps the last lists, marked as old.
 
+- **Portfolio risk (`RISK`, `CORR`)** — risk of the portfolio you hold (demo account or brokerage),
+  computed locally from about two years of daily bars of each position (Yahoo/Alpaca through the
+  usual provider, kept in the bar cache so reopening is instant), weighted by current market value
+  with daily rebalancing. *Overview*: annualised volatility, 1-day historical VaR at 95% and 99% (in %
+  and in currency), expected shortfall (CVaR 95%), parametric (normal) VaR for comparison, beta,
+  Jensen alpha, R², correlation, tracking error and information ratio against a selectable benchmark
+  (SPY by default; QQQ, XU100, or `RISK IWM` for any ticker), Sharpe and Sortino (risk-free rate is a
+  fixed 4% assumption, labelled on the cards), max and current drawdown, and an equity vs drawdown
+  chart with the deepest drawdown shaded. *Contribution*: weight, volatility, beta, marginal and
+  component contribution and share of portfolio volatility per position. *Correlation*
+  (`CORR`): heatmap of daily-return correlations of the holdings plus the benchmark; click a cell
+  to chart its row's symbol. 1Y / 2Y window switch. Options, cash equivalents, instruments without a
+  market-data symbol and positions with fewer than 60 bars are listed as "not included" with the
+  reason; benchmark figures show n/a with the reason when its history is missing or shares too few
+  days. Values are not converted between currencies. The maths lives in `tr_core::risk`.
+
 ## Running
 
 ```sh
