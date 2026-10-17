@@ -22,6 +22,7 @@ mod portfolio_view;
 mod settings_view;
 mod theming;
 mod trading;
+mod trfunds_view;
 mod workspace;
 
 pub use broker::PosSort;
@@ -93,6 +94,8 @@ pub enum PaneKind {
     Eco(Box<eco_view::EcoPane>),
     /// US ETF contents (`ETF`): holdings, sectors, reverse search and overlap.
     Etf(Box<etf_view::EtfPane>),
+    /// Turkish mutual funds (`TRF`): KAP portfolio reports, allocation, buys/sells, reverse search.
+    TrFunds(Box<trfunds_view::TrfPane>),
 }
 
 pub struct OptionsPane {
@@ -220,6 +223,7 @@ impl PaneKind {
             },
             PaneKind::Eco(e) => e.title(),
             PaneKind::Etf(e) => e.title(),
+            PaneKind::TrFunds(e) => e.title(),
         }
     }
 
@@ -246,6 +250,7 @@ impl PaneKind {
             PaneKind::Earnings(_) => "ERN",
             PaneKind::Eco(e) => e.code(),
             PaneKind::Etf(e) => e.code(),
+            PaneKind::TrFunds(e) => e.code(),
         }
     }
 
@@ -336,6 +341,14 @@ impl PaneKind {
                  filing's report date, usually 2-4 months old); Yahoo supplies the top 10 for funds without N-PORT \
                  (SPY, DIA, GLD) and the sector weights. Reverse search and overlap cover the funds indexed on disk: \
                  use 'Index curated list' to fetch the popular ones."
+            }
+            PaneKind::TrFunds(_) => {
+                "Turkish funds (TRF): every investment fund on KAP with a search box; click a code for the fund card \
+                 (fees, size, manager), asset allocation and top-10 stock allocation as donut charts, and the buys and \
+                 sells between the latest two monthly portfolio reports. 'Held by' (or THYAO TRFS) lists which indexed \
+                 funds hold a BIST stock; 'Index curated list' downloads popular funds' reports to disk. Data: KAP \
+                 'Portföy Dağılım Raporu' PDFs (published in the first days of each month) and fund information forms. \
+                 Redemption valör comes from the fund's prospectus on KAP; purchase valör is not stated there (n/a)."
             }
         }
     }
@@ -434,6 +447,10 @@ impl PaneKind {
                 let (mode, a, b) = e.settings();
                 PaneSettings::Etf { mode: mode.into(), a, b }
             }
+            PaneKind::TrFunds(e) => {
+                let (mode, a) = e.settings();
+                PaneSettings::TrFunds { mode: mode.into(), a }
+            }
         }
     }
 
@@ -504,6 +521,7 @@ impl PaneKind {
                 PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd)))
             }
             PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
+            PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
@@ -1025,6 +1043,11 @@ impl TerminalApp {
                 self.etf_command(&format!("HELD {ticker}"));
                 self.status = format!("{ticker}: ETFs that hold it");
             }
+            Command::SymbolFunction(s, Function::TrFunds(_)) => {
+                let ticker = tr_data::security(&s).ticker;
+                self.trf_held(&ticker);
+                self.status = format!("{ticker}: funds that hold it");
+            }
             Command::SymbolFunction(s, Function::AddAlert(mut a)) => {
                 a.symbol.get_or_insert(s);
                 self.add_alert(a);
@@ -1186,6 +1209,7 @@ impl TerminalApp {
             Function::Eco(arg) => self.eco_command(&arg),
             Function::EcoSeries(name) => self.eco_series_command(&name),
             Function::Etf(arg) => self.etf_command(&arg),
+            Function::TrFunds(arg) => self.trf_command(&arg),
         }
     }
 
@@ -1401,6 +1425,7 @@ impl TerminalApp {
                 }
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
                 Response::Etf(resp) => self.on_etf(resp),
+                Response::TrFunds(resp) => self.on_trfunds(resp),
             }
         }
     }
@@ -1731,6 +1756,7 @@ impl TerminalApp {
         self.earnings_periodic(&visible);
         self.eco_periodic(&visible);
         self.etf_periodic(&visible);
+        self.trf_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

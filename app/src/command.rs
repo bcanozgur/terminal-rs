@@ -323,6 +323,8 @@ pub enum Function {
     EcoSeries(String),
     /// US ETF contents (`ETF`, `ETF SPY`, `ETF VOO QQQ`, `ETF HELD AAPL`; `AAPL ETFS`: the ETFs holding a stock).
     Etf(String),
+    /// Turkish mutual funds from KAP (`TRF`, `TRF AFT`, `TRF HELD THYAO`; `THYAO TRFS`: the funds holding a stock).
+    TrFunds(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -424,6 +426,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ECO" | "ECON" => Function::Eco(words().join(" ")),
         "ECOF" => Function::EcoSeries(joined()),
         "ETF" | "ETFS" => Function::Etf(joined()),
+        "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -615,6 +618,10 @@ fn describe(f: &Function) -> String {
             0 => "US ETFs: top holdings, sectors, reverse search and overlap".into(),
             1 => format!("ETF holdings and sectors: {}", a.to_ascii_uppercase()),
             _ => format!("ETF holdings: {}", a.to_ascii_uppercase()),
+        },
+        Function::TrFunds(a) => match a.split_whitespace().count() {
+            0 => "Turkish funds (KAP): allocation, buys and sells, reverse search".into(),
+            _ => format!("Turkish funds: {}", a.to_ascii_uppercase()),
         },
         Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
             Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
@@ -873,5 +880,13 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Etf(String::new())))
         );
         assert!(hint("ETF SPY").contains("SPY"));
+    }
+
+    #[test]
+    fn trf_commands() {
+        assert_eq!(parse("TRF"), Some(Command::Function(Function::TrFunds(String::new()))));
+        assert_eq!(parse("trf held thyao"), Some(Command::Function(Function::TrFunds("held thyao".into()))));
+        assert!(matches!(parse("THYAO TRFS"), Some(Command::SymbolFunction(_, Function::TrFunds(_)))));
+        assert!(hint("TRF TI2").contains("TI2"));
     }
 }

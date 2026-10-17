@@ -25,6 +25,7 @@ mod quote_tag;
 mod studies;
 mod theme;
 mod themes;
+mod trfunds;
 mod widgets;
 mod worker;
 
