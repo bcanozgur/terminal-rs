@@ -21,7 +21,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 21] = [
+pub const PANELS: [(&str, &str); 22] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -29,6 +29,7 @@ pub const PANELS: [(&str, &str); 21] = [
     ("Order Book", "BOOK"),
     ("Options", "OMON"),
     ("Portfolio", "PORT"),
+    ("Portfolio Risk", "RISK"),
     ("World Markets", "WEI"),
     ("Yield Curve", "GC"),
     ("Description", "DES"),
@@ -685,6 +686,14 @@ impl TerminalApp {
                 if words.len() > 1 { "detail" } else { "list" },
                 words.get(1).copied().unwrap_or(""),
             ))),
+            "RISK" | "VAR" | "CORR" => {
+                let mut r = super::risk_view::RiskPane::new("overview", "", 252);
+                if head == "CORR" {
+                    r.apply_args("CORR");
+                }
+                r.apply_args(&words[1..].join(" "));
+                PaneKind::Risk(Box::new(r))
+            }
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,
                 Some(words.get(1).map_or_else(|| "CPI".into(), |w| w.to_string())),

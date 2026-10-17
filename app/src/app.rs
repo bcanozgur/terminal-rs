@@ -19,6 +19,7 @@ mod options_view;
 mod palette_view;
 mod panels;
 mod portfolio_view;
+mod risk_view;
 mod settings_view;
 mod theming;
 mod trading;
@@ -96,6 +97,8 @@ pub enum PaneKind {
     Etf(Box<etf_view::EtfPane>),
     /// Turkish mutual funds (`TRF`): KAP portfolio reports, allocation, buys/sells, reverse search.
     TrFunds(Box<trfunds_view::TrfPane>),
+    /// Portfolio risk (`RISK`, `CORR`): VaR, beta, drawdown, risk contribution, correlation heatmap.
+    Risk(Box<risk_view::RiskPane>),
 }
 
 pub struct OptionsPane {
@@ -224,6 +227,7 @@ impl PaneKind {
             PaneKind::Eco(e) => e.title(),
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
+            PaneKind::Risk(e) => e.title(),
         }
     }
 
@@ -251,6 +255,7 @@ impl PaneKind {
             PaneKind::Eco(e) => e.code(),
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
+            PaneKind::Risk(e) => e.code(),
         }
     }
 
@@ -349,6 +354,15 @@ impl PaneKind {
                  funds hold a BIST stock; 'Index curated list' downloads popular funds' reports to disk. Data: KAP \
                  'Portföy Dağılım Raporu' PDFs (published in the first days of each month) and fund information forms. \
                  Redemption valör comes from the fund's prospectus on KAP; purchase valör is not stated there (n/a)."
+            }
+            PaneKind::Risk(_) => {
+                "Portfolio risk (RISK, CORR): computed locally from about two years of daily history of your positions, \
+                 weighted by current market value. Overview: annualised volatility, historical and parametric VaR \
+                 (95/99%), expected shortfall, beta, alpha, R\u{b2}, tracking error and Sharpe/Sortino against a benchmark \
+                 (SPY, QQQ, XU100 or RISK <ticker>; the risk-free rate is a fixed 4% assumption), max/current drawdown and \
+                 an equity/drawdown chart. Contribution: each position's share of portfolio volatility. Correlation: \
+                 heatmap of daily returns, click a cell to chart that symbol. Options, cash and instruments without \
+                 price history are listed as not included with the reason; values are not currency-converted."
             }
         }
     }
@@ -451,6 +465,10 @@ impl PaneKind {
                 let (mode, a) = e.settings();
                 PaneSettings::TrFunds { mode: mode.into(), a }
             }
+            PaneKind::Risk(e) => {
+                let (tab, benchmark, window) = e.settings();
+                PaneSettings::Risk { tab: tab.into(), benchmark, window }
+            }
         }
     }
 
@@ -521,6 +539,9 @@ impl PaneKind {
                 PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd)))
             }
             PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
+            PaneSettings::Risk { tab, benchmark, window } => {
+                PaneKind::Risk(Box::new(risk_view::RiskPane::new(&tab, &benchmark, window)))
+            }
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
@@ -1210,6 +1231,7 @@ impl TerminalApp {
             Function::EcoSeries(name) => self.eco_series_command(&name),
             Function::Etf(arg) => self.etf_command(&arg),
             Function::TrFunds(arg) => self.trf_command(&arg),
+            Function::Risk(arg) => self.risk_command(&arg),
         }
     }
 
@@ -1426,6 +1448,7 @@ impl TerminalApp {
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
+                Response::Risk(resp) => self.on_risk(resp),
             }
         }
     }

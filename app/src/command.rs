@@ -325,6 +325,8 @@ pub enum Function {
     Etf(String),
     /// Turkish mutual funds from KAP (`TRF`, `TRF AFT`, `TRF HELD THYAO`; `THYAO TRFS`: the funds holding a stock).
     TrFunds(String),
+    /// Portfolio risk (`RISK`, `RISK QQQ 2Y`; `CORR` opens the correlation heatmap).
+    Risk(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -427,6 +429,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ECOF" => Function::EcoSeries(joined()),
         "ETF" | "ETFS" => Function::Etf(joined()),
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
+        "RISK" | "VAR" => Function::Risk(joined()),
+        "CORR" => Function::Risk(format!("CORR {}", joined())),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -623,6 +627,8 @@ fn describe(f: &Function) -> String {
             0 => "Turkish funds (KAP): allocation, buys and sells, reverse search".into(),
             _ => format!("Turkish funds: {}", a.to_ascii_uppercase()),
         },
+        Function::Risk(a) if a.trim().is_empty() => "Portfolio risk: VaR, beta, drawdown, risk contribution".into(),
+        Function::Risk(a) => format!("Portfolio risk: {}", a.trim().to_ascii_uppercase()),
         Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
             Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
             None => format!("Release history: unknown release {n}"),
@@ -880,6 +886,14 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Etf(String::new())))
         );
         assert!(hint("ETF SPY").contains("SPY"));
+    }
+
+    #[test]
+    fn risk_commands() {
+        assert_eq!(parse("RISK"), Some(Command::Function(Function::Risk(String::new()))));
+        assert_eq!(parse("risk qqq 2y"), Some(Command::Function(Function::Risk("qqq 2y".into()))));
+        assert!(matches!(parse("CORR"), Some(Command::Function(Function::Risk(a))) if a.trim() == "CORR"));
+        assert!(hint("RISK QQQ").contains("QQQ"));
     }
 
     #[test]

@@ -30,6 +30,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "TRF: Turkish mutual funds from KAP. Search the fund list, open a fund for its card, asset and stock \
              allocation donuts and the buys and sells between the latest two monthly reports; reverse search \
              (which funds hold a BIST stock, also THYAO TRFS).",
+            "RISK / CORR: portfolio risk from daily history of your positions: volatility, VaR and expected shortfall, \
+             beta, alpha, Sharpe/Sortino against SPY, QQQ or XU100, drawdown chart, risk contribution per position \
+             and a correlation heatmap.",
             "Sync button on symbol panes (News, Options, DES/FA, Order Book, ...) shows the active chart's symbol; \
              Options now has a ticker box too.",
             "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \

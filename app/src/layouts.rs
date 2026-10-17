@@ -167,6 +167,15 @@ pub enum PaneSettings {
         #[serde(default)]
         a: String,
     },
+    /// Portfolio risk: `tab` is `overview`, `contrib` or `corr`; `window` is trading days.
+    Risk {
+        #[serde(default)]
+        tab: String,
+        #[serde(default)]
+        benchmark: String,
+        #[serde(default)]
+        window: usize,
+    },
 }
 
 fn yes() -> bool {

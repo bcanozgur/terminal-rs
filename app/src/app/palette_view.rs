@@ -103,6 +103,19 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("ETF SPY", "ETF holdings and sectors: SPY", "etf fund holdings sector spy", None),
     ("ETF VOO QQQ", "ETF overlap: VOO vs QQQ", "etf overlap compare shared holdings", None),
     ("TRF", "Turkish funds (KAP): allocation, buys and sells", "trf turkish funds fon kap portfoy yatirim", None),
+    (
+        "RISK",
+        "Portfolio risk: VaR, beta, drawdown, risk contribution",
+        "risk var cvar beta drawdown volatility sharpe sortino portfolio",
+        None,
+    ),
+    ("RISK QQQ", "Portfolio risk vs QQQ", "risk beta benchmark qqq spy xu100 alpha tracking", None),
+    (
+        "CORR",
+        "Correlation heatmap of the portfolio's holdings",
+        "corr correlation matrix heatmap portfolio holdings",
+        None,
+    ),
     ("TRF TI2", "Turkish fund detail: TI2", "trf fon detail kap portfolio allocation", None),
     ("TRF HELD THYAO", "Turkish funds holding THYAO", "trf funds reverse search holders bist hisse", None),
 ];
