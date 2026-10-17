@@ -135,6 +135,12 @@ pub enum Request {
     Search(String),
     /// Order entry (see `app::trading`); only sent once trading is enabled.
     Trade(TradeRequest),
+    /// SEC EDGAR profile and statements for `DES` / `FA` (`user_agent` from Settings).
+    Edgar {
+        pane: PaneId,
+        symbol: String,
+        user_agent: String,
+    },
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -294,6 +300,11 @@ pub enum Response {
         hits: Vec<SearchHit>,
     },
     Trade(Box<TradeResponse>),
+    Edgar {
+        pane: PaneId,
+        symbol: String,
+        company: Result<Arc<tr_data::edgar::Company>, String>,
+    },
 }
 
 pub struct Worker {
@@ -759,6 +770,12 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             s.send(Response::SearchHits { query, hits });
         }
         Request::Trade(t) => s.send(Response::Trade(Box::new(trade(t).await))),
+        Request::Edgar { pane, symbol, user_agent } => {
+            let ua = tr_data::edgar::user_agent(&user_agent).unwrap_or_default();
+            let dir = tr_data::edgar::cache_dir(&data_dir());
+            let company = tr_data::edgar::company(&dir, &symbol, &ua).await.map(Arc::new).map_err(|e| format!("{e:#}"));
+            s.send(Response::Edgar { pane, symbol, company });
+        }
     }
 }
 

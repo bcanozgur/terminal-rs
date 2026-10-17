@@ -180,6 +180,9 @@ pub struct PanelDefaults {
     pub show_volume: bool,
     pub congress_markers: bool,
     pub book_depth: usize,
+    /// SEC EDGAR User-Agent (name and contact email) for `DES` / `FA`; empty falls back to
+    /// `TR_SEC_USER_AGENT`.
+    pub sec_user_agent: String,
 }
 
 impl Default for PanelDefaults {
@@ -190,6 +193,7 @@ impl Default for PanelDefaults {
             show_volume: true,
             congress_markers: true,
             book_depth: 20,
+            sec_user_agent: String::new(),
         }
     }
 }

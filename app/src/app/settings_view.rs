@@ -618,6 +618,7 @@ impl TerminalApp {
                 d.book_depth = depths[i];
             }
         });
+        super::edgar_view::sec_settings(ui, d);
         ui.add_space(6.0);
         ui.label(
             RichText::new("Each pane's own settings (chart type, indicators, filters, depth, link group, tab title) are saved with the layout.")

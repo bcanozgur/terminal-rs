@@ -385,6 +385,7 @@ impl TerminalApp {
                     **o = super::OptionsPane::new(&key, o.strikes, o.show_greeks);
                 }
             }
+            PaneKind::Edgar(e) => e.set_symbol(&key),
             _ => return false,
         }
         true
@@ -598,6 +599,10 @@ impl TerminalApp {
             "ALRT" | "ALERTS" => PaneKind::Alerts,
             "SECF" | "SEARCH" => PaneKind::Search { query: words[1..].join(" ") },
             "PREFS" | "SETTINGS" | "PDF" => PaneKind::Settings,
+            "DES" | "FA" => PaneKind::Edgar(Box::new(super::edgar_view::EdgarPane::new(
+                current.as_deref().unwrap_or("AAPL US Equity"),
+                head == "FA",
+            ))),
             "HELP" => PaneKind::Help,
             _ => return None,
         })
