@@ -753,6 +753,7 @@ impl TerminalApp {
                 (Icon::Chart, "Financials", "FA", Function::Edgar { fa: true }),
                 (Icon::Gauge, "Earnings Calendar", "ERN", Function::Earnings),
                 (Icon::Curve, "Economic Calendar", "ECO", Function::Eco(String::new())),
+                (Icon::Grid, "ETFs", "ETF", Function::Etf(String::new())),
             ];
             for (icon, label, code, f) in items {
                 if nav_row(ui, icon, label, Some(code), focused_code == Some(code)).clicked() {

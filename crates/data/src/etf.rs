@@ -597,8 +597,8 @@ pub fn build_fund(
 // ---- analysis -----------------------------------------------------------------------------
 
 fn same_ticker(a: &str, b: &str) -> bool {
-    let n = |s: &str| s.replace(['.', '/'], "-").to_ascii_uppercase();
-    n(a) == n(b)
+    let n = |c: char| if matches!(c, '.' | '/') { '-' } else { c.to_ascii_uppercase() };
+    a.len() == b.len() && a.chars().map(n).eq(b.chars().map(n))
 }
 
 /// A fund holding a security.

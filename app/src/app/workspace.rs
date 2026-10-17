@@ -21,7 +21,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 19] = [
+pub const PANELS: [(&str, &str); 20] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -35,6 +35,7 @@ pub const PANELS: [(&str, &str); 19] = [
     ("Financials", "FA"),
     ("Earnings Calendar", "ERN"),
     ("Economic Calendar", "ECO"),
+    ("ETFs", "ETF"),
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
     ("Alerts", "ALRT"),
@@ -616,6 +617,11 @@ impl TerminalApp {
             "HELP" => PaneKind::Help,
             "CHANGES" | "CHANGELOG" | "WHATSNEW" => PaneKind::Changelog,
             "ECO" | "ECON" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(1, None))),
+            "ETF" | "ETFS" => PaneKind::Etf(Box::new(super::etf_view::EtfPane::new(
+                if words.len() > 1 { "detail" } else { "list" },
+                words.get(1).copied().unwrap_or(""),
+                "",
+            ))),
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,
                 Some(words.get(1).map_or_else(|| "CPI".into(), |w| w.to_string())),

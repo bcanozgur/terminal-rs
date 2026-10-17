@@ -214,6 +214,18 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   FOMC dates are the Fed's published 2026–27 schedule; values come from keyless FRED/ALFRED CSV
   downloads, cached in `eco.sqlite3`. There is no consensus/forecast column, since survey
   expectations are not available for free, and ISM is proprietary and not on FRED.
+- **US ETFs (`ETF`)** — a list of popular ETFs (or any ticker: `ETF SPY`) opening to the fund's
+  ten largest holdings as a donut chart plus list ("Other" for the rest) and its sector weights.
+  `AAPL ETFS` (or the pane's "Held by" tab) lists which indexed ETFs hold a stock, and
+  `ETF VOO QQQ` shows the overlap of two funds (sum of the smaller weights, with the shared
+  holdings). Full portfolios come from SEC N-PORT-P filings (fund series via
+  `company_tickers_mf.json`, same SEC User-Agent and throttle as DES/FA), filed quarterly with a
+  60-day lag, so the pane always shows the report date. Funds without an N-PORT (SPY and DIA are
+  unit investment trusts, GLD a grantor trust) fall back to Yahoo's top 10, and Yahoo's
+  `topHoldings` also supplies the sector weights (N-PORT has none). Tickers for N-PORT holdings
+  are matched by issuer name against SEC `company_tickers.json`, best effort. Parsed funds are
+  cached in `<data dir>/etf/`; reverse search and overlap cover the funds cached there ("Index
+  curated list" fetches the popular ones one at a time).
 
 ## Running
 
