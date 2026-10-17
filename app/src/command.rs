@@ -325,6 +325,12 @@ pub enum Function {
     Etf(String),
     /// Turkish mutual funds from KAP (`TRF`, `TRF AFT`, `TRF HELD THYAO`; `THYAO TRFS`: the funds holding a stock).
     TrFunds(String),
+    /// US market movers (`MOST`, `MOST LOSERS`, `MOST ACTIVE`).
+    Most(String),
+    /// Smart money (`SMART`, `SMART SHORT`, `SMART 13F`, `AAPL SMART`): Form 4, 13F and FINRA short interest.
+    Smart(String),
+    /// Portfolio risk (`RISK`, `RISK QQQ 2Y`; `CORR` opens the correlation heatmap).
+    Risk(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -427,6 +433,10 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ECOF" => Function::EcoSeries(joined()),
         "ETF" | "ETFS" => Function::Etf(joined()),
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
+        "MOST" | "MOVERS" => Function::Most(joined()),
+        "SMART" | "SMARTMONEY" => Function::Smart(joined()),
+        "RISK" | "VAR" => Function::Risk(joined()),
+        "CORR" => Function::Risk(format!("CORR {}", joined())),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -619,10 +629,19 @@ fn describe(f: &Function) -> String {
             1 => format!("ETF holdings and sectors: {}", a.to_ascii_uppercase()),
             _ => format!("ETF holdings: {}", a.to_ascii_uppercase()),
         },
+        Function::Smart(a) if a.is_empty() => "Smart money: insider trades, 13F holders, short interest".into(),
+        Function::Smart(a) => format!("Smart money: {}", a.to_ascii_uppercase()),
         Function::TrFunds(a) => match a.split_whitespace().count() {
             0 => "Turkish funds (KAP): allocation, buys and sells, reverse search".into(),
             _ => format!("Turkish funds: {}", a.to_ascii_uppercase()),
         },
+        Function::Most(a) => match a.split_whitespace().next().map(str::to_ascii_lowercase).as_deref() {
+            Some("losers") => "Market movers: US day losers".into(),
+            Some("active" | "actives" | "volume") => "Market movers: US most active by volume".into(),
+            _ => "Market movers: US day gainers, losers and most active (Yahoo)".into(),
+        },
+        Function::Risk(a) if a.trim().is_empty() => "Portfolio risk: VaR, beta, drawdown, risk contribution".into(),
+        Function::Risk(a) => format!("Portfolio risk: {}", a.trim().to_ascii_uppercase()),
         Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
             Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
             None => format!("Release history: unknown release {n}"),
@@ -872,6 +891,13 @@ mod tests {
     }
 
     #[test]
+    fn most_commands() {
+        assert_eq!(parse("MOST"), Some(Command::Function(Function::Most(String::new()))));
+        assert_eq!(parse("most losers"), Some(Command::Function(Function::Most("losers".into()))));
+        assert!(hint("MOST ACTIVE").contains("active"));
+    }
+
+    #[test]
     fn etf_commands() {
         assert_eq!(parse("ETF"), Some(Command::Function(Function::Etf(String::new()))));
         assert_eq!(parse("etf voo qqq"), Some(Command::Function(Function::Etf("voo qqq".into()))));
@@ -880,6 +906,25 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Etf(String::new())))
         );
         assert!(hint("ETF SPY").contains("SPY"));
+    }
+
+    #[test]
+    fn smart_commands() {
+        assert_eq!(parse("SMART"), Some(Command::Function(Function::Smart(String::new()))));
+        assert_eq!(parse("smart short"), Some(Command::Function(Function::Smart("short".into()))));
+        assert_eq!(
+            parse("AAPL SMART"),
+            Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Smart(String::new())))
+        );
+        assert!(hint("SMART 13F").contains("13F"));
+    }
+
+    #[test]
+    fn risk_commands() {
+        assert_eq!(parse("RISK"), Some(Command::Function(Function::Risk(String::new()))));
+        assert_eq!(parse("risk qqq 2y"), Some(Command::Function(Function::Risk("qqq 2y".into()))));
+        assert!(matches!(parse("CORR"), Some(Command::Function(Function::Risk(a))) if a.trim() == "CORR"));
+        assert!(hint("RISK QQQ").contains("QQQ"));
     }
 
     #[test]

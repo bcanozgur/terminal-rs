@@ -933,13 +933,13 @@ pub fn valid_user_agent(ua: &str) -> bool {
     })
 }
 
-fn client() -> &'static reqwest::Client {
+pub(crate) fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(40)).gzip(true).build().unwrap_or_default())
 }
 
 /// Process-wide SEC request throttle.
-async fn throttle() {
+pub(crate) async fn throttle() {
     static NEXT: Mutex<Option<Instant>> = Mutex::const_new(None);
     let mut next = NEXT.lock().await;
     let now = Instant::now();

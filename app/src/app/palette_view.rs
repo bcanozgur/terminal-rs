@@ -102,8 +102,37 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("ETF", "US ETFs: holdings, sectors, overlap", "etf fund holdings sector overlap spy qqq voo", None),
     ("ETF SPY", "ETF holdings and sectors: SPY", "etf fund holdings sector spy", None),
     ("ETF VOO QQQ", "ETF overlap: VOO vs QQQ", "etf overlap compare shared holdings", None),
+    (
+        "SMART",
+        "Smart money: insiders, 13F holders, short interest",
+        "smart money insider form 4 13f institutions short interest finra sec",
+        None,
+    ),
+    ("SMART SHORT", "Smart money: short interest (FINRA)", "smart short interest days to cover finra", None),
+    (
+        "SMART 13F",
+        "Smart money: institutional holders (13F)",
+        "smart 13f institutions holders berkshire bridgewater",
+        None,
+    ),
     ("TRF", "Turkish funds (KAP): allocation, buys and sells", "trf turkish funds fon kap portfoy yatirim", None),
+    (
+        "RISK",
+        "Portfolio risk: VaR, beta, drawdown, risk contribution",
+        "risk var cvar beta drawdown volatility sharpe sortino portfolio",
+        None,
+    ),
+    ("RISK QQQ", "Portfolio risk vs QQQ", "risk beta benchmark qqq spy xu100 alpha tracking", None),
+    (
+        "CORR",
+        "Correlation heatmap of the portfolio's holdings",
+        "corr correlation matrix heatmap portfolio holdings",
+        None,
+    ),
     ("TRF TI2", "Turkish fund detail: TI2", "trf fon detail kap portfolio allocation", None),
+    ("MOST", "Market movers: US gainers, losers, most active", "most movers gainers losers active volume top", None),
+    ("MOST LOSERS", "Market movers: day losers", "most movers losers biggest decliners", None),
+    ("MOST ACTIVE", "Market movers: most active by volume", "most movers active volume", None),
     ("TRF HELD THYAO", "Turkish funds holding THYAO", "trf funds reverse search holders bist hisse", None),
 ];
 

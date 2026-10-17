@@ -227,6 +227,19 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   cached in `<data dir>/etf/`; reverse search and overlap cover the funds cached there ("Index
   curated list" fetches the popular ones one at a time).
 
+- **Smart money (`SMART`, `AAPL SMART`)** — three tabs for the active symbol. *Insiders*: recent SEC
+  Form 4 transactions (insider, title, buy/sell, shares, price, value, shares owned after) with a
+  90-day net open-market buy/sell summary. *Institutions*: the latest two 13F-HR filings of 18
+  well-known managers (Berkshire, Bridgewater, Renaissance, Citadel, Soros, Tiger Global,
+  Pershing Square, …): top 25 positions with new/added/reduced/sold vs the previous quarter, and
+  "Who holds AAPL" across the managers indexed on disk (`<data dir>/smartmoney/`; the "Index
+  curated managers" button downloads them politely at well under SEC's 10 requests/second). 13F has
+  no tickers, so they are matched from issuer names (best effort), and the data is 6 weeks to 4½
+  months old. *Short interest*: FINRA's twice-monthly consolidated short interest files
+  (`cdn.finra.org`, no login) with change and days to cover, plus the daily Reg SHO short *sale
+  volume* files, shown separately and labelled as sale volume (not short interest). Needs the
+  same SEC User-Agent as DES/FA for the EDGAR tabs; FINRA needs nothing. Not included: a
+  market-wide feed of large insider purchases.
 - **Turkish funds (`TRF`)** — every investment fund on KAP (kap.org.tr) in a searchable list; click a
   code for the fund card (founder, fund manager, management/entry/exit fee from the fund's KAP
   information form, fund size, units and price from the report), the asset allocation and the top-10 stock
@@ -241,6 +254,28 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   read from the fund's prospectus on KAP; the purchase valör is not stated there and shows n/a (TEFAS
   has both, but is not used). Funds are cached in `<data dir>/trfunds/`; "Index curated list"
   fetches ~50 popular funds one at a time with a pause.
+- **Market movers (`MOST`)** — US day gainers, day losers and most active stocks (top 100 each) from
+  Yahoo's predefined screeners, which need no key or crumb. Columns: price, change, % change, volume,
+  3-month average volume, relative volume (today over average) and market cap. Click a symbol or name
+  for its chart, right-click for more, filter by symbol or name. `MOST LOSERS` / `MOST ACTIVE` pick a
+  tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
+  A failed refresh shows the error and keeps the last lists, marked as old.
+
+- **Portfolio risk (`RISK`, `CORR`)** — risk of the portfolio you hold (demo account or brokerage),
+  computed locally from about two years of daily bars of each position (Yahoo/Alpaca through the
+  usual provider, kept in the bar cache so reopening is instant), weighted by current market value
+  with daily rebalancing. *Overview*: annualised volatility, 1-day historical VaR at 95% and 99% (in %
+  and in currency), expected shortfall (CVaR 95%), parametric (normal) VaR for comparison, beta,
+  Jensen alpha, R², correlation, tracking error and information ratio against a selectable benchmark
+  (SPY by default; QQQ, XU100, or `RISK IWM` for any ticker), Sharpe and Sortino (risk-free rate is a
+  fixed 4% assumption, labelled on the cards), max and current drawdown, and an equity vs drawdown
+  chart with the deepest drawdown shaded. *Contribution*: weight, volatility, beta, marginal and
+  component contribution and share of portfolio volatility per position. *Correlation*
+  (`CORR`): heatmap of daily-return correlations of the holdings plus the benchmark; click a cell
+  to chart its row's symbol. 1Y / 2Y window switch. Options, cash equivalents, instruments without a
+  market-data symbol and positions with fewer than 60 bars are listed as "not included" with the
+  reason; benchmark figures show n/a with the reason when its history is missing or shares too few
+  days. Values are not converted between currencies. The maths lives in `tr_core::risk`.
 
 ## Running
 

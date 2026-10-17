@@ -15,11 +15,14 @@ mod edgar_view;
 mod etf_view;
 mod fa_view;
 mod hotkeys_view;
+mod most_view;
 mod options_view;
 mod palette_view;
 mod panels;
 mod portfolio_view;
+mod risk_view;
 mod settings_view;
+mod smart_view;
 mod theming;
 mod trading;
 mod trfunds_view;
@@ -96,6 +99,12 @@ pub enum PaneKind {
     Etf(Box<etf_view::EtfPane>),
     /// Turkish mutual funds (`TRF`): KAP portfolio reports, allocation, buys/sells, reverse search.
     TrFunds(Box<trfunds_view::TrfPane>),
+    /// US market movers (`MOST`): day gainers, losers and most active from Yahoo screeners.
+    Most(Box<most_view::MostPane>),
+    /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
+    Smart(Box<smart_view::SmartPane>),
+    /// Portfolio risk (`RISK`, `CORR`): VaR, beta, drawdown, risk contribution, correlation heatmap.
+    Risk(Box<risk_view::RiskPane>),
 }
 
 pub struct OptionsPane {
@@ -224,6 +233,9 @@ impl PaneKind {
             PaneKind::Eco(e) => e.title(),
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
+            PaneKind::Most(e) => e.title(),
+            PaneKind::Smart(e) => e.title(),
+            PaneKind::Risk(e) => e.title(),
         }
     }
 
@@ -251,6 +263,9 @@ impl PaneKind {
             PaneKind::Eco(e) => e.code(),
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
+            PaneKind::Most(e) => e.code(),
+            PaneKind::Smart(e) => e.code(),
+            PaneKind::Risk(e) => e.code(),
         }
     }
 
@@ -342,6 +357,22 @@ impl PaneKind {
                  (SPY, DIA, GLD) and the sector weights. Reverse search and overlap cover the funds indexed on disk: \
                  use 'Index curated list' to fetch the popular ones."
             }
+            PaneKind::Most(_) => {
+                "Market movers (MOST): US stocks with the biggest day gains, biggest day losses and highest volume, from \
+                 Yahoo's predefined screeners (top 100 each). Click a symbol or name for its chart, right-click for more; \
+                 type in the filter box to narrow by symbol or name. Rel Vol is today's volume over the 3-month average. \
+                 Refreshes every minute while visible. Prices are delayed about 15 minutes; pre-market and after-hours \
+                 moves are not included."
+            }
+            PaneKind::Smart(_) => {
+                "Smart money (SMART): what insiders, big institutions and short sellers are doing in the active symbol. \
+                 Insiders: recent Form 4 transactions (buys, sells, size, shares owned after) and a net buy/sell \
+                 summary for the last 90 days. Institutions: the latest 13F-HR of ~18 well-known managers (top 25 \
+                 positions, new/added/reduced/sold vs the previous quarter) and which of them hold the symbol; use \
+                 'Index curated managers' to download them. Short interest: FINRA's twice-monthly short interest \
+                 and days to cover, plus daily short SALE volume (a different measure, labelled as such). 13F data is \
+                 6 weeks to 4½ months old. Sources: SEC EDGAR, FINRA. Follows the active symbol (Sync) or type a ticker."
+            }
             PaneKind::TrFunds(_) => {
                 "Turkish funds (TRF): every investment fund on KAP with a search box; click a code for the fund card \
                  (fees, size, manager), asset allocation and top-10 stock allocation as donut charts, and the buys and \
@@ -349,6 +380,15 @@ impl PaneKind {
                  funds hold a BIST stock; 'Index curated list' downloads popular funds' reports to disk. Data: KAP \
                  'Portföy Dağılım Raporu' PDFs (published in the first days of each month) and fund information forms. \
                  Redemption valör comes from the fund's prospectus on KAP; purchase valör is not stated there (n/a)."
+            }
+            PaneKind::Risk(_) => {
+                "Portfolio risk (RISK, CORR): computed locally from about two years of daily history of your positions, \
+                 weighted by current market value. Overview: annualised volatility, historical and parametric VaR \
+                 (95/99%), expected shortfall, beta, alpha, R\u{b2}, tracking error and Sharpe/Sortino against a benchmark \
+                 (SPY, QQQ, XU100 or RISK <ticker>; the risk-free rate is a fixed 4% assumption), max/current drawdown and \
+                 an equity/drawdown chart. Contribution: each position's share of portfolio volatility. Correlation: \
+                 heatmap of daily returns, click a cell to chart that symbol. Options, cash and instruments without \
+                 price history are listed as not included with the reason; values are not currency-converted."
             }
         }
     }
@@ -362,6 +402,7 @@ impl PaneKind {
             PaneKind::OrderBook(b) => Some(&b.symbol),
             PaneKind::Options(o) => Some(&o.symbol),
             PaneKind::Edgar(e) => Some(&e.symbol),
+            PaneKind::Smart(e) => Some(&e.symbol),
             PaneKind::Earnings(e) => e.symbol.as_deref(),
             _ => None,
         }
@@ -393,6 +434,7 @@ impl PaneKind {
                 | PaneKind::OrderBook(_)
                 | PaneKind::Options(_)
                 | PaneKind::Edgar(_)
+                | PaneKind::Smart(_)
         ) || matches!(self, PaneKind::Earnings(e) if e.symbol.is_some())
     }
 
@@ -450,6 +492,12 @@ impl PaneKind {
             PaneKind::TrFunds(e) => {
                 let (mode, a) = e.settings();
                 PaneSettings::TrFunds { mode: mode.into(), a }
+            }
+            PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
+            PaneKind::Smart(e) => e.settings(),
+            PaneKind::Risk(e) => {
+                let (tab, benchmark, window) = e.settings();
+                PaneSettings::Risk { tab: tab.into(), benchmark, window }
             }
         }
     }
@@ -521,7 +569,14 @@ impl PaneKind {
                 PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd)))
             }
             PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
+            PaneSettings::Risk { tab, benchmark, window } => {
+                PaneKind::Risk(Box::new(risk_view::RiskPane::new(&tab, &benchmark, window)))
+            }
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
+            PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
+            PaneSettings::Smart { symbol, tab } => {
+                PaneKind::Smart(Box::new(smart_view::SmartPane::from_settings(&symbol, &tab)))
+            }
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
@@ -1043,6 +1098,7 @@ impl TerminalApp {
                 self.etf_command(&format!("HELD {ticker}"));
                 self.status = format!("{ticker}: ETFs that hold it");
             }
+            Command::SymbolFunction(s, Function::Smart(arg)) => self.smart_command(&arg, Some(s)),
             Command::SymbolFunction(s, Function::TrFunds(_)) => {
                 let ticker = tr_data::security(&s).ticker;
                 self.trf_held(&ticker);
@@ -1210,6 +1266,9 @@ impl TerminalApp {
             Function::EcoSeries(name) => self.eco_series_command(&name),
             Function::Etf(arg) => self.etf_command(&arg),
             Function::TrFunds(arg) => self.trf_command(&arg),
+            Function::Most(arg) => self.most_command(&arg),
+            Function::Smart(arg) => self.smart_command(&arg, None),
+            Function::Risk(arg) => self.risk_command(&arg),
         }
     }
 
@@ -1426,6 +1485,9 @@ impl TerminalApp {
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
+                Response::Most(resp) => self.on_most(resp),
+                Response::Smart(resp) => self.on_smart(resp),
+                Response::Risk(resp) => self.on_risk(resp),
             }
         }
     }
@@ -1757,6 +1819,8 @@ impl TerminalApp {
         self.eco_periodic(&visible);
         self.etf_periodic(&visible);
         self.trf_periodic(&visible);
+        self.most_periodic(&visible);
+        self.smart_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {
