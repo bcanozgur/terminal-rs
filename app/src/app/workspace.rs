@@ -21,7 +21,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 15] = [
+pub const PANELS: [(&str, &str); 19] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -31,6 +31,10 @@ pub const PANELS: [(&str, &str); 15] = [
     ("Portfolio", "PORT"),
     ("World Markets", "WEI"),
     ("Yield Curve", "GC"),
+    ("Description", "DES"),
+    ("Financials", "FA"),
+    ("Earnings Calendar", "ERN"),
+    ("Economic Calendar", "ECO"),
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
     ("Alerts", "ALRT"),

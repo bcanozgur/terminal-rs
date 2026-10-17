@@ -722,6 +722,20 @@ impl TerminalApp {
                 }
             }
 
+            section(ui, "Research");
+            let focused_code = self.idx(self.focus).map(|i| self.panes[i].kind.code());
+            let items = [
+                (Icon::List, "Description", "DES", Function::Edgar { fa: false }),
+                (Icon::Chart, "Financials", "FA", Function::Edgar { fa: true }),
+                (Icon::Gauge, "Earnings Calendar", "ERN", Function::Earnings),
+                (Icon::Curve, "Economic Calendar", "ECO", Function::Eco(String::new())),
+            ];
+            for (icon, label, code, f) in items {
+                if nav_row(ui, icon, label, Some(code), focused_code == Some(code)).clicked() {
+                    out.push(SidebarCmd::Function(f));
+                }
+            }
+
             section(ui, "Portfolio");
             let focused_view = self.idx(self.focus).and_then(|i| match &self.panes[i].kind {
                 PaneKind::Portfolio(pp) => Some(pp.view),
