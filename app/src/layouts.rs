@@ -129,6 +129,9 @@ pub enum PaneSettings {
         /// FA statement tab (0 income, 1 balance, 2 cash flow, 3 ratios).
         #[serde(default)]
         tab: usize,
+        /// BIST securities: statements in USD rather than TRY.
+        #[serde(default)]
+        usd: bool,
     },
     /// Earnings calendar (`None`) or one ticker's history.
     Earnings {

@@ -2,9 +2,10 @@
 
 use egui::{RichText, Sense, Ui};
 use tr_data::Quote;
+use tr_data::bist::{BistCompany, Currency};
 use tr_data::edgar::{Company, Metric};
 
-use super::fa_view::{fmt_money, fmt_ratio};
+use super::fa_view::{fmt_money, fmt_money_in, fmt_ratio};
 use crate::theme::{self, amber, mono, muted, text, ui_font};
 
 /// Forms listed under recent filings.
@@ -190,6 +191,142 @@ pub(super) fn des(ui: &mut Ui, c: &Company, quote: Option<&Quote>) {
                 .font(ui_font(10.5))
                 .color(muted()),
         );
+    });
+}
+
+/// DES for a Borsa Istanbul company: İş Yatırım card, shareholders and valuation. `price` is
+/// the live price in the statements' currency (TRY, or converted to USD); `quote` is the
+/// terminal's own TRY quote.
+pub(super) fn des_bist(ui: &mut Ui, c: &BistCompany, price: Option<f64>, quote: Option<&Quote>) {
+    let (prefix, unit) = match c.currency {
+        Currency::Try => ("TRY ", "TRY"),
+        Currency::Usd => ("$", "USD"),
+    };
+    let wide = ui.available_width() > 720.0;
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let profile = |ui: &mut Ui| match &c.profile {
+            Ok(p) => {
+                egui::Grid::new(("des-bist-profile", &c.ticker)).num_columns(2).spacing([12.0, 3.0]).show(ui, |ui| {
+                    kv(ui, "Company", &p.name, amber());
+                    kv(ui, "Code", format!("{} (Borsa Istanbul)", c.ticker), text());
+                    if !p.founded.is_empty() {
+                        kv(ui, "Founded", &p.founded, text());
+                    }
+                    if !p.address.is_empty() {
+                        kv(ui, "Address", &p.address, text());
+                    }
+                    if !p.phone.is_empty() {
+                        kv(ui, "Phone", &p.phone, text());
+                    }
+                    if !p.fax.is_empty() {
+                        kv(ui, "Fax", &p.fax, text());
+                    }
+                    if let Some(x) = p.paid_in_capital_mn {
+                        kv(ui, "Paid-in capital", format!("TRY {:.0}M", x), text());
+                    }
+                    if let Some(x) = p.free_float_pct {
+                        kv(ui, "Free float", format!("{x:.1}%"), text());
+                    }
+                    if let Some(x) = p.foreign_pct {
+                        kv(ui, "Foreign ownership", format!("{x:.2}%"), text());
+                    }
+                    kv(
+                        ui,
+                        "Statements",
+                        format!("{} · {unit}", if c.bank { "bank (UFRS)" } else { "industrial (XI_29)" }),
+                        muted(),
+                    );
+                });
+                if !p.activity.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(&p.activity).font(ui_font(11.5)).color(text()));
+                }
+            }
+            Err(e) => {
+                ui.label(RichText::new(format!("Company card: {e}")).font(ui_font(11.5)).color(muted()));
+            }
+        };
+        let stats = |ui: &mut Ui| {
+            let Ok(f) = &c.financials else {
+                if let Err(e) = &c.financials {
+                    ui.label(RichText::new(format!("Financials: {e}")).font(ui_font(11.5)).color(muted()));
+                }
+                return;
+            };
+            let v = f.valuation(price);
+            egui::Grid::new(("des-bist-stats", &c.ticker)).num_columns(2).spacing([12.0, 3.0]).show(ui, |ui| {
+                let or_dash = |x: Option<String>| x.unwrap_or_else(|| "–".into());
+                kv(ui, "Price (TRY)", or_dash(quote.map(|q| format!("{:.2}", q.last))), text());
+                kv(ui, "Market cap", or_dash(v.market_cap.map(|m| fmt_money_in(m, prefix))), amber());
+                let as_of = f.shares_as_of.map(|d| format!(" ({})", d.format("%b %-d %Y"))).unwrap_or_default();
+                kv(ui, "Shares out", or_dash(f.shares_outstanding.map(|s| format!("{:.3}B{as_of}", s / 1e9))), text());
+                kv(ui, "Enterprise value", or_dash(v.enterprise_value.map(|m| fmt_money_in(m, prefix))), text());
+                kv(ui, "P/E (TTM)", or_dash(v.pe.map(|x| format!("{x:.1}x"))), text());
+                kv(ui, "P/S (TTM)", or_dash(v.ps.map(|x| format!("{x:.1}x"))), text());
+                kv(ui, "P/B", or_dash(v.pb.map(|x| format!("{x:.1}x"))), text());
+                let rev = if c.bank { "Operating income (TTM)" } else { "Revenue (TTM)" };
+                kv(ui, rev, or_dash(v.ttm_revenue.map(|m| fmt_money_in(m, prefix))), text());
+                kv(ui, "Net income (TTM)", or_dash(v.ttm_net_income.map(|m| fmt_money_in(m, prefix))), text());
+                if let Some(y) = f.annual.last() {
+                    let margins: &[Metric] = if c.bank {
+                        &[Metric::NetMargin, Metric::Roe]
+                    } else {
+                        &[Metric::GrossMargin, Metric::OperatingMargin, Metric::NetMargin, Metric::Roe]
+                    };
+                    for &m in margins {
+                        kv(
+                            ui,
+                            &format!("{} {}", m.label(), y.label),
+                            or_dash(y.get(m).map(|x| fmt_ratio(m, x))),
+                            text(),
+                        );
+                    }
+                }
+            });
+            if price.is_none() {
+                ui.label(RichText::new("Waiting for a live quote for valuation…").font(ui_font(11.0)).color(muted()));
+            }
+        };
+        if wide {
+            ui.columns(2, |cols| {
+                profile(&mut cols[0]);
+                stats(&mut cols[1]);
+            });
+        } else {
+            profile(ui);
+            ui.add_space(8.0);
+            stats(ui);
+        }
+
+        if let Ok(p) = &c.profile
+            && !p.shareholders.is_empty()
+        {
+            ui.add_space(10.0);
+            ui.label(RichText::new("Shareholders").font(ui_font(12.5)).color(text()));
+            ui.separator();
+            egui::Grid::new(("des-bist-owners", &c.ticker)).num_columns(2).spacing([14.0, 2.0]).striped(true).show(
+                ui,
+                |ui| {
+                    for (name, pct) in &p.shareholders {
+                        ui.label(RichText::new(name).font(ui_font(11.5)).color(text()));
+                        ui.label(RichText::new(format!("{pct:.2}%")).font(mono(11.5)).color(amber()));
+                        ui.end_row();
+                    }
+                },
+            );
+        }
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(
+                "Source: İş Yatırım company card and MaliTablo (public pages). Valuation uses the live price and the \
+                 latest paid-in capital at 1 TL nominal; sector, board and auditor are on KAP (kap.org.tr).",
+            )
+            .font(ui_font(10.5))
+            .color(muted()),
+        );
+        if ui.link(RichText::new("Open KAP disclosures").font(ui_font(11.0))).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://www.kap.org.tr/tr/arama?q={}", c.ticker)));
+        }
     });
 }
 

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use egui::{RichText, Sense, Ui};
 use tr_data::Quote;
+use tr_data::bist::{self, BistCompany, Currency};
 use tr_data::edgar::{self, Company, Statement};
 
 use crate::congress_view::Action;
@@ -25,6 +26,10 @@ pub struct EdgarPane {
     /// `FA` (financial analysis) rather than `DES` (description).
     pub fa: bool,
     pub company: Option<Arc<Company>>,
+    /// Borsa Istanbul securities load from İş Yatırım instead of SEC EDGAR.
+    pub bist: Option<Arc<BistCompany>>,
+    /// FA/DES on a BIST security: statements in USD rather than TRY.
+    pub usd: bool,
     pub error: Option<String>,
     pub loading: bool,
     pub fetched: Option<Instant>,
@@ -46,6 +51,8 @@ impl EdgarPane {
             symbol: symbol.into(),
             fa,
             company: None,
+            bist: None,
+            usd: false,
             error: None,
             loading: false,
             fetched: None,
@@ -71,24 +78,56 @@ impl EdgarPane {
     }
 
     pub fn settings(&self) -> PaneSettings {
-        PaneSettings::Edgar { symbol: self.symbol.clone(), fa: self.fa, quarterly: self.quarterly, tab: self.tab }
+        PaneSettings::Edgar {
+            symbol: self.symbol.clone(),
+            fa: self.fa,
+            quarterly: self.quarterly,
+            tab: self.tab,
+            usd: self.usd,
+        }
     }
 
-    pub fn from_settings(symbol: &str, fa: bool, quarterly: bool, tab: usize) -> Self {
-        Self { quarterly, tab, ..Self::new(symbol, fa) }
+    pub fn from_settings(symbol: &str, fa: bool, quarterly: bool, tab: usize, usd: bool) -> Self {
+        Self { quarterly, tab, usd, ..Self::new(symbol, fa) }
+    }
+
+    /// The Borsa Istanbul code when this is a BIST equity.
+    pub fn bist_code(&self) -> Option<String> {
+        bist::bist_ticker(&self.symbol)
+    }
+
+    pub fn currency(&self) -> Currency {
+        if self.usd { Currency::Usd } else { Currency::Try }
+    }
+
+    /// Switch a BIST pane between TRY and USD statements (refetches; the data layer caches).
+    pub fn set_usd(&mut self, usd: bool) {
+        if self.usd != usd {
+            self.usd = usd;
+            self.bist = None;
+            self.fetched = None;
+            self.error = None;
+        }
     }
 
     /// Follow a new security (link groups), keeping the view options.
     pub fn set_symbol(&mut self, symbol: &str) {
         if self.symbol != symbol {
-            *self = Self { quarterly: self.quarterly, tab: self.tab, ..Self::new(symbol, self.fa) };
+            *self = Self { quarterly: self.quarterly, tab: self.tab, usd: self.usd, ..Self::new(symbol, self.fa) };
         }
     }
 
     /// Whether a (re)fetch is due. Securities EDGAR cannot cover, and a missing User-Agent,
     /// are reported in the pane without a request.
     pub fn due(&self, ua_setting: &str) -> bool {
-        if self.loading || self.symbol.is_empty() || edgar::edgar_ticker(&self.symbol).is_none() {
+        if self.loading || self.symbol.is_empty() {
+            return false;
+        }
+        if self.bist_code().is_some() {
+            let every = if self.error.is_some() { RETRY } else { REFRESH };
+            return self.fetched.is_none_or(|t| t.elapsed() > every);
+        }
+        if edgar::edgar_ticker(&self.symbol).is_none() {
             return false;
         }
         if !edgar::user_agent(ua_setting).is_some_and(|u| edgar::valid_user_agent(&u)) {
@@ -100,7 +139,8 @@ impl EdgarPane {
 
     /// Whether to request a fresh quote (every 30 s while shown).
     pub fn quote_due(&self) -> bool {
-        edgar::edgar_ticker(&self.symbol).is_some() && self.quoted.is_none_or(|t| t.elapsed() > Duration::from_secs(30))
+        (edgar::edgar_ticker(&self.symbol).is_some() || self.bist_code().is_some())
+            && self.quoted.is_none_or(|t| t.elapsed() > Duration::from_secs(30))
     }
 
     pub fn set_result(&mut self, company: Result<Arc<Company>, String>) {
@@ -108,6 +148,22 @@ impl EdgarPane {
         match company {
             Ok(c) => {
                 self.company = Some(c);
+                self.error = None;
+            }
+            Err(e) => self.error = Some(e),
+        }
+    }
+
+    pub fn set_bist_result(&mut self, usd: bool, company: Result<Arc<BistCompany>, String>) {
+        self.loading = false;
+        if usd != self.usd {
+            // The currency was toggled while this was in flight: fetch again.
+            self.fetched = None;
+            return;
+        }
+        match company {
+            Ok(c) => {
+                self.bist = Some(c);
                 self.error = None;
             }
             Err(e) => self.error = Some(e),
@@ -135,15 +191,24 @@ pub fn edgar_pane(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote
     header(ui, p, quotes, &mut out);
     ui.add_space(2.0);
     if p.symbol.is_empty() {
-        note(ui, "Type a US ticker followed by DES or FA (e.g. AAPL DES), or load a security into a linked pane.");
+        note(
+            ui,
+            "Type a US or BIST ticker followed by DES or FA (e.g. AAPL DES, THYAO FA), or load a security into a \
+             linked pane.",
+        );
+        return out;
+    }
+    if p.bist_code().is_some() {
+        bist_body(ui, p, quotes, &mut out);
         return out;
     }
     if edgar::edgar_ticker(&p.symbol).is_none() {
         note(
             ui,
             &format!(
-                "Not available: {} is not a US-listed equity. DES and FA use SEC EDGAR filings, which cover US \
-                 companies only (no indices, currencies, crypto, rates, futures or foreign listings).",
+                "Not available: {} is neither a US-listed nor a Borsa Istanbul equity. DES and FA use SEC EDGAR \
+                 filings (US companies) and İş Yatırım financials (Borsa Istanbul); indices, currencies, crypto, \
+                 rates, futures and other foreign listings are not covered.",
                 tr_data::security(&p.symbol).key()
             ),
         );
@@ -187,6 +252,38 @@ pub fn edgar_pane(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote
     out
 }
 
+/// DES / FA for a Borsa Istanbul security.
+fn bist_body(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote>, out: &mut EdgarOut) {
+    if let Some(e) = &p.error {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("İş Yatırım: {e}")).font(ui_font(12.0)).color(theme::down()));
+            if ui.small_button("Retry").clicked() {
+                out.refetch = true;
+                p.fetched = None;
+            }
+        });
+    }
+    let Some(c) = p.bist.clone() else {
+        if p.error.is_none() {
+            note(ui, "Loading Borsa Istanbul financials… (the first load of a company takes several seconds)");
+        }
+        return;
+    };
+    // Live TRY price; the USD view converts at the page's USD/TRY rate.
+    let quote = p.price(quotes);
+    let fx = c.profile.as_ref().ok().and_then(|pr| pr.usd_try);
+    let price = match (quote.map(|q| q.last), c.currency) {
+        (Some(x), bist::Currency::Try) => Some(x),
+        (Some(x), bist::Currency::Usd) => fx.map(|r| x / r),
+        (None, _) => None,
+    };
+    if p.fa {
+        super::fa_view::fa_bist(ui, p, &c, price);
+    } else {
+        super::des_view::des_bist(ui, &c, price, quote);
+    }
+}
+
 fn note(ui: &mut Ui, msg: &str) {
     ui.label(RichText::new(msg).font(ui_font(12.0)).color(muted()));
 }
@@ -204,6 +301,8 @@ fn header(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote>, out: 
         }
         if let Some(c) = &p.company {
             ui.label(RichText::new(&c.profile.name).font(ui_font(12.5)).color(text()));
+        } else if let Some(Ok(pr)) = p.bist.as_ref().map(|c| &c.profile) {
+            ui.label(RichText::new(&pr.name).font(ui_font(12.5)).color(text()));
         }
         if let Some(q) = p.price(quotes) {
             ui.label(RichText::new(format!("{:.2}", q.last)).font(mono(13.0)).color(text()));
@@ -218,7 +317,13 @@ fn header(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote>, out: 
         if let Some(i) = widgets::segmented(ui, ("edgar-view", &p.symbol), &["DES", "FA"], sel, 20.0) {
             p.fa = i == 1;
         }
-        if p.company.is_some() && ui.small_button("Refresh").clicked() {
+        if p.bist_code().is_some() {
+            let sel = Some(usize::from(p.usd));
+            if let Some(i) = widgets::segmented(ui, ("edgar-ccy", &p.symbol), &["TRY", "USD"], sel, 20.0) {
+                p.set_usd(i == 1);
+            }
+        }
+        if (p.company.is_some() || p.bist.is_some()) && ui.small_button("Refresh").clicked() {
             out.refetch = true;
         }
     });
@@ -231,10 +336,10 @@ fn symbol_box(ui: &mut Ui, p: &mut EdgarPane, ticker: &str) {
         egui::TextEdit::singleline(&mut buf)
             .font(mono(13.0))
             .text_color(amber())
-            .hint_text("AAPL")
+            .hint_text("AAPL / THYAO")
             .desired_width(theme::dp(72.0)),
     );
-    let r = r.on_hover_text("Type a US ticker and press Enter");
+    let r = r.on_hover_text("Type a US or BIST ticker and press Enter");
     if r.lost_focus() {
         let entered = ui.input(|i| i.key_pressed(egui::Key::Enter));
         let typed = buf.trim().to_ascii_uppercase();
@@ -302,8 +407,8 @@ mod tests {
         p.tab = 2;
         let json = serde_json::to_string(&p.settings()).unwrap();
         let back: PaneSettings = serde_json::from_str(&json).unwrap();
-        let PaneSettings::Edgar { symbol, fa, quarterly, tab } = back else { panic!("{json}") };
-        let q = EdgarPane::from_settings(&symbol, fa, quarterly, tab);
+        let PaneSettings::Edgar { symbol, fa, quarterly, tab, usd } = back else { panic!("{json}") };
+        let q = EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd);
         assert_eq!(
             (q.symbol.as_str(), q.fa, q.quarterly, q.statement()),
             ("AAPL US Equity", true, true, Statement::CashFlow)

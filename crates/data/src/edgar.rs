@@ -751,7 +751,7 @@ fn ratio(a: Option<f64>, b: Option<f64>) -> Option<f64> {
 
 /// Fill derived lines and ratios. `years` is the period length in years (1 or 0.25), used
 /// to annualise return on equity.
-fn derive(v: &mut BTreeMap<Metric, f64>, years: f64) {
+pub(crate) fn derive(v: &mut BTreeMap<Metric, f64>, years: f64) {
     use Metric::*;
     let g = |v: &BTreeMap<Metric, f64>, m| v.get(&m).copied();
     if !v.contains_key(&GrossProfit)

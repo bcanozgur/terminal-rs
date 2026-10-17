@@ -152,6 +152,12 @@ pub enum Request {
         symbol: String,
         user_agent: String,
     },
+    /// Borsa Istanbul profile and statements from İş Yatırım for `DES` / `FA`.
+    Bist {
+        pane: PaneId,
+        symbol: String,
+        usd: bool,
+    },
     /// Earnings calendar and history (see `earnings_worker`).
     Earnings(crate::earnings_worker::EarnReq),
     /// Economic calendar week or release history (`ECO`, `ECOF`).
@@ -326,6 +332,12 @@ pub enum Response {
         pane: PaneId,
         symbol: String,
         company: Result<Arc<tr_data::edgar::Company>, String>,
+    },
+    Bist {
+        pane: PaneId,
+        symbol: String,
+        usd: bool,
+        company: Result<Arc<tr_data::bist::BistCompany>, String>,
     },
     Earnings(crate::earnings_worker::EarnResp),
     Eco {
@@ -945,6 +957,12 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             let dir = tr_data::edgar::cache_dir(&data_dir());
             let company = tr_data::edgar::company(&dir, &symbol, &ua).await.map(Arc::new).map_err(|e| format!("{e:#}"));
             s.send(Response::Edgar { pane, symbol, company });
+        }
+        Request::Bist { pane, symbol, usd } => {
+            let dir = tr_data::bist::cache_dir(&data_dir());
+            let ccy = if usd { tr_data::bist::Currency::Usd } else { tr_data::bist::Currency::Try };
+            let company = tr_data::bist::company(&dir, &symbol, ccy).await.map(Arc::new).map_err(|e| format!("{e:#}"));
+            s.send(Response::Bist { pane, symbol, usd, company });
         }
         Request::Earnings(r) => {
             crate::earnings_worker::handle(r, &s.provider, &|r| s.send(Response::Earnings(r))).await
