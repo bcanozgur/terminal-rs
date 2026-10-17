@@ -9,6 +9,7 @@ use tr_core::{AssetClass, Security};
 use tr_data::{Quote, SearchHit, YieldCurve, YieldCurves};
 
 use crate::congress_view::Action;
+use crate::quote_tag;
 use crate::theme::{self, amber, amber_dim, mono, muted, text, ui_font};
 
 /// Every market key shown on the overview panel.
@@ -78,7 +79,13 @@ fn row(
     let p = ui.painter_at(rect);
     let y = rect.center().y;
     let x = rect.left() + 2.0;
-    p.text(pos2(x, y), Align2::LEFT_CENTER, l.ticker, mono(12.0), amber());
+    let ticker = p.text(pos2(x, y), Align2::LEFT_CENTER, l.ticker, mono(12.0), amber());
+    let now = quote_tag::now();
+    let tip = q.and_then(|q| {
+        let c = quote_tag::marker(q, now)?;
+        p.circle_filled(pos2(ticker.right() + 6.0, y), 2.5, c);
+        Some(quote_tag::tooltip(q, now))
+    });
     let right = rect.right() - 2.0;
     // Narrow columns drop the net change, then the sparkline, then the name.
     let compact = width < 330.0;
@@ -110,6 +117,10 @@ fn row(
         let clip = Rect::from_min_max(pos2(name_left, rect.top()), pos2(name_right, rect.bottom()));
         p.with_clip_rect(clip).text(pos2(name_left, y), Align2::LEFT_CENTER, l.name, ui_font(11.5), muted());
     }
+    let resp = match tip {
+        Some(t) => resp.on_hover_text(t),
+        None => resp,
+    };
     (rect, resp)
 }
 
@@ -397,8 +408,17 @@ mod tests {
 
     #[test]
     fn change_formatting() {
-        let q =
-            Quote { symbol: "US10Y Govt".into(), last: 4.25, prev_close: 4.22, ts: 0, spark: vec![], extended: None };
+        let q = Quote {
+            symbol: "US10Y Govt".into(),
+            last: 4.25,
+            prev_close: 4.22,
+            ts: 0,
+            spark: vec![],
+            extended: None,
+            source: Default::default(),
+            traded: None,
+            delay_min: None,
+        };
         assert_eq!(change_text(&Security::parse("US10Y Govt").unwrap(), &q), "+3.0bp");
         let q = Quote {
             symbol: "EURUSD Curncy".into(),
@@ -407,6 +427,9 @@ mod tests {
             ts: 0,
             spark: vec![],
             extended: None,
+            source: Default::default(),
+            traded: None,
+            delay_min: None,
         };
         assert_eq!(change_text(&Security::parse("EURUSD Curncy").unwrap(), &q), "+0.0012");
     }

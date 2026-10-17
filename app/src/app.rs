@@ -242,7 +242,9 @@ impl PaneKind {
         match self {
             PaneKind::Chart(_) => {
                 "Chart (GP): price bars with studies. Pick the interval and style in the header, right-click \
-                 for studies, markers and drawing tools. Type a ticker to load it."
+                 for studies, markers and drawing tools. Type a ticker to load it. The tag after the change names the \
+                 price source and its delay (Binance · live, Yahoo · 15m delayed); it turns amber when an open \
+                 market has gone quiet (stale), grey when the market is closed, and red for SAMPLE DATA."
             }
             PaneKind::Feed { .. } => {
                 "Congress feed (CONG): stock trades disclosed by members of the US Congress (Senate eFD and \
@@ -258,12 +260,18 @@ impl PaneKind {
                  and tickers. Add one with e.g. AAPL ALRT > 250 or from a chart's right-click menu."
             }
             PaneKind::Watchlist => {
-                "Watchlist (WL): your securities with live quotes. WL ADD <ticker> to add; drag to reorder."
+                "Watchlist (WL): your securities with quotes. WL ADD <ticker> to add; drag to reorder. A dot beside a \
+                 ticker marks delayed or end-of-day (grey), stale (amber) or sample (red) prices; hover for the \
+                 source, delay and last update."
             }
-            PaneKind::List(_) => "Security list (LST): a ready-made group such as BIST 30, sorted by volume.",
+            PaneKind::List(_) => {
+                "Security list (LST): a ready-made group such as BIST 30, sorted by volume. A dot beside a ticker marks \
+                 delayed, stale (amber) or sample (red) prices; hover for the source and delay."
+            }
             PaneKind::Help => "Commands and hotkeys (HELP): every function code and keyboard shortcut.",
             PaneKind::Wei => {
-                "World equity indices (WEI): major indices by region with the day's change. Click one to chart it."
+                "World equity indices (WEI): major indices by region with the day's change. Click one to chart it. \
+                 A dot beside a ticker marks delayed, stale (amber) or sample (red) prices; hover for details."
             }
             PaneKind::Curve => "Yield curve (GC): US Treasury yields by maturity: today, a month ago and a year ago.",
             PaneKind::Search { .. } => {
@@ -278,7 +286,8 @@ impl PaneKind {
             }
             PaneKind::Portfolio(_) => {
                 "Portfolio (PORT): positions, orders, accounts and activity of the demo or connected account, \
-                 with live P&L including pre- and after-market prices."
+                 with live P&L including pre- and after-market prices. Prices are the terminal's quotes (Yahoo is \
+                 delayed about 15 minutes); the status bar warns when any shown price is sample data."
             }
             PaneKind::Settings => "Settings (PDF): appearance, panels, data keys, trading and layouts.",
             PaneKind::Edgar(e) if e.fa => {
@@ -290,8 +299,8 @@ impl PaneKind {
             PaneKind::Edgar(_) => {
                 "Description (DES): company profile, key figures and valuation at the live price. US companies \
                  from SEC EDGAR (business, sector, fiscal year, recent filings); Borsa Istanbul companies from \
-                 İş Yatırım (address, capital, free float, shareholders). Type a ticker in the box and press \
-                 Enter."
+                 İş Yatırım (address, capital, free float, shareholders). The price tag shows its source and delay. \
+                 Type a ticker in the box and press Enter."
             }
             PaneKind::Earnings(e) if e.symbol.is_some() => {
                 "Earnings history (TICKER ERN): past and next report dates with EPS estimate vs actual, the \
@@ -1604,14 +1613,27 @@ impl TerminalApp {
         let visible = self.visible_panes();
         let shown = |f: &dyn Fn(&PaneKind) -> bool| visible.iter().any(|&i| f(&self.panes[i].kind));
         let visible_wl = self.sidebar_open || shown(&|k| matches!(k, PaneKind::Watchlist | PaneKind::List(_)));
-        if visible_wl && self.last_quotes.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
-            let mut keys = self.watchlist.clone();
-            let list_shown = |name: &str| shown(&|k| matches!(k, PaneKind::List(n) if n == name));
-            for g in self.groups.iter().filter(|g| (g.open && self.sidebar_open) || list_shown(&g.name)) {
-                keys.extend(g.keys.iter().filter(|k| !keys.contains(k)).cloned().collect::<Vec<_>>());
+        if self.last_quotes.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
+            let mut keys = Vec::new();
+            if visible_wl {
+                keys = self.watchlist.clone();
+                let list_shown = |name: &str| shown(&|k| matches!(k, PaneKind::List(n) if n == name));
+                for g in self.groups.iter().filter(|g| (g.open && self.sidebar_open) || list_shown(&g.name)) {
+                    keys.extend(g.keys.iter().filter(|k| !keys.contains(k)).cloned().collect::<Vec<_>>());
+                }
             }
-            self.worker.send(Request::Quotes(keys));
-            self.last_quotes = Some(Instant::now());
+            // Charted securities get quotes too, for the source and delay tag in the legend.
+            for &i in &visible {
+                if let PaneKind::Chart(c) = &self.panes[i].kind
+                    && !keys.contains(&c.symbol)
+                {
+                    keys.push(c.symbol.clone());
+                }
+            }
+            if !keys.is_empty() {
+                self.worker.send(Request::Quotes(keys));
+                self.last_quotes = Some(Instant::now());
+            }
         }
         if shown(&|k| matches!(k, PaneKind::Wei)) && self.last_wei.is_none_or(|t| t.elapsed() > Duration::from_secs(10))
         {

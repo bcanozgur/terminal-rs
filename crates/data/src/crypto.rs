@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tr_core::{Bar, Security, Timeframe, catalog};
 
-use crate::{LiveFeed, Quote};
+use crate::{LiveFeed, Quote, QuoteSource};
 
 const BINANCE_REST: [&str; 2] = ["https://data-api.binance.vision", "https://api.binance.com"];
 const BINANCE_WS: [&str; 2] = ["wss://data-stream.binance.vision/ws", "wss://stream.binance.com:9443/ws"];
@@ -336,11 +336,11 @@ impl CryptoProvider {
         for (key, sec) in secs {
             let sym = binance_symbol(sec);
             let hit = rows.as_ref().and_then(|r| r.iter().find(|(s, _, _)| *s == sym).map(|(_, l, o)| (*l, *o)));
-            let (last, prev) = match hit {
-                Some(x) => x,
+            let (source, (last, prev)) = match hit {
+                Some(x) => (QuoteSource::Binance, x),
                 None => match self.get(&format!("{COINBASE_REST}/products/{}/stats", coinbase_product(sec)), &[]).await
                 {
-                    Ok(t) => parse_coinbase_stats(&t)?,
+                    Ok(t) => (QuoteSource::Coinbase, parse_coinbase_stats(&t)?),
                     Err(_) => continue,
                 },
             };
@@ -350,7 +350,17 @@ impl CryptoProvider {
                 .await
                 .map(|b| b.iter().map(|x| x.close).collect())
                 .unwrap_or_default();
-            out.push(Quote { symbol: key.clone(), last, prev_close: prev, ts: now, spark, extended: None });
+            out.push(Quote {
+                symbol: key.clone(),
+                last,
+                prev_close: prev,
+                ts: now,
+                spark,
+                extended: None,
+                source,
+                traded: Some(now),
+                delay_min: None,
+            });
         }
         if out.is_empty() && !secs.is_empty() {
             bail!("no crypto quotes available");

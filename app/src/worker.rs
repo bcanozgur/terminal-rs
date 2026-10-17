@@ -1247,6 +1247,9 @@ mod tests {
                 ts: 0,
                 spark: vec![],
                 extended: None,
+                source: Default::default(),
+                traded: None,
+                delay_min: None,
             }],
         );
         let fired: Vec<_> = rx

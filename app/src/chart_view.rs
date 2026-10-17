@@ -16,9 +16,11 @@ use tr_chart::scene::{self, ChartType, Overlay, PricePane, SeriesGpu};
 use tr_chart::viewport::{PriceScale, Viewport};
 use tr_congress::{Trade, TxType};
 use tr_core::{AssetClass, Bar, Security, Timeframe};
+use tr_data::Timeliness;
 
 use crate::command::{IndicatorSpec, Range};
 use crate::congress_view::Action;
+use crate::quote_tag;
 use crate::studies::{self, BuiltStudy, StudyConfig};
 use crate::theme::{self, amber, amber_dim, mono, muted, text, ui_font};
 use crate::widgets;
@@ -98,6 +100,8 @@ pub struct ChartState {
     pub actions: Vec<Action>,
     /// False while a pane is being dragged over the workspace: no crosshair or hover cards.
     pub hover_enabled: bool,
+    /// Latest quote for the symbol (set by the app each frame): source, delay, staleness.
+    pub quote: Option<tr_data::Quote>,
     /// The workspace drew this chart's controls in the pane's tab strip, so skip the
     /// header row and give the plot the space.
     pub controls_in_strip: bool,
@@ -152,6 +156,7 @@ impl ChartState {
             last_indicator_req: None,
             actions: Vec::new(),
             hover_enabled: true,
+            quote: None,
             controls_in_strip: false,
         }
     }
@@ -596,12 +601,18 @@ impl ChartState {
                 clicked |= self.watch_button(&mut hui);
             }
         }
-        if self.last_live.is_some_and(|t| t.elapsed().as_secs() < 5) {
+        // The badge only says the chart just refreshed; delayed data is not live, so it says "SYNC".
+        let badge = match self.quote.as_ref().map(|q| q.timeliness()) {
+            Some(Timeliness::Simulated) => None,
+            Some(Timeliness::Delayed(_) | Timeliness::EndOfDay) => Some(("SYNC", muted())),
+            _ => Some(("LIVE", theme::up())),
+        };
+        if let Some((label, color)) = badge.filter(|_| self.last_live.is_some_and(|t| t.elapsed().as_secs() < 5)) {
             // Pulsing live dot in the plot's top-right corner (clear of the price axis labels).
             let pulse = 0.6 + 0.4 * ((ui.input(|i| i.time) * 3.0).sin() as f32).abs();
             let c = pos2(rect.right() - AXIS_W + 12.0, header.bottom() + 10.0);
-            painter.circle_filled(c, 3.0, theme::up().gamma_multiply(pulse));
-            painter.text(c + vec2(7.0, 0.0), Align2::LEFT_CENTER, "LIVE", ui_font(10.0), theme::up());
+            painter.circle_filled(c, 3.0, color.gamma_multiply(pulse));
+            painter.text(c + vec2(7.0, 0.0), Align2::LEFT_CENTER, label, ui_font(10.0), color);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
         }
 
@@ -1251,8 +1262,28 @@ impl ChartState {
         put(format!("{:+.dec$} ({:+.2}%)", chg, if prev != 0.0 { chg / prev * 100.0 } else { 0.0 }), col, &mut x);
         put(format!("Vol {}", scale::format_volume(b.volume)), muted(), &mut x);
 
-        // Overlay indicator values, one per line.
+        // Source and freshness on a line of its own, kept clear of the Buy/Sell pills: the full
+        // text when it fits, the short form otherwise.
         let mut ly = y + 16.0;
+        if let Some(q) = &self.quote {
+            let now = quote_tag::now();
+            if let Some(t) = quote_tag::tag(q, now) {
+                let room = price_rect.width() - 12.0 - 110.0;
+                let galley = [t.text, t.short].into_iter().find_map(|s| {
+                    let g = p.layout_no_wrap(s, mono(11.0), t.color);
+                    (g.size().x <= room).then_some(g)
+                });
+                if let Some(g) = galley {
+                    let r = Rect::from_min_size(pos2(price_rect.left() + 6.0, ly), g.size());
+                    p.galley(r.min, g, t.color);
+                    ui.interact(r, ui.id().with((self.id, "quote-tag")), Sense::hover())
+                        .on_hover_text(quote_tag::tooltip(q, now));
+                    ly += 16.0;
+                }
+            }
+        }
+
+        // Overlay indicator values, one per line.
         let value_at = |l: &LineRef| l.pyramid.data.get(i).map(|p| p[1] as f64).filter(|v| v.is_finite());
         for bi in self.built.iter().filter(|b| !b.spec.is_pane()) {
             let vals: Vec<String> =

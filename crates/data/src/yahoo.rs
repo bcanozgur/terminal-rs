@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tr_core::{AssetClass, Bar, Security, Timeframe, catalog};
 
-use crate::{Extended, ExtendedQuote, MarketData, Quote, SearchHit, Session, TradingSession};
+use crate::{Extended, ExtendedQuote, MarketData, Quote, QuoteSource, SearchHit, Session, TradingSession};
 
 const BASE: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
 
@@ -516,7 +516,17 @@ pub fn parse_spark(json: &str) -> Result<Vec<Quote>> {
         let prev =
             if closes.len() >= 2 { closes[closes.len() - 2] } else { d["chartPreviousClose"].as_f64().unwrap_or(last) };
         let ts = d["timestamp"].as_array().and_then(|a| a.last()).and_then(|t| t.as_i64()).unwrap_or_default();
-        out.push(Quote { symbol: sym.clone(), last, prev_close: prev, ts, spark: closes, extended: None });
+        out.push(Quote {
+            symbol: sym.clone(),
+            last,
+            prev_close: prev,
+            ts,
+            spark: closes,
+            extended: None,
+            source: QuoteSource::Yahoo,
+            traded: None,
+            delay_min: None,
+        });
     }
     Ok(out)
 }
@@ -527,15 +537,23 @@ impl YahooProvider {
     /// The latest pre-market or after-hours trade for each Yahoo symbol that has one (US
     /// listings only; the spark endpoint carries regular-session prices only).
     pub async fn extended(&self, symbols: &[String]) -> Result<Vec<(String, Extended)>> {
-        let mut out = Vec::new();
-        for chunk in symbols.chunks(50) {
-            out.extend(self.extended_chunk(chunk).await?);
-        }
-        Ok(out)
+        Ok(self.extended_and_times(symbols).await?.0)
     }
 
-    async fn extended_chunk(&self, symbols: &[String]) -> Result<Vec<(String, Extended)>> {
-        let fields = "marketState,regularMarketPrice,regularMarketTime,preMarketPrice,preMarketChange,\
+    /// Extended-hours trades plus each symbol's last regular-session trade time, from the
+    /// same request (the spark endpoint only dates its daily bars).
+    pub async fn extended_and_times(&self, symbols: &[String]) -> Result<(Vec<(String, Extended)>, Vec<QuoteMeta>)> {
+        let (mut ext, mut times) = (Vec::new(), Vec::new());
+        for chunk in symbols.chunks(50) {
+            let (e, t) = self.extended_chunk(chunk).await?;
+            ext.extend(e);
+            times.extend(t);
+        }
+        Ok((ext, times))
+    }
+
+    async fn extended_chunk(&self, symbols: &[String]) -> Result<(Vec<(String, Extended)>, Vec<QuoteMeta>)> {
+        let fields = "marketState,regularMarketPrice,regularMarketTime,exchangeDataDelayedBy,preMarketPrice,preMarketChange,\
                       preMarketChangePercent,preMarketTime,postMarketPrice,postMarketChange,\
                       postMarketChangePercent,postMarketTime";
         let mut last_err = None;
@@ -552,10 +570,32 @@ impl YahooProvider {
             if !status.is_success() {
                 bail!("yahoo quote: HTTP {status}");
             }
-            return parse_extended(&body, chrono::Utc::now().timestamp());
+            return Ok((parse_extended(&body, chrono::Utc::now().timestamp())?, parse_quote_meta(&body)?));
         }
         Err(last_err.unwrap_or_else(|| anyhow!("yahoo quote failed")))
     }
+}
+
+/// Per-symbol facts from `/v7/finance/quote`: last regular-session trade time and the
+/// exchange's feed delay in minutes (`exchangeDataDelayedBy`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuoteMeta {
+    pub symbol: String,
+    pub traded: Option<i64>,
+    pub delay_min: Option<u32>,
+}
+
+pub fn parse_quote_meta(json: &str) -> Result<Vec<QuoteMeta>> {
+    let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo quote")?;
+    let rows = v["quoteResponse"]["result"].as_array().ok_or_else(|| anyhow!("unexpected quote payload"))?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let traded = r["regularMarketTime"].as_i64().filter(|t| *t > 0);
+            let delay_min = r["exchangeDataDelayedBy"].as_u64().and_then(|d| u32::try_from(d).ok());
+            Some(QuoteMeta { symbol: r["symbol"].as_str()?.to_string(), traded, delay_min })
+        })
+        .collect())
 }
 
 /// Parse `/v7/finance/quote` into extended-hours trades. Outside regular hours the newer of
@@ -810,6 +850,17 @@ mod tests {
         assert_eq!(hits[0].key, "NVDA US Equity");
         assert!(hits.iter().any(|h| h.class == AssetClass::Etf));
         assert!(hits.iter().any(|h| h.class == AssetClass::Cmdty));
+    }
+
+    #[test]
+    fn trade_times_and_delays_come_from_the_quote_payload() {
+        let json = r#"{"quoteResponse":{"result":[{"symbol":"AAPL","regularMarketTime":1791000000,"exchangeDataDelayedBy":15},
+            {"symbol":"EURUSD=X","regularMarketTime":0,"exchangeDataDelayedBy":0},{"symbol":"X"}]}}"#;
+        let m = |symbol: &str, traded, delay_min| QuoteMeta { symbol: symbol.into(), traded, delay_min };
+        assert_eq!(
+            parse_quote_meta(json).unwrap(),
+            vec![m("AAPL", Some(1_791_000_000), Some(15)), m("EURUSD=X", None, Some(0)), m("X", None, None)]
+        );
     }
 
     #[test]

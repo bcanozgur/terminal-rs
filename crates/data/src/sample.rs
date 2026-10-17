@@ -48,6 +48,10 @@ impl MarketData for SampleProvider {
         "sample"
     }
 
+    fn quote_source(&self) -> crate::QuoteSource {
+        crate::QuoteSource::Sample
+    }
+
     async fn history(&self, symbol: &str, tf: Timeframe, end: Option<i64>, limit: usize) -> Result<Vec<Bar>> {
         Ok(crate::clip(self.bars(symbol, tf), end, limit))
     }

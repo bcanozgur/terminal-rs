@@ -9,7 +9,7 @@ use chrono::{Datelike, NaiveDate};
 use tokio::sync::Mutex;
 use tr_core::{Bar, Security, Timeframe, catalog};
 
-use crate::{CurvePoint, YieldCurve, YieldCurves, pick_curves};
+use crate::{CurvePoint, QuoteSource, YieldCurve, YieldCurves, pick_curves};
 
 const TREASURY: &str =
     "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv";
@@ -207,28 +207,44 @@ impl TreasuryProvider {
         curves_from_rows(&rows).ok_or_else(|| anyhow!("empty Treasury curve"))
     }
 
-    /// Latest and previous close for each requested tenor.
+    /// Latest and previous close for each requested tenor; FRED stands in per tenor when
+    /// Treasury.gov cannot be read.
     pub async fn quotes(&self, secs: &[(String, Security)]) -> Result<Vec<crate::Quote>> {
         let y = chrono::Utc::now().year();
-        let rows = self.rows(y - 1, y).await?;
-        Ok(secs
-            .iter()
-            .filter_map(|(key, sec)| {
-                let col = catalog::by_security(sec)?.treasury?;
-                let bars = column_bars(&rows, col);
-                let last = bars.last()?;
-                let prev = bars.get(bars.len().checked_sub(2)?).map(|b| b.close).unwrap_or(last.close);
-                let spark = bars.iter().rev().take(8).rev().map(|b| b.close).collect();
-                Some(crate::Quote {
-                    symbol: key.clone(),
-                    last: last.close,
-                    prev_close: prev,
-                    ts: last.ts,
-                    spark,
-                    extended: None,
-                })
-            })
-            .collect())
+        let rows = self.rows(y - 1, y).await;
+        let mut out = Vec::new();
+        for (key, sec) in secs {
+            let Some(listing) = catalog::by_security(sec) else { continue };
+            let (bars, source) = match (&rows, listing.treasury, listing.fred) {
+                (Ok(rows), Some(col), _) => (column_bars(rows, col), QuoteSource::Treasury),
+                (_, _, Some(id)) => match self.fred(id, y - 1).await {
+                    Ok(b) => (b, QuoteSource::Fred),
+                    Err(e) => {
+                        tracing::debug!("FRED {id}: {e:#}");
+                        continue;
+                    }
+                },
+                _ => continue,
+            };
+            let Some(last) = bars.last() else { continue };
+            let prev = bars.len().checked_sub(2).map(|i| bars[i].close).unwrap_or(last.close);
+            let spark = bars.iter().rev().take(8).rev().map(|b| b.close).collect();
+            out.push(crate::Quote {
+                symbol: key.clone(),
+                last: last.close,
+                prev_close: prev,
+                ts: last.ts,
+                spark,
+                extended: None,
+                source,
+                traded: None,
+                delay_min: None,
+            });
+        }
+        match (out.is_empty(), rows) {
+            (true, Err(e)) => Err(e),
+            _ => Ok(out),
+        }
     }
 }
 

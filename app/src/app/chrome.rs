@@ -15,6 +15,7 @@ use crate::command::{self, Function};
 use crate::congress_view::Action;
 use crate::layout::Layout;
 use crate::markets_view;
+use crate::quote_tag;
 use crate::theme::{self, amber, mono, muted, text, ui_font};
 use crate::widgets::{self, Icon};
 
@@ -108,7 +109,8 @@ impl TerminalApp {
         p.rect_filled(chip, 9.0, theme::control());
         p.circle_filled(pos2(chip.left() + 8.0, cy), 3.0, if live { theme::up() } else { amber() });
         p.galley(pos2(chip.left() + 14.0, cy - chip_text.size().y / 2.0), chip_text, muted());
-        ui.interact(chip, Id::new("source-chip"), Sense::hover()).on_hover_text(self.provider_label());
+        ui.interact(chip, Id::new("source-chip"), Sense::hover())
+            .on_hover_text(self.provider_summary(&self.visible_quote_keys()));
         x = chip.right() + 8.0;
 
         // Which account trades: DEMO (paper) or LIVE (real money, in red). Click to switch.
@@ -542,6 +544,7 @@ impl TerminalApp {
             let focused = self.idx(self.focus).map(|i| std::mem::discriminant(&self.panes[i].kind));
             let is_focused = |k: &PaneKind| focused == Some(std::mem::discriminant(k));
 
+            let now = quote_tag::now();
             section(ui, "Watchlist");
             let mut remove = None;
             let mut reorder = widgets::Reorder::new(egui::Id::new("wl-sidebar-reorder"));
@@ -551,8 +554,14 @@ impl TerminalApp {
                 let r = resp.rect;
                 reorder.row(r, &resp);
                 let pt = ui.painter();
-                pt.text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.0), text());
+                let name =
+                    pt.text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.0), text());
+                let mut note = String::new();
                 if let Some(q) = self.quotes.get(key) {
+                    if let Some(c) = quote_tag::marker(q, now) {
+                        pt.circle_filled(pos2(name.right() + 6.0, r.center().y), 2.5, c);
+                        note = format!("\n{}", quote_tag::tooltip(q, now));
+                    }
                     let up = q.change() >= 0.0;
                     let c = if up { theme::up() } else { theme::down() };
                     let pct = format!("{:+.2}%", q.change_pct());
@@ -579,7 +588,7 @@ impl TerminalApp {
                 if resp.clicked() {
                     out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
                 }
-                let resp = resp.on_hover_text(format!("{} — {}", sec.key(), sec.name().unwrap_or(&sec.ticker)));
+                let resp = resp.on_hover_text(format!("{} — {}{note}", sec.key(), sec.name().unwrap_or(&sec.ticker)));
                 resp.context_menu(|ui| {
                     if ui.button("Open Chart").clicked() {
                         out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
@@ -658,8 +667,19 @@ impl TerminalApp {
                     let resp = row_frame(ui, false);
                     let r = resp.rect;
                     let pt = ui.painter();
-                    pt.text(pos2(r.left() + 22.0, r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.0), text());
+                    let name = pt.text(
+                        pos2(r.left() + 22.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        &sec.ticker,
+                        mono(12.0),
+                        text(),
+                    );
+                    let mut note = String::new();
                     if let Some(q) = self.quotes.get(&key) {
+                        if let Some(c) = quote_tag::marker(q, now) {
+                            pt.circle_filled(pos2(name.right() + 6.0, r.center().y), 2.5, c);
+                            note = format!("\n{}", quote_tag::tooltip(q, now));
+                        }
                         let c = if q.change() >= 0.0 { theme::up() } else { theme::down() };
                         let pill = Rect::from_min_size(pos2(r.right() - 62.0, r.center().y - 8.0), vec2(58.0, 16.0));
                         pt.rect_filled(pill, 4.0, c.gamma_multiply(0.16));
@@ -682,7 +702,8 @@ impl TerminalApp {
                     if resp.clicked() {
                         out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
                     }
-                    let resp = resp.on_hover_text(format!("{} — {}", sec.key(), sec.name().unwrap_or(&sec.ticker)));
+                    let resp =
+                        resp.on_hover_text(format!("{} — {}{note}", sec.key(), sec.name().unwrap_or(&sec.ticker)));
                     resp.context_menu(|ui| {
                         if ui.button("Open Chart").clicked() {
                             out.push(SidebarCmd::Action(Action::OpenChart(key.clone())));
@@ -965,7 +986,57 @@ impl TerminalApp {
         } else {
             self.status.clone()
         };
-        p.text(pos2(rect.right() - 10.0, cy), Align2::RIGHT_CENTER, status, ui_font(11.5), muted());
+        let mut right = rect.right() - 10.0;
+        let keys = self.visible_quote_keys();
+        let sample = quote_tag::sample_sources(&self.quotes, &keys);
+        if !sample.is_empty() {
+            let msg = if self.provider.eq_ignore_ascii_case("sample") {
+                "Sample data: offline mode (sample provider)".to_string()
+            } else {
+                format!("Sample data: {} unreachable", sample.join(", "))
+            };
+            let g = p.layout_no_wrap(msg, ui_font(11.5), theme::down());
+            let r = Rect::from_min_size(pos2(right - g.size().x, cy - g.size().y / 2.0), g.size());
+            p.galley(r.min, g, theme::down());
+            ui.interact(r.expand(3.0), Id::new("sample-data-notice"), Sense::hover()).on_hover_text(format!(
+                "Prices shown here are simulated, not market prices.\n\n{}",
+                self.provider_summary(&keys)
+            ));
+            right = r.left() - 14.0;
+        }
+        p.text(pos2(right, cy), Align2::RIGHT_CENTER, status, ui_font(11.5), muted());
+    }
+
+    /// Market keys whose quotes are on screen now (sidebar, lists, charts, WEI).
+    pub(super) fn visible_quote_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        let mut add = |ks: &[String]| keys.extend(ks.iter().filter(|k| !keys.contains(k)).cloned().collect::<Vec<_>>());
+        if self.sidebar_open {
+            add(&self.watchlist);
+            for g in self.groups.iter().filter(|g| g.open) {
+                add(&g.keys);
+            }
+        }
+        for i in self.visible_panes() {
+            match &self.panes[i].kind {
+                PaneKind::Chart(c) => add(std::slice::from_ref(&c.symbol)),
+                PaneKind::Watchlist => add(&self.watchlist),
+                PaneKind::List(n) => {
+                    if let Some(g) = self.groups.iter().find(|g| g.name == *n) {
+                        add(&g.keys);
+                    }
+                }
+                PaneKind::Wei => add(&markets_view::overview_keys()),
+                _ => {}
+            }
+        }
+        keys
+    }
+
+    /// Which providers the visible quotes came from, one line each.
+    pub(super) fn provider_summary(&self, keys: &[String]) -> String {
+        let s = quote_tag::provider_summary(&self.quotes, keys);
+        if s.is_empty() { self.provider_label() } else { format!("{}\n{s}", self.provider_label()) }
     }
 
     pub(super) fn toasts(&self, ctx: &egui::Context) {
