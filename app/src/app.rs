@@ -632,6 +632,7 @@ impl TerminalApp {
                 _ => crate::themes::find(&themes, &v).map_or(prefs.appearance.theme.clone(), |t| t.name.clone()),
             };
         }
+        ctx.set_zoom_factor(prefs.appearance.zoom_factor());
         let settings: Option<Settings> =
             std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let broker = broker::BrokerState::load(provider.eq_ignore_ascii_case("sample"));
@@ -1639,6 +1640,10 @@ impl eframe::App for TerminalApp {
                 self.autosave();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+        }
+        // egui's ⌘0 resets to 1.0; a ⌘0 no hotkey claimed returns to the default zoom instead.
+        if ctx.input_mut(|i| i.consume_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_RESET)) {
+            ctx.set_zoom_factor(self.prefs.appearance.zoom_factor());
         }
         let cpu = frame_start.elapsed().as_secs_f64() * 1e3;
         self.perf_cpu_ms = self.perf_cpu_ms * 0.9 + cpu * 0.1;

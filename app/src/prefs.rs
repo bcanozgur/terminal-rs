@@ -120,6 +120,16 @@ impl MonoFont {
 
 pub type Rgb = [u8; 3];
 
+/// The default-zoom choices offered in Settings, in percent.
+pub const ZOOM_LEVELS: [u32; 6] = [120, 110, 100, 90, 80, 70];
+
+impl Appearance {
+    /// The default zoom as an egui zoom factor.
+    pub fn zoom_factor(&self) -> f32 {
+        self.zoom as f32 / 100.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
@@ -129,6 +139,9 @@ pub struct Appearance {
     pub light_theme: String,
     pub vibrancy: bool,
     pub sidebar_side: SidebarSide,
+    /// Default UI zoom in percent (one of [`ZOOM_LEVELS`]); 100 is egui's native scale.
+    /// ⌘+ / ⌘− zoom from here and ⌘0 returns to it.
+    pub zoom: u32,
     // Pre-theme (v2) appearance overrides, read only to migrate them into a theme.
     #[serde(skip_serializing)]
     pub mode: ThemeMode,
@@ -167,6 +180,7 @@ impl Default for Appearance {
             density: Density::Regular,
             vibrancy: true,
             sidebar_side: SidebarSide::Left,
+            zoom: 100,
         }
     }
 }
@@ -688,6 +702,9 @@ impl Prefs {
         p.migrate();
         p.hotkeys = p.hotkeys.with_defaults();
         p.appearance.font_scale = p.appearance.font_scale.clamp(0.7, 1.6);
+        if !ZOOM_LEVELS.contains(&p.appearance.zoom) {
+            p.appearance.zoom = 100;
+        }
         p
     }
 
@@ -821,6 +838,7 @@ mod tests {
         p.appearance.theme = "Nord".into();
         p.appearance.light_theme = "Solarized Light".into();
         p.appearance.sidebar_side = SidebarSide::Right;
+        p.appearance.zoom = 90;
         p.panels.chart_type = ChartType::Line;
         p.hotkeys.bind(Action::Help, Chord::parse("Cmd+Shift+H").unwrap());
         let json = serde_json::to_string_pretty(&p).unwrap();
@@ -832,11 +850,15 @@ mod tests {
         assert_eq!(partial.appearance.theme, "Monokai");
         assert_eq!(partial.appearance.dark_theme, "Terminal Dark");
         assert_eq!(partial.panels, PanelDefaults::default());
+        assert_eq!(partial.appearance.zoom, 100, "files without a zoom keep today's scale");
         let dir = std::env::temp_dir().join(format!("tr-prefs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("prefs.json");
         p.save(&path).unwrap();
         assert_eq!(Prefs::load(&path), p);
+        // A zoom that is not one of the choices falls back to 100%.
+        std::fs::write(&path, r#"{"appearance":{"zoom":333}}"#).unwrap();
+        assert_eq!(Prefs::load(&path).appearance.zoom, 100);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -247,6 +247,17 @@ impl TerminalApp {
                 a.sidebar_side = sides[i];
             }
         });
+        row(ui, "Default zoom", |ui| {
+            egui::ComboBox::from_id_salt("default-zoom").selected_text(format!("{}%", a.zoom)).show_ui(ui, |ui| {
+                for z in crate::prefs::ZOOM_LEVELS {
+                    if ui.selectable_label(a.zoom == z, format!("{z}%")).clicked() && a.zoom != z {
+                        a.zoom = z;
+                        ui.ctx().set_zoom_factor(a.zoom_factor());
+                    }
+                }
+            });
+            ui.label(RichText::new("⌘+ / ⌘− zoom, ⌘0 returns here").font(theme::mono(11.0)).color(muted()));
+        });
         if cfg!(target_os = "macos") {
             row(ui, "Sidebar vibrancy", |ui| {
                 ui.checkbox(&mut a.vibrancy, "Translucent sidebar (applies on next launch)");
