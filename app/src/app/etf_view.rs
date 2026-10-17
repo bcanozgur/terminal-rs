@@ -141,6 +141,8 @@ impl EtfPane {
         }
         self.view = view;
         self.calc = None;
+        // Other panes may have indexed funds since the cache was last read.
+        self.need_cached = true;
     }
 
     fn stamp(&self) -> (usize, i64) {
@@ -240,7 +242,10 @@ impl TerminalApp {
                     }
                 }
             }
-            EtfResp::Progress { done, total, .. } => e.index = (done < total).then_some((done, total)),
+            EtfResp::Progress { done, total, .. } => {
+                e.index = (done < total).then_some((done, total));
+                e.need_cached |= done >= total;
+            }
         }
     }
 }
@@ -816,4 +821,20 @@ fn overlap(ui: &mut Ui, p: &mut EtfPane, a: &str, b: &str, next: &mut Option<Vie
             dim(ui, format!("… and {} smaller shared holdings", o.shared.len() - OVERLAP_ROWS));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switching_view_rereads_the_disk_cache() {
+        let mut p = EtfPane::new("list", "", "");
+        p.need_cached = false;
+        p.open(View::Reverse("AAPL".into()));
+        assert!(p.need_cached);
+        p.need_cached = false;
+        p.open(View::Overlap("VOO".into(), "QQQ".into()));
+        assert!(p.need_cached);
+    }
 }
