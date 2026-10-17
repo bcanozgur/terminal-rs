@@ -561,8 +561,7 @@ pub fn build_fund(
         sort_desc(&mut holdings);
         resolve_tickers(&mut holdings, &yahoo_holdings, names);
         return Ok(Fund {
-            name: yahoo_name
-                .unwrap_or_else(|| if doc.series_name.is_empty() { doc.registrant } else { doc.series_name }),
+            name: yahoo_name.unwrap_or(if doc.series_name.is_empty() { doc.registrant } else { doc.series_name }),
             ticker,
             source: Source::Nport,
             as_of: doc.period_end,
