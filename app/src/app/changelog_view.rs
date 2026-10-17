@@ -34,6 +34,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
              Options now has a ticker box too.",
             "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \
              its timeframe; click an ALRT row to open that chart.",
+            "TRF: Turkish mutual funds from KAP. Fund card (fees, size, redemption valör), asset and stock allocation, \
+             monthly buys and sells, and reverse search (which funds hold a stock).",
+            "Portfolio positions table has a Day P&L column.",
             "Info (i) button on every pane header explains what the panel shows.",
             "Combo 11 chart study, with its table kept clear of the latest bars.",
             "Default zoom setting, search inside list panels, app icon, and a toolbar flush with the top in full \
