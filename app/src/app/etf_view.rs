@@ -52,6 +52,9 @@ pub struct EtfPane {
     ov_a: String,
     ov_b: String,
     calc: Option<Calc>,
+    /// Search box over the fund list (ticker, name or category).
+    filter: String,
+    indexed_only: bool,
 }
 
 /// A ticker as typed: first word, upper case (`spy`, `SPY US Equity` → `SPY`).
@@ -86,6 +89,8 @@ impl EtfPane {
             ov_a: String::new(),
             ov_b: String::new(),
             calc: None,
+            filter: String::new(),
+            indexed_only: false,
         };
         p.open(view);
         p
@@ -364,7 +369,22 @@ fn status(p: &EtfPane, ticker: &str) -> (String, Color32) {
     }
 }
 
-fn list(ui: &mut Ui, p: &EtfPane, next: &mut Option<View>) {
+fn list(ui: &mut Ui, p: &mut EtfPane, next: &mut Option<View>) {
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut p.filter)
+                .hint_text(RichText::new("Search ticker, name or category…").font(ui_font(12.0)).color(muted()))
+                .font(ui_font(12.5))
+                .desired_width(dp(240.0)),
+        );
+        if !p.filter.is_empty() && ui.small_button("✕").on_hover_text("Clear the search").clicked() {
+            p.filter.clear();
+        }
+        ui.checkbox(&mut p.indexed_only, "Indexed only");
+    });
+    ui.add_space(dp(4.0));
+    let q = p.filter.trim().to_lowercase();
+    let p = &*p;
     egui::ScrollArea::vertical().id_salt("etf-list").auto_shrink([false, false]).show(ui, |ui| {
         let extra: Vec<&Arc<Fund>> = {
             let mut v: Vec<_> =
@@ -376,7 +396,17 @@ fn list(ui: &mut Ui, p: &EtfPane, next: &mut Option<View>) {
             .iter()
             .map(|(t, n, c)| (t.to_string(), n.to_string(), c.to_string()))
             .chain(extra.iter().map(|f| (f.ticker.clone(), f.name.clone(), "Other".to_string())))
+            .filter(|(t, n, c)| {
+                (q.is_empty()
+                    || t.to_lowercase().contains(&q)
+                    || n.to_lowercase().contains(&q)
+                    || c.to_lowercase().contains(&q))
+                    && (!p.indexed_only || p.funds.contains_key(t))
+            })
             .collect();
+        if rows.is_empty() {
+            dim(ui, "No ETF matches. Type a ticker and press Open to load any other ETF.");
+        }
         egui::Grid::new("etf-list-grid").num_columns(4).striped(true).spacing([dp(14.0), dp(4.0)]).show(ui, |ui| {
             for h in ["ETF", "Name", "Category", "Holdings"] {
                 ui.label(RichText::new(h).font(ui_font(11.0)).color(muted()));
