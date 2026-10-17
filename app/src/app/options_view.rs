@@ -5,6 +5,8 @@ use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use tr_core::options::Greeks;
 use tr_data::OptionContract;
 
+pub mod analytics;
+
 use super::OptionsPane;
 use crate::congress_view::Action;
 use crate::theme::{self, amber, dp, mono, muted, text, ui_font};
@@ -156,6 +158,7 @@ pub fn options_chain(ui: &mut Ui, o: &mut OptionsPane) -> (Option<Action>, bool)
     let mut refetch = false;
     ui.horizontal_wrapped(|ui| {
         symbol_box(ui, o);
+        analytics::tabs(ui, o);
         let r = ui.label(RichText::new("↗").font(mono(13.0)).color(amber())).interact(Sense::click());
         if r.clicked() {
             action = Some(Action::OpenChart(o.symbol.clone()));
@@ -233,6 +236,17 @@ pub fn options_chain(ui: &mut Ui, o: &mut OptionsPane) -> (Option<Action>, bool)
         }
         return (action, refetch);
     };
+    match o.an.tab {
+        analytics::Tab::Chain => {}
+        analytics::Tab::Analytics => {
+            analytics::analytics(ui, o, &mut refetch);
+            return (action, refetch);
+        }
+        analytics::Tab::Payoff => {
+            analytics::payoff(ui, o);
+            return (action, refetch);
+        }
+    }
     let rows = rows(o);
     if rows.is_empty() {
         ui.label(RichText::new("No contracts listed for this expiration.").font(ui_font(12.0)).color(muted()));
@@ -319,6 +333,25 @@ pub fn options_chain(ui: &mut Ui, o: &mut OptionsPane) -> (Option<Action>, bool)
                 if row.strike <= spot && next.is_some_and(|n| n > spot) {
                     spot_line = Some(r);
                 }
+                // Click a row to add its contracts to the strategy (Payoff tab).
+                egui::Popup::menu(&resp).id(egui::Id::new(("omon-add", &o.symbol, ri))).show(|ui| {
+                    ui.label(
+                        RichText::new(format!("Strategy · strike {:.2}", row.strike))
+                            .font(ui_font(11.0))
+                            .color(muted()),
+                    );
+                    for (call, idx) in [(true, row.call), (false, row.put)] {
+                        let Some(i) = idx else { continue };
+                        let c = if call { &ch.calls[i] } else { &ch.puts[i] };
+                        for (word, qty) in [("Buy", 1), ("Sell", -1)] {
+                            let name = if call { "call" } else { "put" };
+                            if ui.button(format!("{word} {name} @ {}", fmt_px(c.mid()))).clicked() {
+                                o.an.add_contract(ch, call, c, qty);
+                                ui.close();
+                            }
+                        }
+                    }
+                });
                 resp.context_menu(|ui| {
                     if let Some(ci) = row.call
                         && ui.button(format!("Copy {}", ch.calls[ci].contract)).clicked()

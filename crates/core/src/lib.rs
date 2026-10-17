@@ -5,6 +5,7 @@ pub mod bar;
 pub mod catalog;
 pub mod indicators;
 pub mod options;
+pub mod optstrat;
 pub mod risk;
 pub mod sample;
 pub mod security;

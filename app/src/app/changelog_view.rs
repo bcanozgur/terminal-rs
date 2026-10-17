@@ -42,6 +42,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \
              its timeframe; click an ALRT row to open that chart.",
             "Portfolio positions table has a Day P&L column.",
+            "Options analytics: Chain | Analytics | Payoff tabs in OMON. IV smile and 25Δ skew, ATM IV term structure, \
+             put/call ratios by volume and open interest, max pain and call/put walls, and a payoff builder \
+             (presets or click a chain row) with break-evens, max profit/loss and position greeks.",
             "Info (i) button on every pane header explains what the panel shows.",
             "Combo 11 chart study, with its table kept clear of the latest bars.",
             "Default zoom setting, search inside list panels, app icon, and a toolbar flush with the top in full \

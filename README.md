@@ -59,6 +59,15 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   open interest and IV, plus Black-Scholes greeks (Δ, Γ, Θ/day, vega) from each contract's IV, the
   dividend yield and the 3-month T-bill rate; in-the-money shading, spot line, ±10/±20/all
   strikes; offline mode shows a flagged simulated chain.
+  **Analytics** and **Payoff** tabs in the same pane (same symbol, same loaded chains; other
+  expirations load one at a time in the background): IV smile and 25Δ skew (95/105% moneyness when
+  deltas are missing), ATM IV term structure, put/call ratios by volume and open interest per
+  expiration and in total, max pain with the payout curve, call/put open-interest walls, and a
+  strategy builder (presets: long call, covered call, bull call spread, straddle, strangle, iron
+  condor, protective put, or click a chain row) with the at-expiry payoff, a Black-Scholes "today"
+  curve at the chain IV, break-evens, max profit/loss, net debit/credit and position greeks.
+  Anything the source does not report (IV, volume, open interest) shows `n/a`. Maths in
+  `tr_core::optstrat`.
 - **Markets** — `WEI` world markets (Americas/EMEA/Asia-Pacific indices, futures, Treasuries, FX,
   crypto and commodities with sparklines), `GC` US Treasury yield curve (now vs 1M and 1Y ago,
   2s10s / 3m10y / 5s30s), **news** (`AAPL CN`; Yahoo headlines, CoinDesk for crypto) and
