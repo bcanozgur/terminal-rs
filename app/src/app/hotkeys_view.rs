@@ -256,6 +256,10 @@ impl TerminalApp {
                     (&["ERN", "EVTS", "AAPL ERN"], "Earnings calendar by week / a security's report history"),
                     (&["EE"], "Toggle earnings markers (E) on the chart"),
                     (&["POL", "POL PELOSI", "TRACK PELOSI"], "Politicians, profiles and alerts"),
+                    (
+                        &["ALRT AAPL > 250", "ALRT NVDA RSI > 70", "ALRT MSFT > SMA 50 REPEAT"],
+                        "Price / indicator alerts",
+                    ),
                     (&["WL", "WL ADD SOLUSD CRNCY"], "Watchlist"),
                     (&["PREFS"], "Settings: theme, fonts, density, hotkeys, layouts"),
                 ],

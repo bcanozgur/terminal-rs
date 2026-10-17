@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tr_core::{AssetClass, Bar, Security, Timeframe, catalog};
 
-use crate::{Extended, MarketData, Quote, SearchHit, Session};
+use crate::{Extended, ExtendedQuote, MarketData, Quote, SearchHit, Session, TradingSession};
 
 const BASE: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
 
@@ -453,6 +453,55 @@ impl YahooProvider {
     }
 }
 
+impl YahooProvider {
+    /// Pre/post-market price from today's 1-minute chart including extended hours.
+    pub async fn extended_chart(&self, symbol: &str) -> Result<Option<ExtendedQuote>> {
+        let url = format!("{BASE}/{}", urlencode(symbol));
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("interval", "1m"), ("range", "1d"), ("includePrePost", "true")])
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            bail!("yahoo {symbol} extended hours: HTTP {}", resp.status());
+        }
+        parse_extended_chart(&resp.text().await?, chrono::Utc::now().timestamp())
+    }
+}
+
+/// Classify a chart with `includePrePost=true` at `now`: during the regular session there is
+/// no extended move; otherwise the newest trade before the open is measured from the previous
+/// close, and the newest after the close from the regular-session price.
+pub fn parse_extended_chart(json: &str, now: i64) -> Result<Option<ExtendedQuote>> {
+    let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo chart")?;
+    let r = &v["chart"]["result"][0];
+    let meta = &r["meta"];
+    let period = |k: &str| {
+        let p = &meta["currentTradingPeriod"][k];
+        Some((p["start"].as_i64()?, p["end"].as_i64()?))
+    };
+    let (Some(regular), Some(price)) = (period("regular"), meta["regularMarketPrice"].as_f64()) else {
+        return Ok(None);
+    };
+    if (regular.0..regular.1).contains(&now) {
+        return Ok(Some(ExtendedQuote { session: TradingSession::Regular, price, reference: price, ts: now }));
+    }
+    let prev = meta["previousClose"].as_f64().or_else(|| meta["chartPreviousClose"].as_f64());
+    let ts = r["timestamp"].as_array().cloned().unwrap_or_default();
+    let closes = r["indicators"]["quote"][0]["close"].as_array().cloned().unwrap_or_default();
+    let last = ts.iter().zip(&closes).rev().find_map(|(t, c)| Some((t.as_i64()?, c.as_f64()?)));
+    Ok(Some(match last {
+        Some((t, p)) if t >= regular.1 => ExtendedQuote { session: TradingSession::Post, price: p, reference: price, ts: t },
+        Some((t, p)) if t < regular.0 => match prev {
+            Some(prev) => ExtendedQuote { session: TradingSession::Pre, price: p, reference: prev, ts: t },
+            None => return Ok(None),
+        },
+        // No extended-hours trade yet.
+        _ => ExtendedQuote { session: TradingSession::Regular, price, reference: price, ts: now },
+    }))
+}
+
 /// Parse `/v8/finance/spark`: `{SYMBOL: {timestamp: [...], close: [...], chartPreviousClose}}`.
 pub fn parse_spark(json: &str) -> Result<Vec<Quote>> {
     let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo spark")?;
@@ -651,6 +700,33 @@ pub fn parse_search(json: &str) -> Result<Vec<SearchHit>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_hours_sessions() {
+        let chart = |ts: &str, closes: &str| {
+            format!(
+                r#"{{"chart":{{"result":[{{"meta":{{"regularMarketPrice":200.0,"previousClose":190.0,
+                "currentTradingPeriod":{{"pre":{{"start":50,"end":100}},"regular":{{"start":100,"end":200}},
+                "post":{{"start":200,"end":300}}}}}},"timestamp":[{ts}],
+                "indicators":{{"quote":[{{"close":[{closes}]}}]}}}}],"error":null}}}}"#
+            )
+        };
+        let q = |json: &str, now| parse_extended_chart(json, now).unwrap().unwrap();
+        // Regular session: no move.
+        let r = q(&chart("60,150", "195.0,200.0"), 150);
+        assert_eq!((r.session, r.move_pct()), (TradingSession::Regular, None));
+        // Pre-market against yesterday's close.
+        let pre = q(&chart("60,70", "191.0,199.5"), 80);
+        assert_eq!((pre.session, pre.price, pre.reference), (TradingSession::Pre, 199.5, 190.0));
+        assert!((pre.move_pct().unwrap() - 5.0).abs() < 1e-9);
+        // After hours against today's close; null rows are skipped.
+        let post = q(&chart("150,210,220", "200.0,190.0,null"), 250);
+        assert_eq!((post.session, post.price, post.reference), (TradingSession::Post, 190.0, 200.0));
+        assert!((post.move_pct().unwrap() + 5.0).abs() < 1e-9);
+        // After the close with no extended trade yet.
+        assert_eq!(q(&chart("150", "200.0"), 205).session, TradingSession::Regular);
+        assert!(parse_extended_chart(r#"{"chart":{"result":null,"error":{}}}"#, 0).unwrap().is_none());
+    }
 
     #[test]
     fn parses_fixture() {

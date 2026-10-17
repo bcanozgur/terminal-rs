@@ -97,6 +97,22 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   - **Alerts**: `TRACK <name>` (or ☆ in the directory/profile); when a tracked politician files a
     new PTR you get a toast, an `ALERTS n` badge and an entry in `ALERTS`.
 
+- **Price and indicator alerts** (Bloomberg ALRT)
+  - Rules from the command line: `ALRT AAPL > 250`, `ALRT BTCUSD CRNCY < 60000`,
+    `ALRT NVDA RSI > 70`, `ALRT TSLA CHG < -3` (or `TSLA ALRT < -3%`, % change on the day),
+    `ALRT MSFT > SMA 50` / `ALRT MSFT CROSS EMA 20` (price crosses a daily moving average),
+    `ALRT AAPL EXT > 2` (pre/post-market move vs the regular close). Without a security, the
+    focused chart's is used. Rules are one-shot by default; add `REPEAT` to re-arm once the
+    condition stops holding (at most one alert a minute per rule).
+  - From a chart: right-click → **Alert at <price>** (above or below the last price), or
+    right-click a horizontal line → **Alert at Line**. Armed levels are drawn as dashed lines.
+  - The `ALERTS` pane lists rules (enable/disable, ONCE/REPEAT, delete) and what triggered.
+    Rules are evaluated on the worker against quotes (every 15 s, `TR_ALERT_POLL_SECS`) and
+    live ticks, from real sources only — never sample fallback prices. Each rule remembers the
+    state it last saw, so a move fires once, also across restarts. Firing shows a toast, the
+    `ALERTS` badge and, optionally, a macOS Notification Center banner.
+  - Stored in `alerts.json` in the data directory.
+
 - **Dockable workspace and saved layouts**
   - Any panel (chart, watchlist, news, order book, world markets, yield curve, options, Congress
     feed, politicians, alerts, search, settings, help) docks anywhere: drag a tab (or a pane's
@@ -312,6 +328,7 @@ Settings › Hotkeys. On Linux and Windows ⌘ is Ctrl and ⌥ is Alt.
 | `CMP MSFT` · `LOG` · `CANDLE` `BAR` `LINE` `AREA` | compare · log scale · chart type |
 | `AAPL OMON` · `AAPL CN` · `BTCUSD CRNCY OB` · `WEI` · `GC` · `SECF <query>` | options · news · order book · world markets · yield curve · search |
 | `CONG` · `NVDA CONG` · `POL PELOSI` · `TRACK PELOSI` · `ALERTS` · `REFRESH` | Congress feed · who traded it · profile · track · alerts · refresh |
+| `ALRT AAPL > 250` · `ALRT NVDA RSI > 70` · `ALRT MSFT > SMA 50 REPEAT` · `ALRT AAPL EXT > 2` | price · indicator · moving-average cross · extended-hours alerts |
 | `NEW BOOK` · `SPLIT DOWN NEWS` · `POP` · `LINK GREEN` · `TITLE Desk` · `CLOSE` | add, split, pop out, link, rename, close panes |
 | `LAYOUT 4` · `LAYOUT SAVE Macro` · `LAYOUT Macro` · `LAYOUT RENAME Rates` · `LAYOUT DUP` · `LAYOUT DEL` · `LAYOUT EXPORT` | grid preset · saved layouts |
 | `THEME BLOOMBERG` · `THEME NEXT` · `THEME SYSTEM` · `THEME EDIT` · `THEME COMPACT` · `LAYOUT THEME ON` | themes |

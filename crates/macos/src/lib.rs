@@ -6,6 +6,7 @@
 //! - [`chrome_metrics`]: the live height of that title bar region and the width taken by
 //!   the traffic lights, so app content never sits under the system's drag region.
 //! - [`accent_color`]: the user's system accent colour (`NSColor.controlAccentColor`).
+//! - [`notify`]: a Notification Center banner (price alerts).
 
 use std::ffi::c_void;
 
@@ -169,6 +170,43 @@ pub fn accent_color() -> Option<[u8; 3]> {
     }
 }
 
+/// Quote `s` as an AppleScript string literal.
+fn applescript_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Post a Notification Center banner with a sound (through `osascript`, so it works without an
+/// app bundle). Blocks until the banner is queued; no-op on other platforms.
+pub fn notify(title: &str, body: &str) {
+    let script = format!(
+        "display notification {} with title {} sound name \"Glass\"",
+        applescript_string(body),
+        applescript_string(title)
+    );
+    if cfg!(target_os = "macos") {
+        let _ = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 pub fn is_macos() -> bool {
     cfg!(target_os = "macos")
 }
@@ -182,5 +220,12 @@ mod tests {
             assert!(!unsafe { super::style_window(std::ptr::null_mut(), true) });
             assert!(unsafe { super::chrome_metrics(std::ptr::null_mut()) }.is_none());
         }
+    }
+
+    #[test]
+    fn applescript_strings_are_escaped() {
+        use super::applescript_string;
+        assert_eq!(applescript_string("AAPL: Last >= 250"), "\"AAPL: Last >= 250\"");
+        assert_eq!(applescript_string("a \"b\" \\ c\nd"), "\"a \\\"b\\\" \\\\ c d\"");
     }
 }
