@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use egui::{Align2, Color32, Rect, RichText, Sense, Ui, pos2, vec2};
 use tr_broker::{Account, Portfolio, Position};
-use tr_data::Quote;
+use tr_data::{Extended, Quote, Session};
 
 use super::broker::{BrokerMode, BrokerState, PortfolioPane, PosSort};
 use crate::command::PortView;
@@ -108,6 +108,35 @@ fn pnl_color(x: f64) -> Color32 {
     } else {
         muted()
     }
+}
+
+/// Extended-hours lookup for a position.
+type ExtOf<'a> = &'a dyn Fn(&Position) -> Option<Extended>;
+
+/// The session most positions are trading in (the newest trade decides), if any.
+fn ext_session<'a>(ps: impl IntoIterator<Item = &'a Position>, ext_of: ExtOf) -> Option<Session> {
+    ps.into_iter().filter_map(ext_of).max_by_key(|e| e.ts).map(|e| e.session)
+}
+
+/// Column title for the extended-hours price.
+fn ext_title(s: Session) -> &'static str {
+    match s {
+        Session::Pre => "Pre-mkt",
+        Session::Post => "After hrs",
+    }
+}
+
+/// `347.99 -0.35%`.
+fn ext_cell(e: &Extended) -> String {
+    format!("{} {}", price(e.price), pct(e.change_pct))
+}
+
+/// `After hours 347.99 −1.22 (−0.35%) · 02:58`, local time.
+fn ext_text(e: &Extended) -> String {
+    let at = chrono::DateTime::from_timestamp(e.ts, 0)
+        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
+        .unwrap_or_default();
+    format!("{} {} {:+.2} ({}) · {at}", e.session.label(), price(e.price), e.change, pct(e.change_pct))
 }
 
 // ---- tables -------------------------------------------------------------------------------
@@ -367,15 +396,16 @@ pub fn portfolio(
             }
             let price_of = |p: &Position| b.live_price(quotes, p);
             let prev_of = |p: &Position| b.prev_close(quotes, p);
+            let ext_of = |p: &Position| b.extended(quotes, p);
             match pane.view {
                 PortView::Summary => {
                     egui::ScrollArea::vertical()
                         .id_salt("port-summary")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| summary(ui, pane, pf, &price_of, &prev_of, &mut out));
+                        .show(ui, |ui| summary(ui, pane, pf, &price_of, &prev_of, &ext_of, &mut out));
                 }
                 PortView::Accounts => accounts(ui, pane, pf, &price_of),
-                PortView::Positions => positions(ui, pane, pf, &price_of, &mut out),
+                PortView::Positions => positions(ui, pane, pf, &price_of, &ext_of, &mut out),
                 PortView::Orders => orders(ui, pane, pf, &mut out),
                 PortView::Activity => activity(ui, pane, pf, &mut out),
             }
@@ -604,6 +634,7 @@ fn summary(
     pf: &Portfolio,
     price_of: &dyn Fn(&Position) -> Option<f64>,
     prev_of: &dyn Fn(&Position) -> Option<f64>,
+    ext_of: ExtOf,
     out: &mut Vec<PortAction>,
 ) {
     let t = pf.totals(pane.account.as_deref(), price_of);
@@ -619,7 +650,7 @@ fn summary(
         Some(p) => format!("{} ({})", signed_money(t.pnl, &ccy), pct(p)),
         None => signed_money(t.pnl, &ccy),
     };
-    let stats = [
+    let mut stats = vec![
         ("Total value", money(t.value, &ccy), text()),
         ("Daily P&L", day_txt, pnl_color(day)),
         ("Unrealised P&L", pnl, pnl_color(t.pnl)),
@@ -627,6 +658,28 @@ fn summary(
         ("Cash", money(t.cash, &ccy), text()),
         ("Buying power", money(t.buying_power, &ccy), text()),
     ];
+    // What the holdings gained or lost since the regular close (or before the open).
+    let sel = selected(pane);
+    let shown = || pf.positions.iter().filter(|p| sel(&p.account_id) && !p.cash_equivalent);
+    if let Some(session) = ext_session(shown(), ext_of) {
+        let (mut move_, mut base) = (0.0, 0.0);
+        for p in shown() {
+            if let Some(e) = ext_of(p) {
+                move_ += p.units * e.change * p.multiplier;
+                base += p.units * (e.price - e.change) * p.multiplier;
+            }
+        }
+        let label = match session {
+            Session::Pre => "Pre-market P&L",
+            Session::Post => "After-hours P&L",
+        };
+        let txt = if base.abs() > 1e-9 {
+            format!("{} ({})", signed_money(move_, &ccy), pct(move_ / base.abs() * 100.0))
+        } else {
+            signed_money(move_, &ccy)
+        };
+        stats.insert(2, (label, txt, pnl_color(move_)));
+    }
     let galleys: Vec<_> = stats
         .iter()
         .map(|(label, value, color)| {
@@ -666,7 +719,6 @@ fn summary(
     ui.add_space(dp(6.0));
 
     // Allocation by holding.
-    let sel = selected(pane);
     let mut held: Vec<(&Position, f64)> = pf
         .positions
         .iter()
@@ -712,6 +764,7 @@ fn summary(
 
     // Top holdings and accounts side by side when there is room.
     ui.label(RichText::new("Top holdings").font(ui_font(12.5)).color(text()));
+    let session = ext_session(held.iter().take(8).map(|(p, _)| *p), ext_of);
     let cols = fit(
         vec![
             col("Symbol", 1.0, false),
@@ -720,15 +773,23 @@ fn summary(
             col("Value", 1.3, true),
             col("P&L", 1.3, true),
             opt(col("%", 0.9, true), 1),
+            match session {
+                Some(s) => opt(col(ext_title(s), 1.6, true), 3),
+                None => col("", 0.0, true),
+            },
         ],
         ui.available_width(),
     );
     header(ui, &cols, None);
     let colors = holding_colors(pf, &sel, price_of);
     for (p, _) in held.iter().take(8) {
-        position_row(ui, &cols, p, price_of(p), out, |ui, r, cols, p, live| {
+        let ext = ext_of(p);
+        position_row(ui, &cols, p, price_of(p), ext, out, |ui, r, cols, p, live| {
             let painter = ui.painter();
             symbol_cell(painter, r, cols, p, colors.get(&(p.account_id.clone(), p.symbol.clone())).copied());
+            if let Some(e) = &ext {
+                cell(painter, r, cols, 6, ext_cell(e), mono(12.0), pnl_color(e.change));
+            }
             cell(painter, r, cols, 1, qty(p.units), mono(12.0), text());
             cell(painter, r, cols, 2, live.or(p.price).map_or("—".into(), price), mono(12.0), text());
             cell(painter, r, cols, 3, p.market_value_at(live).map_or("—".into(), |v| group(v, 2)), mono(12.0), text());
@@ -767,16 +828,21 @@ fn position_row(
     cols: &[Col],
     p: &Position,
     live: Option<f64>,
+    ext: Option<Extended>,
     out: &mut Vec<PortAction>,
     draw: impl FnOnce(&mut Ui, Rect, &[Col], &Position, Option<f64>),
 ) {
     let (r, resp) = row(ui);
     draw(ui, r, cols, p, live);
     let key = p.market_key();
-    let resp = match (&key, live) {
-        (Some(k), Some(_)) => resp.on_hover_text(format!("{k} · live terminal quote · click to chart")),
-        (Some(k), None) => resp.on_hover_text(format!("{k} · click to chart")),
-        (None, _) => resp.on_hover_text("Not available as a terminal market key"),
+    let tip = match (&key, live) {
+        (Some(k), Some(_)) => format!("{k} · live terminal quote · click to chart"),
+        (Some(k), None) => format!("{k} · click to chart"),
+        (None, _) => "Not available as a terminal market key".into(),
+    };
+    let resp = match &ext {
+        Some(e) => resp.on_hover_text(format!("{tip}\n{}", ext_text(e))),
+        None => resp.on_hover_text(tip),
     };
     if let Some(k) = &key {
         let tradable = matches!(p.kind, tr_broker::InstrumentKind::Stock | tr_broker::InstrumentKind::Etf)
@@ -872,6 +938,7 @@ fn positions(
     pane: &mut PortfolioPane,
     pf: &Portfolio,
     price_of: &dyn Fn(&Position) -> Option<f64>,
+    ext_of: ExtOf,
     out: &mut Vec<PortAction>,
 ) {
     let sel = selected(pane);
@@ -912,6 +979,14 @@ fn positions(
     if all {
         cols.push(opt(col("Account", 1.3, false), 5));
     }
+    // Pre-market / after-hours price next to Last; a zero-width slot keeps the indices fixed.
+    cols.insert(
+        4,
+        match ext_session(list.iter().map(|(p, _)| *p), ext_of) {
+            Some(s) => opt(col(ext_title(s), 1.6, true), 1),
+            None => col("", 0.0, true),
+        },
+    );
     let cols = fit(cols, ui.available_width());
     if let Some(s) = header(ui, &cols, Some(pane.sort)) {
         pane.sort = s;
@@ -926,7 +1001,8 @@ fn positions(
             for (p, live) in &list {
                 let share = (gross > 0.0).then(|| value(&(p, *live)).abs() / gross * 100.0);
                 let account = pf.account(&p.account_id).map(Account::label).unwrap_or_default();
-                position_row(ui, &cols, p, *live, out, |ui, r, cols, p, live| {
+                let ext = ext_of(p);
+                position_row(ui, &cols, p, *live, ext, out, |ui, r, cols, p, live| {
                     let painter = ui.painter();
                     let dot = colors.get(&(p.account_id.clone(), p.symbol.clone())).copied();
                     symbol_cell(painter, r, cols, p, dot);
@@ -945,12 +1021,15 @@ fn positions(
                     let last = live.or(p.price);
                     let last_color = if live.is_some() { theme::cyan() } else { text() };
                     cell(painter, r, cols, 3, last.map_or("—".into(), price), mono(12.0), last_color);
-                    cell(painter, r, cols, 4, p.cost_basis.map_or("—".into(), price), mono(12.0), muted());
+                    if let Some(e) = &ext {
+                        cell(painter, r, cols, 4, ext_cell(e), mono(12.0), pnl_color(e.change));
+                    }
+                    cell(painter, r, cols, 5, p.cost_basis.map_or("—".into(), price), mono(12.0), muted());
                     cell(
                         painter,
                         r,
                         cols,
-                        5,
+                        6,
                         p.market_value_at(live).map_or("—".into(), |v| group(v, 2)),
                         mono(12.0),
                         text(),
@@ -960,15 +1039,15 @@ fn positions(
                         painter,
                         r,
                         cols,
-                        6,
+                        7,
                         pnl.map_or("—".into(), |v| signed_money(v, "").replace('$', "")),
                         mono(12.0),
                         pnl.map_or(muted(), pnl_color),
                     );
                     let pc = p.pnl_pct_at(live);
-                    cell(painter, r, cols, 7, pc.map_or("—".into(), pct), mono(12.0), pc.map_or(muted(), pnl_color));
-                    cell(painter, r, cols, 8, share.map_or("—".into(), |s| format!("{s:.1}%")), mono(12.0), muted());
-                    cell(painter, r, cols, 9, &account, ui_font(11.5), muted());
+                    cell(painter, r, cols, 8, pc.map_or("—".into(), pct), mono(12.0), pc.map_or(muted(), pnl_color));
+                    cell(painter, r, cols, 9, share.map_or("—".into(), |s| format!("{s:.1}%")), mono(12.0), muted());
+                    cell(painter, r, cols, 10, &account, ui_font(11.5), muted());
                 });
             }
         });
@@ -987,6 +1066,12 @@ fn positions(
         );
         ui.label(RichText::new(signed_money(shown_pnl, &ccy)).font(ui_font(11.5)).color(pnl_color(shown_pnl)));
         note(ui, "· cyan prices are live terminal quotes · click a row to chart");
+        if let Some(s) = ext_session(list.iter().map(|(p, _)| *p), ext_of) {
+            note(
+                ui,
+                format!("· {}: US {} trades; values use the regular close", ext_title(s), s.label().to_lowercase()),
+            );
+        }
     });
 }
 

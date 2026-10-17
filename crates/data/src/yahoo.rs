@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tr_core::{AssetClass, Bar, Security, Timeframe, catalog};
 
-use crate::{MarketData, Quote, SearchHit};
+use crate::{Extended, MarketData, Quote, SearchHit, Session};
 
 const BASE: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
 
@@ -465,7 +465,82 @@ pub fn parse_spark(json: &str) -> Result<Vec<Quote>> {
         let prev =
             if closes.len() >= 2 { closes[closes.len() - 2] } else { d["chartPreviousClose"].as_f64().unwrap_or(last) };
         let ts = d["timestamp"].as_array().and_then(|a| a.last()).and_then(|t| t.as_i64()).unwrap_or_default();
-        out.push(Quote { symbol: sym.clone(), last, prev_close: prev, ts, spark: closes });
+        out.push(Quote { symbol: sym.clone(), last, prev_close: prev, ts, spark: closes, extended: None });
+    }
+    Ok(out)
+}
+
+const QUOTE: &str = "https://query2.finance.yahoo.com/v7/finance/quote";
+
+impl YahooProvider {
+    /// The latest pre-market or after-hours trade for each Yahoo symbol that has one (US
+    /// listings only; the spark endpoint carries regular-session prices only).
+    pub async fn extended(&self, symbols: &[String]) -> Result<Vec<(String, Extended)>> {
+        let mut out = Vec::new();
+        for chunk in symbols.chunks(50) {
+            out.extend(self.extended_chunk(chunk).await?);
+        }
+        Ok(out)
+    }
+
+    async fn extended_chunk(&self, symbols: &[String]) -> Result<Vec<(String, Extended)>> {
+        let fields = "marketState,regularMarketPrice,regularMarketTime,preMarketPrice,preMarketChange,\
+                      preMarketChangePercent,preMarketTime,postMarketPrice,postMarketChange,\
+                      postMarketChangePercent,postMarketTime";
+        let mut last_err = None;
+        for refresh in [false, true] {
+            let crumb = self.crumb(refresh).await?;
+            let q = [("symbols", symbols.join(",")), ("fields", fields.to_string()), ("crumb", crumb)];
+            let resp = self.client.get(QUOTE).query(&q).send().await?;
+            let status = resp.status();
+            let body = resp.text().await?;
+            if status.as_u16() == 401 || body.contains("Invalid Crumb") {
+                last_err = Some(anyhow!("yahoo quote: crumb rejected"));
+                continue;
+            }
+            if !status.is_success() {
+                bail!("yahoo quote: HTTP {status}");
+            }
+            return parse_extended(&body, chrono::Utc::now().timestamp());
+        }
+        Err(last_err.unwrap_or_else(|| anyhow!("yahoo quote failed")))
+    }
+}
+
+/// Parse `/v7/finance/quote` into extended-hours trades. Outside regular hours the newer of
+/// the pre- and post-market trades wins, provided it came after the regular session's last
+/// trade and within the last four days (so a stale price never outlives a long weekend).
+pub fn parse_extended(json: &str, now: i64) -> Result<Vec<(String, Extended)>> {
+    let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo quote")?;
+    let rows = v["quoteResponse"]["result"].as_array().ok_or_else(|| anyhow!("unexpected quote payload"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        let Some(sym) = r["symbol"].as_str() else { continue };
+        if r["marketState"].as_str() == Some("REGULAR") {
+            continue;
+        }
+        let regular = r["regularMarketPrice"].as_f64().filter(|x| *x > 0.0);
+        let regular_ts = r["regularMarketTime"].as_i64().unwrap_or_default();
+        let leg = |session: Session, prefix: &str| {
+            let price = r[format!("{prefix}Price")].as_f64().filter(|x| x.is_finite() && *x > 0.0)?;
+            let ts = r[format!("{prefix}Time")].as_i64()?;
+            if ts <= regular_ts || now - ts > 4 * 86_400 {
+                return None;
+            }
+            let change = r[format!("{prefix}Change")].as_f64().or_else(|| Some(price - regular?))?;
+            let change_pct = r[format!("{prefix}ChangePercent")]
+                .as_f64()
+                .or_else(|| regular.map(|b| change / b * 100.0))
+                .unwrap_or_default();
+            Some(Extended { session, price, change, change_pct, ts })
+        };
+        let best = match (leg(Session::Pre, "preMarket"), leg(Session::Post, "postMarket")) {
+            (Some(a), Some(b)) => Some(if a.ts >= b.ts { a } else { b }),
+            (a, b) => a.or(b),
+        };
+        if let Some(e) = best {
+            out.push((sym.to_string(), e));
+        }
     }
     Ok(out)
 }
@@ -585,6 +660,30 @@ mod tests {
         assert!(c.bars.windows(2).all(|w| w[0].ts < w[1].ts));
         assert!(c.bars.iter().all(|b| b.high >= b.low && b.volume > 0.0));
         assert_eq!(c.last_price, Some(336.64));
+    }
+
+    #[test]
+    fn extended_hours_pick_the_newest_leg_after_the_close() {
+        let json = r#"{"quoteResponse":{"result":[
+            {"symbol":"GOOGL","marketState":"PREPRE","regularMarketPrice":349.22,"regularMarketTime":1000,
+             "postMarketPrice":347.9954,"postMarketChange":-1.2246,"postMarketChangePercent":-0.3507,"postMarketTime":1500},
+            {"symbol":"AAPL","marketState":"PRE","regularMarketPrice":342.0,"regularMarketTime":1000,
+             "postMarketPrice":340.67,"postMarketTime":1500,"preMarketPrice":345.0,"preMarketTime":2000},
+            {"symbol":"MSFT","marketState":"REGULAR","regularMarketPrice":500.0,"regularMarketTime":3000,
+             "postMarketPrice":499.0,"postMarketTime":1500},
+            {"symbol":"OLD","marketState":"CLOSED","regularMarketPrice":10.0,"regularMarketTime":1000,
+             "postMarketPrice":11.0,"postMarketTime":900},
+            {"symbol":"THYAO.IS","marketState":"REGULAR","regularMarketPrice":276.75,"regularMarketTime":1000}
+        ]}}"#;
+        let x = parse_extended(json, 3000).unwrap();
+        assert_eq!(x.len(), 2, "regular hours and pre-close trades show nothing: {x:?}");
+        let (s, g) = &x[0];
+        assert_eq!((s.as_str(), g.session, g.price, g.ts), ("GOOGL", Session::Post, 347.9954, 1500));
+        assert!((g.change_pct + 0.3507).abs() < 1e-9);
+        let (s, a) = &x[1];
+        assert_eq!((s.as_str(), a.session, a.price), ("AAPL", Session::Pre, 345.0));
+        assert!((a.change - 3.0).abs() < 1e-9 && (a.change_pct - 3.0 / 342.0 * 100.0).abs() < 1e-9, "derived");
+        assert!(parse_extended(json, 1500 + 5 * 86_400).unwrap().is_empty(), "stale after a few days");
     }
 
     #[test]

@@ -41,6 +41,47 @@ pub struct Quote {
     /// Recent daily closes (oldest first) for sparklines; may be empty.
     #[serde(default)]
     pub spark: Vec<f64>,
+    /// The latest US pre-market or after-hours trade, when it is newer than `last`.
+    #[serde(default)]
+    pub extended: Option<Extended>,
+}
+
+/// A US extended-hours session (Eastern time; Turkey is +7h, or +6h while the US is on
+/// standard time). Yahoo reports no prices for the overnight 20:00–04:00 ET session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Session {
+    /// 04:00–09:30 ET.
+    Pre,
+    /// 16:00–20:00 ET; the last after-hours price stands until the next pre-market trade.
+    Post,
+}
+
+impl Session {
+    pub fn label(self) -> &'static str {
+        match self {
+            Session::Pre => "Pre-market",
+            Session::Post => "After hours",
+        }
+    }
+
+    pub fn short(self) -> &'static str {
+        match self {
+            Session::Pre => "Pre",
+            Session::Post => "Post",
+        }
+    }
+}
+
+/// A trade outside regular hours, measured against the regular session's last price.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Extended {
+    pub session: Session,
+    pub price: f64,
+    /// `price` minus the regular session's last price.
+    pub change: f64,
+    pub change_pct: f64,
+    /// Trade time (Unix seconds).
+    pub ts: i64,
 }
 
 /// A symbol-search result.
@@ -223,7 +264,14 @@ pub trait MarketData: Send + Sync {
             let bars = self.history(s, Timeframe::D1, None, 2).await?;
             if let Some(last) = bars.last() {
                 let prev = if bars.len() > 1 { bars[bars.len() - 2].close } else { last.open };
-                out.push(Quote { symbol: s.clone(), last: last.close, prev_close: prev, ts: last.ts, spark: vec![] });
+                out.push(Quote {
+                    symbol: s.clone(),
+                    last: last.close,
+                    prev_close: prev,
+                    ts: last.ts,
+                    spark: vec![],
+                    extended: None,
+                });
             }
         }
         Ok(out)
@@ -567,7 +615,7 @@ mod tests {
 
     #[test]
     fn quote_change() {
-        let q = Quote { symbol: "X".into(), last: 110.0, prev_close: 100.0, ts: 0, spark: vec![] };
+        let q = Quote { symbol: "X".into(), last: 110.0, prev_close: 100.0, ts: 0, spark: vec![], extended: None };
         assert_eq!(q.change(), 10.0);
         assert!((q.change_pct() - 10.0).abs() < 1e-9);
     }

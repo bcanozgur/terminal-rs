@@ -18,6 +18,17 @@ async fn yahoo_history_and_paging() {
     assert_eq!(q.len(), 2);
 }
 
+#[tokio::test]
+#[ignore = "network"]
+async fn yahoo_extended_hours() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let y = YahooProvider::new().unwrap();
+    // Empty during regular hours and the overnight gap after a few days off; never an error.
+    let x = y.extended(&["AAPL".into(), "GOOGL".into(), "THYAO.IS".into()]).await.unwrap();
+    println!("{x:?}");
+    assert!(x.iter().all(|(s, e)| s != "THYAO.IS" && e.price > 0.0), "{x:?}");
+}
+
 mod markets {
     use std::time::Duration;
     use tr_core::Timeframe;

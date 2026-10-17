@@ -219,7 +219,14 @@ impl TreasuryProvider {
                 let last = bars.last()?;
                 let prev = bars.get(bars.len().checked_sub(2)?).map(|b| b.close).unwrap_or(last.close);
                 let spark = bars.iter().rev().take(8).rev().map(|b| b.close).collect();
-                Some(crate::Quote { symbol: key.clone(), last: last.close, prev_close: prev, ts: last.ts, spark })
+                Some(crate::Quote {
+                    symbol: key.clone(),
+                    last: last.close,
+                    prev_close: prev,
+                    ts: last.ts,
+                    spark,
+                    extended: None,
+                })
             })
             .collect())
     }

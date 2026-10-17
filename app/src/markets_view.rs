@@ -397,9 +397,17 @@ mod tests {
 
     #[test]
     fn change_formatting() {
-        let q = Quote { symbol: "US10Y Govt".into(), last: 4.25, prev_close: 4.22, ts: 0, spark: vec![] };
+        let q =
+            Quote { symbol: "US10Y Govt".into(), last: 4.25, prev_close: 4.22, ts: 0, spark: vec![], extended: None };
         assert_eq!(change_text(&Security::parse("US10Y Govt").unwrap(), &q), "+3.0bp");
-        let q = Quote { symbol: "EURUSD Curncy".into(), last: 1.0912, prev_close: 1.0900, ts: 0, spark: vec![] };
+        let q = Quote {
+            symbol: "EURUSD Curncy".into(),
+            last: 1.0912,
+            prev_close: 1.0900,
+            ts: 0,
+            spark: vec![],
+            extended: None,
+        };
         assert_eq!(change_text(&Security::parse("EURUSD Curncy").unwrap(), &q), "+0.0012");
     }
 

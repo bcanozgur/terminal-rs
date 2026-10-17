@@ -4,7 +4,7 @@
 //! |---|---|---|---|
 //! | Crypto | Binance klines (Coinbase fallback) | Binance 24h ticker | Binance kline websocket (Coinbase ticker fallback) |
 //! | Govt | Treasury.gov daily curve (FRED fallback); Yahoo `^TNX` etc. intraday | Treasury.gov | — |
-//! | Equity/ETF | Alpaca if keyed, else Yahoo | Yahoo spark | — |
+//! | Equity/ETF | Alpaca if keyed, else Yahoo | Yahoo spark, plus v7 quote for pre/post-market | — |
 //! | FX/Index/Comdty | Yahoo (`EURUSD=X`, `^GSPC`, `CL=F`) | Yahoo spark | — |
 
 use anyhow::{Result, anyhow, bail};
@@ -100,7 +100,26 @@ impl MarketData for Markets {
                     return Ok(vec![]);
                 }
                 let ys: Vec<String> = other.iter().map(|(_, s)| yahoo_symbol(s)).collect();
-                let quotes = self.yahoo.quotes(&ys).await?;
+                // Stocks and ETFs also trade before and after the US session; that price is
+                // a nicety, so a failed lookup never costs the regular quotes.
+                let stocks: Vec<String> = other
+                    .iter()
+                    .zip(&ys)
+                    .filter(|((_, s), _)| matches!(s.class, AssetClass::Equity | AssetClass::Etf))
+                    .map(|(_, y)| y.clone())
+                    .collect();
+                let (quotes, ext) = tokio::join!(self.yahoo.quotes(&ys), async {
+                    if stocks.is_empty() { Ok(Vec::new()) } else { self.yahoo.extended(&stocks).await }
+                });
+                let mut quotes = quotes?;
+                match ext {
+                    Ok(ext) => {
+                        for q in &mut quotes {
+                            q.extended = ext.iter().find(|(s, _)| *s == q.symbol).map(|(_, e)| *e);
+                        }
+                    }
+                    Err(e) => tracing::debug!("yahoo extended hours: {e:#}"),
+                }
                 // Map Yahoo symbols back to the caller's market keys.
                 Ok::<_, anyhow::Error>(
                     other

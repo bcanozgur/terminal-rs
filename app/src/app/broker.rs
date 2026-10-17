@@ -164,6 +164,18 @@ impl BrokerState {
         }
         quotes.get(&p.market_key()?).map(|q| q.prev_close).filter(|x| x.is_finite() && *x > 0.0)
     }
+
+    /// The latest pre-market or after-hours trade for a position, outside US regular hours.
+    pub fn extended(
+        &self,
+        quotes: &std::collections::HashMap<String, tr_data::Quote>,
+        p: &Position,
+    ) -> Option<tr_data::Extended> {
+        if p.kind == tr_broker::InstrumentKind::Option {
+            return None;
+        }
+        quotes.get(&p.market_key()?)?.extended
+    }
 }
 
 /// Open a URL or path with the system handler.

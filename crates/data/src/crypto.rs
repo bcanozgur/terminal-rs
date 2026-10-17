@@ -350,7 +350,7 @@ impl CryptoProvider {
                 .await
                 .map(|b| b.iter().map(|x| x.close).collect())
                 .unwrap_or_default();
-            out.push(Quote { symbol: key.clone(), last, prev_close: prev, ts: now, spark });
+            out.push(Quote { symbol: key.clone(), last, prev_close: prev, ts: now, spark, extended: None });
         }
         if out.is_empty() && !secs.is_empty() {
             bail!("no crypto quotes available");
