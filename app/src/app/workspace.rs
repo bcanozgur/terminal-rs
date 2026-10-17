@@ -13,6 +13,7 @@ use super::{BookPane, NewsPane, Pane, PaneKind, TerminalApp};
 use crate::anim;
 use crate::congress_view::{Action, FeedFilter};
 use crate::dock::{Dir, Node, PaneId, Zone};
+use crate::earnings_view::ErnPane;
 use crate::layout::Layout;
 use crate::layouts::{LayoutDoc, Link, SavedPane, WindowGeometry};
 use crate::theme::{self, amber, dp, mono, muted, text, ui_font};
@@ -386,6 +387,7 @@ impl TerminalApp {
                 }
             }
             PaneKind::Edgar(e) => e.set_symbol(&key),
+            PaneKind::Earnings(e) if e.symbol.is_some() => e.set_symbol(&key),
             _ => return false,
         }
         true
@@ -592,6 +594,10 @@ impl TerminalApp {
                 };
                 PaneKind::Portfolio(Box::new(super::broker::PortfolioPane::new(view)))
             }
+            "ERN" | "EVTS" | "EARN" | "EARNINGS" => PaneKind::Earnings(Box::new(match given {
+                Some(s) => ErnPane::ticker(&s),
+                None => ErnPane::calendar(Default::default(), 1),
+            })),
             "WEI" | "MARKETS" => PaneKind::Wei,
             "GC" | "CURVE" | "YC" => PaneKind::Curve,
             "CONG" | "FEED" | "CONGRESS" => PaneKind::Feed { filter: FeedFilter::default() },

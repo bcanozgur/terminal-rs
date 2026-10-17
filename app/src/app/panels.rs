@@ -25,6 +25,7 @@ impl TerminalApp {
             return (actions, clicked);
         }
         let freshness = self.congress_freshness();
+        let earn_mine = self.earnings_mine(i);
         let inner = rect.shrink2(vec2(dp(8.0), dp(4.0)));
         let mut child = ui.new_child(UiBuilder::new().max_rect(inner).id_salt(("pane", id)));
         child.set_clip_rect(inner.intersect(ui.clip_rect()));
@@ -117,6 +118,11 @@ impl TerminalApp {
                         }
                     }
                 }
+            }
+            PaneKind::Earnings(e) => {
+                let cx =
+                    crate::earnings_view::ViewCtx { today: tr_data::earnings::today_et(), mine: &earn_mine, query: q };
+                actions.extend(crate::earnings_view::pane(ui, e, &cx));
             }
             PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
             PaneKind::Edgar(e) => {

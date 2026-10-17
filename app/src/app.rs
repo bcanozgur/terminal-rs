@@ -10,6 +10,7 @@ mod demo;
 mod des_view;
 mod edgar_view;
 mod fa_view;
+mod earnings;
 mod hotkeys_view;
 mod options_view;
 mod palette_view;
@@ -37,6 +38,7 @@ use crate::chart_view::ChartState;
 use crate::command::{self, Command, Function};
 use crate::congress_view::{Action, FeedFilter};
 use crate::dock::{Node, PaneId};
+use crate::earnings_view::{self, ErnPane};
 use crate::layout::Layout;
 use crate::layouts::{LayoutDoc, Link, PaneSettings, Store, WindowGeometry};
 use crate::markets_view;
@@ -81,6 +83,8 @@ pub enum PaneKind {
     Settings,
     /// SEC EDGAR security description (`DES`) or financial analysis (`FA`).
     Edgar(Box<edgar_view::EdgarPane>),
+    /// Earnings calendar (`ERN`) or one ticker's history (`AAPL ERN`).
+    Earnings(Box<ErnPane>),
 }
 
 pub struct OptionsPane {
@@ -198,6 +202,10 @@ impl PaneKind {
             PaneKind::Portfolio(p) => p.title(),
             PaneKind::Settings => "Settings".into(),
             PaneKind::Edgar(e) => e.title(),
+            PaneKind::Earnings(e) => match &e.symbol {
+                Some(s) => format!("{} Earnings", short(s)),
+                None => "Earnings".into(),
+            },
         }
     }
 
@@ -220,6 +228,7 @@ impl PaneKind {
             PaneKind::Portfolio(p) => p.view.code(),
             PaneKind::Settings => "PDF",
             PaneKind::Edgar(e) => e.code(),
+            PaneKind::Earnings(_) => "ERN",
         }
     }
 
@@ -232,6 +241,7 @@ impl PaneKind {
             PaneKind::OrderBook(b) => Some(&b.symbol),
             PaneKind::Options(o) => Some(&o.symbol),
             PaneKind::Edgar(e) => Some(&e.symbol),
+            PaneKind::Earnings(e) => e.symbol.as_deref(),
             _ => None,
         }
     }
@@ -248,6 +258,7 @@ impl PaneKind {
             PaneKind::Wei => "Filter by ticker or name…",
             PaneKind::News(_) => "Filter headlines…",
             PaneKind::Portfolio(_) => "Filter by symbol…",
+            PaneKind::Earnings(_) => "Filter by ticker or company…",
             _ => return None,
         })
     }
@@ -261,7 +272,7 @@ impl PaneKind {
                 | PaneKind::OrderBook(_)
                 | PaneKind::Options(_)
                 | PaneKind::Edgar(_)
-        )
+        ) || matches!(self, PaneKind::Earnings(e) if e.symbol.is_some())
     }
 
     fn settings(&self) -> PaneSettings {
@@ -300,6 +311,7 @@ impl PaneKind {
             PaneKind::Options(o) => {
                 PaneSettings::Options { symbol: o.symbol.clone(), strikes: o.strikes, greeks: o.show_greeks }
             }
+            PaneKind::Earnings(e) => PaneSettings::Earnings { symbol: e.symbol.clone(), scope: e.scope, cap: e.cap },
             PaneKind::Portfolio(p) => PaneSettings::Portfolio {
                 view: p.view,
                 account: p.account.clone(),
@@ -359,6 +371,10 @@ impl PaneKind {
             PaneSettings::Options { symbol, strikes, greeks } => {
                 PaneKind::Options(Box::new(OptionsPane::new(&symbol, strikes, greeks)))
             }
+            PaneSettings::Earnings { symbol, scope, cap } => PaneKind::Earnings(Box::new(match symbol {
+                Some(s) => ErnPane::ticker(&s),
+                None => ErnPane::calendar(scope, cap),
+            })),
             PaneSettings::Portfolio { view, account, symbol, sort, open_only } => {
                 PaneKind::Portfolio(Box::new(broker::PortfolioPane {
                     view,
@@ -561,6 +577,8 @@ pub struct TerminalApp {
     congress_status: String,
     /// When the last Congress ingest finished.
     congress_checked: Option<chrono::DateTime<chrono::Local>>,
+    /// Earnings toasts already shown and the last watchlist check.
+    earn: earnings_view::EarningsState,
 
     watchlist: Vec<String>,
     quotes: HashMap<String, Quote>,
@@ -707,6 +725,7 @@ impl TerminalApp {
             alerts: Vec::new(),
             congress_status: String::new(),
             congress_checked: None,
+            earn: Default::default(),
             watchlist: DEFAULT_WATCHLIST.map(String::from).to_vec(),
             quotes: HashMap::new(),
             last_quotes: None,
@@ -860,6 +879,10 @@ impl TerminalApp {
                 self.open_panel(PaneKind::Options(Box::new(OptionsPane::new(&s, 12, true))));
                 self.status = format!("{s}: option chain");
             }
+            Command::SymbolFunction(s, Function::Earnings) => {
+                self.open_earnings(Some(&s));
+                self.status = format!("{s}: earnings history");
+            }
             Command::SymbolFunction(s, Function::Portfolio(view, arg)) => self.portfolio_command(view, &arg, Some(s)),
             Command::SymbolFunction(s, Function::Trade(mut t)) => {
                 t.symbol = Some(s);
@@ -963,6 +986,8 @@ impl TerminalApp {
                 let sym = self.optionable_symbol();
                 self.open_panel(PaneKind::Options(Box::new(OptionsPane::new(&sym, 12, true))));
             }
+            Function::Earnings => self.open_earnings(symbol.as_deref()),
+            Function::EarningsMarkers => self.with_chart(|c, _| c.earnings.show = !c.earnings.show),
             Function::Sidebar(arg) => {
                 let side = &mut self.prefs.appearance.sidebar_side;
                 match arg.as_str() {
@@ -1074,6 +1099,7 @@ impl TerminalApp {
                         c.on_studies(generation, built);
                     }
                 }
+                Response::Earnings(r) => self.on_earnings(r),
                 Response::Markers { pane, symbol, trades } => {
                     if let Some(c) = self.chart_mut(pane) {
                         c.on_markers(&symbol, trades);
@@ -1497,6 +1523,7 @@ impl TerminalApp {
             }
         }
         self.broker_periodic(&visible);
+        self.earnings_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

@@ -253,6 +253,8 @@ impl TerminalApp {
                     (&["OB", "BTCUSD CRNCY OB 50"], "Order book depth"),
                     (&["OMON", "AAPL OMON", "SPX INDEX OMON"], "Option chain: calls/puts by strike, IV, greeks"),
                     (&["CONG", "NVDA CONG"], "Congress trades feed / who traded a ticker"),
+                    (&["ERN", "EVTS", "AAPL ERN"], "Earnings calendar by week / a security's report history"),
+                    (&["EE"], "Toggle earnings markers (E) on the chart"),
                     (&["POL", "POL PELOSI", "TRACK PELOSI"], "Politicians, profiles and alerts"),
                     (&["WL", "WL ADD SOLUSD CRNCY"], "Watchlist"),
                     (&["PREFS"], "Settings: theme, fonts, density, hotkeys, layouts"),

@@ -139,3 +139,28 @@ async fn edgar_profile_and_financials() {
     assert!(tr_data::edgar::company(&dir, "BTCUSD Curncy", &ua).await.is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+mod earnings {
+    use tr_data::earnings::{Nasdaq, Timing};
+
+    #[tokio::test]
+    #[ignore = "network"]
+    async fn nasdaq_calendar_and_history() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let n = Nasdaq::new().unwrap();
+        // Mid-quarter weekdays can be empty; scan the last two weeks for a busy one.
+        let today = chrono::Utc::now().date_naive();
+        let mut best = 0;
+        for back in 1..15 {
+            let d = today - chrono::Duration::days(back);
+            if chrono::Datelike::weekday(&d).number_from_monday() > 5 {
+                continue;
+            }
+            best = best.max(n.calendar(d).await.unwrap().len());
+        }
+        assert!(best > 0, "no earnings in the last two weeks");
+        let r = n.reported("AAPL").await.unwrap();
+        assert!(r.len() >= 3 && r[0].eps.is_some());
+        let _ = Timing::Unknown;
+    }
+}

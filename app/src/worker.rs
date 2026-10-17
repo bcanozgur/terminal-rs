@@ -141,6 +141,8 @@ pub enum Request {
         symbol: String,
         user_agent: String,
     },
+    /// Earnings calendar and history (see `earnings_worker`).
+    Earnings(crate::earnings_worker::EarnReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -305,6 +307,7 @@ pub enum Response {
         symbol: String,
         company: Result<Arc<tr_data::edgar::Company>, String>,
     },
+    Earnings(crate::earnings_worker::EarnResp),
 }
 
 pub struct Worker {
@@ -775,6 +778,9 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             let dir = tr_data::edgar::cache_dir(&data_dir());
             let company = tr_data::edgar::company(&dir, &symbol, &ua).await.map(Arc::new).map_err(|e| format!("{e:#}"));
             s.send(Response::Edgar { pane, symbol, company });
+        }
+        Request::Earnings(r) => {
+            crate::earnings_worker::handle(r, &s.provider, &|r| s.send(Response::Earnings(r))).await
         }
     }
 }

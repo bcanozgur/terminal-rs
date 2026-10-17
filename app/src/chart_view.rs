@@ -1,6 +1,8 @@
 //! Chart pane: GPU-rendered price/volume/indicator panes with egui-drawn axes, legend,
 //! crosshair, drawings and congressional trade markers.
 
+mod earnings_markers;
+
 use std::sync::Arc;
 
 use egui::{
@@ -51,6 +53,8 @@ pub struct ChartState {
     pub watched: bool,
     pub show_volume: bool,
     pub show_congress: bool,
+    /// Earnings "E" markers (report dates with EPS, surprise and price move).
+    pub earnings: crate::earnings_view::ChartEarnings,
     pub indicators: Vec<IndicatorSpec>,
     /// Plug-in studies ([`crate::studies`]) with their settings.
     pub studies: Vec<StudyConfig>,
@@ -111,6 +115,7 @@ impl ChartState {
             watched: false,
             show_volume: true,
             show_congress: true,
+            earnings: Default::default(),
             indicators: vec![IndicatorSpec::Sma(20), IndicatorSpec::Sma(50)],
             studies: studies::defaults(),
             drawings: Vec::new(),
@@ -160,6 +165,7 @@ impl ChartState {
         self.manual_scale = None;
         self.compare_line = None;
         self.markers.clear();
+        self.earnings.clear();
         // Never show the previous symbol's bars under the new title.
         self.bars = Arc::new(Vec::new());
         self.gpu = None;
@@ -176,6 +182,12 @@ impl ChartState {
         self.last_live = None;
         if self.sec.has_congress_trades() {
             w.send(Request::Markers { pane: self.id, symbol: self.symbol.clone() });
+        }
+        if self.sec.class == AssetClass::Equity {
+            w.send(Request::Earnings(crate::earnings_worker::EarnReq::Ticker {
+                pane: self.id,
+                symbol: self.symbol.clone(),
+            }));
         }
     }
 
@@ -441,6 +453,12 @@ impl ChartState {
     pub fn on_compare(&mut self, generation: u64, symbol: &str, line: LineRef) {
         if generation == self.generation && self.compare.as_deref() == Some(symbol) {
             self.compare_line = Some(line);
+        }
+    }
+
+    pub fn on_earnings(&mut self, symbol: &str, data: tr_data::earnings::TickerEarnings) {
+        if tr_data::security(symbol).key() == self.symbol {
+            self.earnings.set(symbol, data);
         }
     }
 
@@ -909,6 +927,9 @@ impl ChartState {
         if self.show_congress {
             self.paint_markers(ui, price_rect, &v, &scale, hover);
         }
+        if self.earnings.show {
+            self.paint_earnings(ui, price_rect, &v, hover);
+        }
 
         // ---- crosshair + legend ----
         let hovered_bar = hover.and_then(|p| v.bar_at((p.x - price_rect.left()) as f64, len));
@@ -1100,6 +1121,9 @@ impl ChartState {
         ui.checkbox(&mut self.log, "Log Scale");
         ui.checkbox(&mut self.magnet, "Magnet");
         ui.checkbox(&mut self.show_volume, "Volume");
+        if self.sec.class == AssetClass::Equity {
+            ui.checkbox(&mut self.earnings.show, "Earnings Markers (E)");
+        }
         ui.separator();
         if ui.button("Add to Watchlist").clicked() {
             self.actions.push(Action::AddToWatchlist(self.symbol.clone()));

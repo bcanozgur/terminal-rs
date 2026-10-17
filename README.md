@@ -172,6 +172,17 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   requires a User-Agent with your name and email: set it in Settings › Panels (or
   `TR_SEC_USER_AGENT`). Requests are throttled below SEC's 10/s limit and cached under the app data
   folder (`edgar/`).
+- **Earnings calendar (`ERN` / `EVTS`)** — a week view (prev / this / next) of who reports,
+  grouped by day with BMO / AMC tags, consensus EPS, prior-year EPS (or the actual and surprise
+  once reported) and market cap; filter to your watchlist, lists and positions, or to all
+  companies above a market-cap floor. Click a row to load the ticker in linked panes. `AAPL ERN`
+  shows the history: report date, diluted EPS as filed with the SEC (EDGAR XBRL), Nasdaq's
+  consensus estimate and surprise, the close-to-close move around each report and the next date
+  (projected from the cadence when not yet announced). Equity charts get small **E** markers at
+  report dates (green/red by surprise, outlined for the next date) with a hover card; `EE`
+  toggles them (also in the chart's right-click menu). Watchlist symbols reporting today raise a
+  toast. Dates and estimates come from Nasdaq's public, unofficial calendar API, cached in
+  `earnings.sqlite3`; if it is unreachable the pane says so and shows cached data.
 
 ## Running
 
