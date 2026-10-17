@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tr_core::{AssetClass, Bar, Security, Timeframe, catalog};
 
-use crate::{Extended, ExtendedQuote, MarketData, Quote, SearchHit, Session, TradingSession};
+use crate::{Extended, ExtendedQuote, MarketData, Quote, QuoteSource, SearchHit, Session, TradingSession};
 
 const BASE: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
 
@@ -516,7 +516,16 @@ pub fn parse_spark(json: &str) -> Result<Vec<Quote>> {
         let prev =
             if closes.len() >= 2 { closes[closes.len() - 2] } else { d["chartPreviousClose"].as_f64().unwrap_or(last) };
         let ts = d["timestamp"].as_array().and_then(|a| a.last()).and_then(|t| t.as_i64()).unwrap_or_default();
-        out.push(Quote { symbol: sym.clone(), last, prev_close: prev, ts, spark: closes, extended: None });
+        out.push(Quote {
+            symbol: sym.clone(),
+            last,
+            prev_close: prev,
+            ts,
+            spark: closes,
+            extended: None,
+            source: QuoteSource::Yahoo,
+            traded: None,
+        });
     }
     Ok(out)
 }
@@ -527,14 +536,25 @@ impl YahooProvider {
     /// The latest pre-market or after-hours trade for each Yahoo symbol that has one (US
     /// listings only; the spark endpoint carries regular-session prices only).
     pub async fn extended(&self, symbols: &[String]) -> Result<Vec<(String, Extended)>> {
-        let mut out = Vec::new();
-        for chunk in symbols.chunks(50) {
-            out.extend(self.extended_chunk(chunk).await?);
-        }
-        Ok(out)
+        Ok(self.extended_and_times(symbols).await?.0)
     }
 
-    async fn extended_chunk(&self, symbols: &[String]) -> Result<Vec<(String, Extended)>> {
+    /// Extended-hours trades plus each symbol's last regular-session trade time, from the
+    /// same request (the spark endpoint only dates its daily bars).
+    pub async fn extended_and_times(
+        &self,
+        symbols: &[String],
+    ) -> Result<(Vec<(String, Extended)>, Vec<(String, i64)>)> {
+        let (mut ext, mut times) = (Vec::new(), Vec::new());
+        for chunk in symbols.chunks(50) {
+            let (e, t) = self.extended_chunk(chunk).await?;
+            ext.extend(e);
+            times.extend(t);
+        }
+        Ok((ext, times))
+    }
+
+    async fn extended_chunk(&self, symbols: &[String]) -> Result<(Vec<(String, Extended)>, Vec<(String, i64)>)> {
         let fields = "marketState,regularMarketPrice,regularMarketTime,preMarketPrice,preMarketChange,\
                       preMarketChangePercent,preMarketTime,postMarketPrice,postMarketChange,\
                       postMarketChangePercent,postMarketTime";
@@ -552,10 +572,20 @@ impl YahooProvider {
             if !status.is_success() {
                 bail!("yahoo quote: HTTP {status}");
             }
-            return parse_extended(&body, chrono::Utc::now().timestamp());
+            return Ok((parse_extended(&body, chrono::Utc::now().timestamp())?, parse_trade_times(&body)?));
         }
         Err(last_err.unwrap_or_else(|| anyhow!("yahoo quote failed")))
     }
+}
+
+/// Last regular-session trade time (`regularMarketTime`) per symbol from `/v7/finance/quote`.
+pub fn parse_trade_times(json: &str) -> Result<Vec<(String, i64)>> {
+    let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo quote")?;
+    let rows = v["quoteResponse"]["result"].as_array().ok_or_else(|| anyhow!("unexpected quote payload"))?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| Some((r["symbol"].as_str()?.to_string(), r["regularMarketTime"].as_i64().filter(|t| *t > 0)?)))
+        .collect())
 }
 
 /// Parse `/v7/finance/quote` into extended-hours trades. Outside regular hours the newer of
@@ -810,6 +840,13 @@ mod tests {
         assert_eq!(hits[0].key, "NVDA US Equity");
         assert!(hits.iter().any(|h| h.class == AssetClass::Etf));
         assert!(hits.iter().any(|h| h.class == AssetClass::Cmdty));
+    }
+
+    #[test]
+    fn trade_times_come_from_the_quote_payload() {
+        let json = r#"{"quoteResponse":{"result":[{"symbol":"AAPL","regularMarketTime":1791000000},
+            {"symbol":"EURUSD=X","regularMarketTime":0},{"symbol":"X"}]}}"#;
+        assert_eq!(parse_trade_times(json).unwrap(), vec![("AAPL".to_string(), 1_791_000_000)]);
     }
 
     #[test]

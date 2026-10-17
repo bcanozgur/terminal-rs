@@ -102,25 +102,27 @@ impl MarketData for Markets {
                     return Ok(vec![]);
                 }
                 let ys: Vec<String> = other.iter().map(|(_, s)| yahoo_symbol(s)).collect();
-                // Stocks and ETFs also trade before and after the US session; that price is
-                // a nicety, so a failed lookup never costs the regular quotes.
+                // The same request dates each symbol's last trade (staleness) and, for stocks
+                // and ETFs, carries the pre- and post-market price. Both are niceties, so a
+                // failed lookup never costs the regular quotes.
                 let stocks: Vec<String> = other
                     .iter()
                     .zip(&ys)
                     .filter(|((_, s), _)| matches!(s.class, AssetClass::Equity | AssetClass::Etf))
                     .map(|(_, y)| y.clone())
                     .collect();
-                let (quotes, ext) = tokio::join!(self.yahoo.quotes(&ys), async {
-                    if stocks.is_empty() { Ok(Vec::new()) } else { self.yahoo.extended(&stocks).await }
-                });
+                let (quotes, ext) = tokio::join!(self.yahoo.quotes(&ys), self.yahoo.extended_and_times(&ys));
                 let mut quotes = quotes?;
                 match ext {
-                    Ok(ext) => {
+                    Ok((ext, times)) => {
                         for q in &mut quotes {
-                            q.extended = ext.iter().find(|(s, _)| *s == q.symbol).map(|(_, e)| *e);
+                            q.traded = times.iter().find(|(s, _)| *s == q.symbol).map(|(_, t)| *t);
+                            if stocks.contains(&q.symbol) {
+                                q.extended = ext.iter().find(|(s, _)| *s == q.symbol).map(|(_, e)| *e);
+                            }
                         }
                     }
-                    Err(e) => tracing::debug!("yahoo extended hours: {e:#}"),
+                    Err(e) => tracing::debug!("yahoo trade times and extended hours: {e:#}"),
                 }
                 // Map Yahoo symbols back to the caller's market keys.
                 Ok::<_, anyhow::Error>(

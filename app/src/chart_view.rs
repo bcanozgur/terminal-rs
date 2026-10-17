@@ -19,6 +19,7 @@ use tr_core::{AssetClass, Bar, Security, Timeframe};
 
 use crate::command::{IndicatorSpec, Range};
 use crate::congress_view::Action;
+use crate::quote_tag;
 use crate::studies::{self, BuiltStudy, StudyConfig};
 use crate::theme::{self, amber, amber_dim, mono, muted, text, ui_font};
 use crate::widgets;
@@ -98,6 +99,8 @@ pub struct ChartState {
     pub actions: Vec<Action>,
     /// False while a pane is being dragged over the workspace: no crosshair or hover cards.
     pub hover_enabled: bool,
+    /// Latest quote for the symbol (set by the app each frame): source, delay, staleness.
+    pub quote: Option<tr_data::Quote>,
     /// The workspace drew this chart's controls in the pane's tab strip, so skip the
     /// header row and give the plot the space.
     pub controls_in_strip: bool,
@@ -152,6 +155,7 @@ impl ChartState {
             last_indicator_req: None,
             actions: Vec::new(),
             hover_enabled: true,
+            quote: None,
             controls_in_strip: false,
         }
     }
@@ -1246,6 +1250,16 @@ impl ChartState {
             put(format!("{k}{val:.dec$}"), col, &mut x);
         }
         put(format!("{:+.dec$} ({:+.2}%)", chg, if prev != 0.0 { chg / prev * 100.0 } else { 0.0 }), col, &mut x);
+        if let Some(q) = &self.quote {
+            let now = quote_tag::now();
+            if let Some(t) = quote_tag::tag(q, now) {
+                let x0 = x;
+                put(t.text, t.color, &mut x);
+                let r = Rect::from_min_max(pos2(x0, y), pos2(x - 8.0, y + 14.0)).intersect(price_rect);
+                ui.interact(r, ui.id().with((self.id, "quote-tag")), Sense::hover())
+                    .on_hover_text(quote_tag::tooltip(q, now));
+            }
+        }
         put(format!("Vol {}", scale::format_volume(b.volume)), muted(), &mut x);
 
         // Overlay indicator values, one per line.

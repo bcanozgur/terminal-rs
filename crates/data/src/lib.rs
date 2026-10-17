@@ -19,6 +19,7 @@ pub mod crypto;
 pub mod earnings;
 pub mod eco;
 pub mod edgar;
+pub mod freshness;
 pub mod markets;
 pub mod rss;
 pub mod sample;
@@ -34,6 +35,7 @@ use tokio::sync::mpsc;
 use tr_core::{AssetClass, Bar, Security, Timeframe, catalog};
 
 pub use cache::BarCache;
+pub use freshness::{Health, Market, QuoteSource, Timeliness};
 
 /// Latest quote for a symbol.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,6 +50,13 @@ pub struct Quote {
     /// The latest US pre-market or after-hours trade, when it is newer than `last`.
     #[serde(default)]
     pub extended: Option<Extended>,
+    /// The provider that produced the quote.
+    #[serde(default)]
+    pub source: QuoteSource,
+    /// Time of the last trade (Unix seconds) when the source reports it; `ts` can be just a
+    /// daily bar's time.
+    #[serde(default)]
+    pub traded: Option<i64>,
 }
 
 /// A US extended-hours session (Eastern time; Turkey is +7h, or +6h while the US is on
@@ -288,6 +297,11 @@ pub trait MarketData: Send + Sync {
     /// oldest bar already held.
     async fn history(&self, symbol: &str, tf: Timeframe, end: Option<i64>, limit: usize) -> Result<Vec<Bar>>;
 
+    /// What the default [`MarketData::quotes`] stamps on the quotes it derives.
+    fn quote_source(&self) -> QuoteSource {
+        QuoteSource::Unknown
+    }
+
     /// Latest quotes for `symbols`. The default derives them from daily history.
     async fn quotes(&self, symbols: &[String]) -> Result<Vec<Quote>> {
         let mut out = Vec::with_capacity(symbols.len());
@@ -302,6 +316,8 @@ pub trait MarketData: Send + Sync {
                     ts: last.ts,
                     spark: vec![],
                     extended: None,
+                    source: self.quote_source(),
+                    traded: None,
                 });
             }
         }
@@ -419,6 +435,7 @@ impl<P: MarketData> MarketData for Fallback<P> {
                     symbols.iter().filter(|s| !q.iter().any(|x| &x.symbol == *s)).cloned().collect();
                 if !missing.is_empty() && q.is_empty() {
                     q.extend(self.sample.quotes(&missing).await.unwrap_or_default());
+                    tracing::warn!("{} returned no quotes, using sample data", self.name);
                 }
                 Ok(q)
             }
@@ -674,7 +691,16 @@ mod tests {
 
     #[test]
     fn quote_change() {
-        let q = Quote { symbol: "X".into(), last: 110.0, prev_close: 100.0, ts: 0, spark: vec![], extended: None };
+        let q = Quote {
+            symbol: "X".into(),
+            last: 110.0,
+            prev_close: 100.0,
+            ts: 0,
+            spark: vec![],
+            extended: None,
+            source: QuoteSource::Unknown,
+            traded: None,
+        };
         assert_eq!(q.change(), 10.0);
         assert!((q.change_pct() - 10.0).abs() < 1e-9);
     }

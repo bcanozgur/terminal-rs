@@ -8,6 +8,7 @@ use tr_data::OrderBook;
 use super::{PaneKind, TerminalApp};
 use crate::congress_view::{self, Action};
 use crate::markets_view;
+use crate::quote_tag;
 use crate::theme::{self, amber, dp, mono, muted, text, ui_font};
 use crate::widgets;
 use crate::worker::Request;
@@ -20,6 +21,7 @@ impl TerminalApp {
         let dragging = self.drag.is_some_and(|d| d.active);
         if let PaneKind::Chart(c) = &mut self.panes[i].kind {
             c.hover_enabled = !dragging;
+            c.quote = self.quotes.get(&c.symbol).cloned();
             let clicked = c.show(ui, rect, focused, &self.worker);
             actions.append(&mut c.actions);
             return (actions, clicked);
@@ -211,6 +213,7 @@ impl TerminalApp {
         }
         let mut remove = None;
         let mut moved = None;
+        let now = quote_tag::now();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             let mut reorder = widgets::Reorder::new(egui::Id::new("wl-pane-reorder"));
             for s in &keys {
@@ -219,7 +222,14 @@ impl TerminalApp {
                 reorder.row(r, &resp);
                 widgets::hover_wash(ui, r, &resp, false);
                 let p = ui.painter();
-                p.text(pos2(col(r, 0), r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.5), amber());
+                let name = p.text(pos2(col(r, 0), r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.5), amber());
+                let mut tip = None;
+                if let Some(q) = self.quotes.get(s)
+                    && let Some(c) = quote_tag::marker(q, now)
+                {
+                    p.circle_filled(pos2(name.right() + 6.0, r.center().y), 2.5, c);
+                    tip = Some(quote_tag::tooltip(q, now));
+                }
                 p.text(
                     pos2(col(r, 0) + 74.0, r.center().y),
                     Align2::LEFT_CENTER,
@@ -266,6 +276,10 @@ impl TerminalApp {
                     None if resp.clicked() => out.push(Action::OpenChart(s.clone())),
                     None => {}
                 }
+                let resp = match tip {
+                    Some(t) => resp.on_hover_text(t),
+                    None => resp,
+                };
                 resp.context_menu(|ui| {
                     if tradable {
                         for (label, side) in [("Buy", "BUY"), ("Sell", "SELL")] {

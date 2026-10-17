@@ -13,6 +13,7 @@ use tr_data::edgar::{self, Company, Statement};
 use crate::congress_view::Action;
 use crate::layouts::PaneSettings;
 use crate::prefs::PanelDefaults;
+use crate::quote_tag;
 use crate::theme::{self, amber, mono, muted, text, ui_font};
 use crate::widgets;
 
@@ -305,6 +306,11 @@ fn header(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote>, out: 
             let ch = q.change_pct();
             let col = if ch >= 0.0 { theme::up() } else { theme::down() };
             ui.label(RichText::new(format!("{ch:+.2}%")).font(mono(12.0)).color(col));
+            let now = quote_tag::now();
+            if let Some(t) = quote_tag::tag(q, now) {
+                ui.label(RichText::new(t.text).font(ui_font(10.5)).color(t.color))
+                    .on_hover_text(quote_tag::tooltip(q, now));
+            }
         }
         if p.loading {
             ui.add(egui::Spinner::new().size(12.0));
