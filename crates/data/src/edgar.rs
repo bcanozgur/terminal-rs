@@ -490,6 +490,8 @@ pub struct Financials {
     pub shares_as_of: Option<NaiveDate>,
     /// Where the share count came from (`cover page`, `balance sheet`, `diluted average`).
     pub shares_source: &'static str,
+    /// `quarterly` holds year-to-date totals (3M, 6M, 9M, 12M) rather than single quarters.
+    pub quarterly_ytd: bool,
 }
 
 /// Snapshot valuation from a live price.
@@ -517,6 +519,17 @@ impl Financials {
     pub fn ttm(&self, m: Metric) -> Option<f64> {
         let annual = self.annual.last();
         let q = &self.quarterly;
+        if self.quarterly_ytd {
+            // Latest year-to-date + last fiscal year − the same year-to-date a year earlier.
+            if let (Some(a), Some(last)) = (annual, q.last())
+                && last.end > a.end
+                && let Some(before) = prior_year(q, q.len() - 1)
+                && let (Some(x), Some(y), Some(z)) = (last.get(m), a.get(m), before.get(m))
+            {
+                return Some(x + y - z);
+            }
+            return annual.and_then(|a| a.get(m));
+        }
         if q.len() >= 4 {
             let last4 = &q[q.len() - 4..];
             let contiguous = last4.windows(2).all(|w| (80..=100).contains(&(w[1].end - w[0].end).num_days()));
@@ -888,6 +901,7 @@ pub fn parse_companyfacts(json: &str) -> Result<Financials> {
         shares_outstanding: shares.map(|s| s.0),
         shares_as_of: shares.map(|s| s.1),
         shares_source: shares.map_or("", |s| s.2),
+        quarterly_ytd: false,
     })
 }
 

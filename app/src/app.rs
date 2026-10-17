@@ -284,8 +284,8 @@ impl PaneKind {
             PaneKind::Edgar(e) if e.fa => {
                 "Financials (FA): income statement, balance sheet, cash flow and ratios, annual or quarterly. US \
                  companies from SEC filings (XBRL); Borsa Istanbul companies (e.g. THYAO, AKBNK) from İş Yatırım, \
-                 with a TRY / USD switch because TMS 29 inflation accounting distorts TRY comparisons, and banks \
-                 on their own template. Type a ticker in the box and press Enter; click a row to chart that line."
+                 with a TRY / USD switch because TMS 29 inflation accounting distorts TRY comparisons, banks on \
+                 their own template, and year-to-date periods (3M/6M/9M) as published instead of single quarters. Type a ticker in the box and press Enter; click a row to chart that line."
             }
             PaneKind::Edgar(_) => {
                 "Description (DES): company profile, key figures and valuation at the live price. US companies \

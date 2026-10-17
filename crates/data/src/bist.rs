@@ -4,7 +4,10 @@
 //! - İş Yatırım `Common/Data.aspx/MaliTablo`: full statements per quarter-end (TRY or USD),
 //!   up to four periods per call. Industrial companies use the `XI_29` template, banks
 //!   `UFRS` (consolidated) or `UFRS_K` (solo). Income-statement and cash-flow values are
-//!   cumulative year-to-date, so quarters are de-cumulated here.
+//!   cumulative year-to-date and are shown that way (3M/6M/9M/12M). They are not split into
+//!   single quarters: under TMS 29 each figure is in the prices of the report it was taken
+//!   from, and İş Yatırım serves periods from different reports (a year-end may come from the
+//!   next year's report, in its prices), so differences between them are not quarters.
 //! - İş Yatırım company card (HTML): trade name, business, address, paid-in capital, free
 //!   float, foreign ownership and the shareholder structure.
 //!
@@ -194,40 +197,26 @@ fn lines(s: &Snapshot, bank: bool) -> Lines {
     Lines { flows, instants, capital: s.get(&["2OA"]).filter(|c| *c > 0.0) }
 }
 
-fn period(s: &Snapshot, bank: bool, prev_ytd: Option<&Snapshot>, annual: bool) -> Option<Period> {
+/// One column: the fiscal year (`annual`) or the year-to-date total at a quarter-end.
+fn period(s: &Snapshot, bank: bool, annual: bool) -> Option<Period> {
     let end = s.end()?;
     let cur = lines(s, bank);
     let mut values = cur.instants;
-    // Quarterly flows are the year-to-date figure less the previous quarter's; the first
-    // quarter of a year is its own year-to-date.
-    let prev = prev_ytd.map(|p| lines(p, bank).flows);
-    for (m, v) in cur.flows {
-        let q = if annual || s.month == 3 { Some(v) } else { prev.as_ref().and_then(|p| p.get(&m)).map(|p| v - p) };
-        if let Some(q) = q {
-            values.insert(m, q);
-        }
-    }
+    values.extend(cur.flows);
     if let (Some(ni), Some(cap)) = (values.get(&Metric::NetIncome).copied(), cur.capital) {
         values.insert(Metric::EpsDiluted, ni / cap);
     }
-    crate::edgar::derive(&mut values, if annual { 1.0 } else { 0.25 });
-    let label = if annual { format!("FY{}", s.year) } else { format!("Q{} FY{:02}", s.month / 3, s.year % 100) };
+    crate::edgar::derive(&mut values, s.month as f64 / 12.0);
+    let label = if annual { format!("FY{}", s.year) } else { format!("{}M FY{:02}", s.month, s.year % 100) };
     Some(Period { end, label, values })
 }
 
-/// Annual and quarterly statements from quarter-end snapshots (any order).
+/// Annual statements and year-to-date quarter-end columns from snapshots (any order).
 pub fn build_financials(snaps: &[Snapshot], bank: bool, entity: &str) -> Financials {
     let mut sorted: Vec<&Snapshot> = snaps.iter().filter(|s| s.month % 3 == 0 && (3..=12).contains(&s.month)).collect();
     sorted.sort_by_key(|s| (s.year, s.month));
-    let find = |y: i32, m: u32| sorted.iter().copied().find(|s| s.year == y && s.month == m);
-    let annual = sorted.iter().filter(|s| s.month == 12).filter_map(|s| period(s, bank, None, true)).collect();
-    let quarterly = sorted
-        .iter()
-        .filter_map(|s| {
-            let prev = if s.month > 3 { find(s.year, s.month - 3) } else { None };
-            period(s, bank, prev, false)
-        })
-        .collect();
+    let annual = sorted.iter().filter(|s| s.month == 12).filter_map(|s| period(s, bank, true)).collect();
+    let quarterly = sorted.iter().filter_map(|s| period(s, bank, false)).collect();
     let capital = sorted.iter().rev().find_map(|s| lines(s, bank).capital);
     Financials {
         entity: entity.into(),
@@ -236,6 +225,7 @@ pub fn build_financials(snaps: &[Snapshot], bank: bool, entity: &str) -> Financi
         shares_outstanding: capital,
         shares_as_of: sorted.last().and_then(|s| s.end()),
         shares_source: "paid-in capital at 1 TL nominal",
+        quarterly_ytd: true,
     }
 }
 
@@ -580,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn industrial_statements_decumulate() {
+    fn industrial_statements_year_to_date() {
         let snaps = parse_malitablo(&fixture("isyatirim_malitablo_thyao.json"), &PERIODS).unwrap();
         assert_eq!(snaps.len(), 4);
         let f = build_financials(&snaps, false, "Türk Hava Yolları");
@@ -589,33 +579,32 @@ mod tests {
         assert_eq!(fy24.label, "FY2024");
         assert_eq!(fy24.get(Metric::Revenue), Some(975_710_686_451.0));
         assert_eq!(fy24.get(Metric::NetIncome), Some(148_403_104_528.0));
-        // Quarterly: Q1 is its own YTD, Q2 = H1 − Q1, Q4 = FY − 9M.
+        // Quarter-ends hold year-to-date totals as published (no subtraction across reports).
+        assert!(f.quarterly_ytd);
         let q = |end: &str| f.quarterly.iter().find(|p| p.end == d(end)).unwrap_or_else(|| panic!("{end}"));
-        assert_eq!(q("2025-03-31").label, "Q1 FY25");
+        assert_eq!(q("2025-03-31").label, "3M FY25");
+        assert_eq!(q("2025-06-30").label, "6M FY25");
         assert_eq!(q("2025-03-31").get(Metric::Revenue), Some(176_712_000_000.0));
-        assert_eq!(q("2025-06-30").get(Metric::Revenue), Some(408_036_000_000.0 - 176_712_000_000.0));
-        assert_eq!(q("2025-06-30").get(Metric::NetIncome), Some(25_013_000_000.0 + 1_818_000_000.0));
-        assert_eq!(
-            q("2024-12-31").get(Metric::Revenue),
-            Some(975_710_686_451.0 - 551_928_000_000.0),
-            "Q4 derived from FY − 9M"
-        );
-        // The Q3 2024 quarter has no Q2 snapshot to subtract, so its flows are absent.
-        assert_eq!(q("2024-09-30").get(Metric::Revenue), None);
+        assert_eq!(q("2025-06-30").get(Metric::Revenue), Some(408_036_000_000.0));
+        assert_eq!(q("2025-06-30").get(Metric::NetIncome), Some(25_013_000_000.0));
+        assert_eq!(q("2024-12-31").get(Metric::Revenue), Some(975_710_686_451.0));
+        assert_eq!(q("2024-09-30").get(Metric::Revenue), Some(551_928_000_000.0));
+        // TTM = 6M FY25 + FY2024 − 6M FY24 (not in this fixture, so the last fiscal year).
+        assert_eq!(f.ttm(Metric::Revenue), Some(975_710_686_451.0));
         // Balance sheet is point-in-time.
         assert_eq!(q("2025-06-30").get(Metric::TotalAssets), Some(1_652_589_000_000.0));
         assert_eq!(q("2025-06-30").get(Metric::Equity), Some(752_073_000_000.0));
         assert_eq!(q("2025-06-30").get(Metric::TotalLiabilities), Some(1_652_589_000_000.0 - 752_120_000_000.0));
         assert_eq!(q("2025-06-30").get(Metric::Debt), Some(138_324_000_000.0 + 446_268_000_000.0));
         assert_eq!(q("2025-06-30").get(Metric::Cash), Some(98_791_000_000.0 + 150_560_000_000.0));
-        // Cash flow: de-cumulated OCF and positive capex; FCF and margins derived.
-        assert_eq!(q("2025-06-30").get(Metric::OperatingCashFlow), Some(105_659_000_000.0 - 34_510_000_000.0));
-        assert_eq!(q("2025-06-30").get(Metric::Capex), Some(35_408_000_000.0 - 10_998_000_000.0));
+        // Cash flow: year-to-date OCF and positive capex; FCF and margins derived.
+        assert_eq!(q("2025-06-30").get(Metric::OperatingCashFlow), Some(105_659_000_000.0));
+        assert_eq!(q("2025-06-30").get(Metric::Capex), Some(35_408_000_000.0));
         assert!(q("2025-06-30").get(Metric::FreeCashFlow).is_some());
         assert!(q("2025-06-30").get(Metric::GrossMargin).is_some_and(|m| m > 0.0 && m < 0.5));
         // EPS from net income over the 1 TL-nominal share count (1.38 bn shares).
         let eps = q("2025-06-30").get(Metric::EpsDiluted).unwrap();
-        assert!((eps - 26_831_000_000.0 / 1_380_000_000.0).abs() < 1e-9, "{eps}");
+        assert!((eps - 25_013_000_000.0 / 1_380_000_000.0).abs() < 1e-9, "{eps}");
         assert_eq!(f.shares_outstanding, Some(1_380_000_000.0));
     }
 
@@ -627,9 +616,10 @@ mod tests {
         let h1 = q("2025-06-30");
         assert_eq!(h1.get(Metric::TotalAssets), Some(2_818_347_573_000.0));
         assert_eq!(h1.get(Metric::Equity), Some(258_900_893_000.0));
-        assert_eq!(h1.get(Metric::NetIncome), Some(24_851_000_000.0 - 13_727_079_000.0));
-        assert_eq!(h1.get(Metric::Revenue), Some(92_661_000_000.0 - 49_211_210_000.0));
-        assert_eq!(h1.get(Metric::GrossProfit), Some(36_444_000_000.0 - 17_874_867_000.0), "net interest income");
+        assert_eq!(h1.label, "6M FY25");
+        assert_eq!(h1.get(Metric::NetIncome), Some(24_851_000_000.0));
+        assert_eq!(h1.get(Metric::Revenue), Some(92_661_000_000.0));
+        assert_eq!(h1.get(Metric::GrossProfit), Some(36_444_000_000.0), "net interest income");
         assert_eq!(h1.get(Metric::Cash), Some(429_829_704_000.0));
         assert_eq!(h1.get(Metric::Debt), Some(128_386_386_000.0 + 131_797_701_000.0 + 76_805_130_000.0));
         assert_eq!(h1.get(Metric::OperatingCashFlow), None, "banks have no cash-flow lines here");

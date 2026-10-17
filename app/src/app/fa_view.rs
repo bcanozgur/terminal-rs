@@ -142,8 +142,9 @@ pub(super) fn fa_bist(ui: &mut Ui, p: &mut EdgarPane, c: &BistCompany, price: Op
              EPS = net income / paid-in capital at 1 TL nominal"
         ),
         note_quarterly: &format!(
-            "Source: İş Yatırım MaliTablo · {template} · {unit} · quarters de-cumulated from year-to-date \
-             figures · EPS = net income / paid-in capital at 1 TL nominal"
+            "Source: İş Yatırım MaliTablo · {template} · {unit} · year-to-date totals as published (3M/6M/9M/12M), \
+             not split into quarters: under TMS 29 each period is in the prices of the report it comes from, so \
+             differences between them are not quarters · EPS = net income / paid-in capital at 1 TL nominal"
         ),
     };
     match &c.financials {
@@ -166,7 +167,7 @@ fn fa_body(ui: &mut Ui, p: &mut EdgarPane, f: &Financials, price: Option<f64>, o
         if let Some(i) = widgets::segmented(
             ui,
             ("fa-freq", &p.symbol),
-            &["Annual", "Quarterly"],
+            &["Annual", if f.quarterly_ytd { "Year-to-date" } else { "Quarterly" }],
             Some(usize::from(p.quarterly)),
             20.0,
         ) {
