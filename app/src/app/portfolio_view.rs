@@ -986,7 +986,7 @@ fn positions(
         Col { sort: Some(PosSort::Value), ..col("Value", 1.3, true) },
         Col { sort: Some(PosSort::Pnl), ..col("P&L", 1.3, true) },
         Col { sort: Some(PosSort::PnlPct), ..col("P&L %", 1.0, true) },
-        opt(col("Day P&L", 1.2, true), 3),
+        opt(col("Day P&L", 1.2, true), 1),
         opt(col("Weight", 0.8, true), 4),
     ];
     if all {
