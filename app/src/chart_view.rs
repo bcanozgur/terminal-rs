@@ -18,6 +18,7 @@ use tr_congress::{Trade, TxType};
 use tr_core::{AssetClass, Bar, Security, Timeframe};
 use tr_data::Timeliness;
 
+use crate::alerts::{ChartAlert, Condition, Metric, Op, RuleOp, Spec, Target};
 use crate::command::{IndicatorSpec, Range};
 use crate::congress_view::Action;
 use crate::quote_tag;
@@ -34,6 +35,35 @@ const RANGE_H: f32 = 18.0;
 /// Height of the interval / chart-type segmented controls.
 pub const CONTROL_H: f32 = 20.0;
 const DEFAULT_VISIBLE: usize = 160;
+
+/// State of the compact alert popup: a new alert at a clicked price, or an existing one.
+struct AlertDraft {
+    /// The rule being edited (`None` = a new alert).
+    edit: Option<u64>,
+    price: String,
+    op: Op,
+    note: String,
+    /// Where the pointer was; the popup opens beside it.
+    at: Pos2,
+    focus_price: bool,
+}
+
+/// Condition choices in the alert popup.
+const ALERT_OPS: [(Op, &str); 5] = [
+    (Op::CrossAbove, "Crossing up"),
+    (Op::CrossBelow, "Crossing down"),
+    (Op::Cross, "Crossing"),
+    (Op::Above, "Greater than or equal"),
+    (Op::Below, "Less than or equal"),
+];
+
+/// Price at a vertical position within the price pane.
+fn price_at_y(s: &PriceScale, top: f32, y: f32) -> f64 {
+    s.price_at((y - top) as f64)
+}
+
+/// Distance in points within which a click picks an existing alert line or its axis tag.
+const ALERT_HIT: f32 = 8.0;
 
 #[derive(Default)]
 struct DrawState {
@@ -53,8 +83,12 @@ pub struct ChartState {
     pub currency: Option<String>,
     /// Whether the symbol is already on the watchlist (set by the app each frame).
     pub watched: bool,
-    /// Price levels of armed alerts on this security (set by the app each frame).
-    pub alert_levels: Vec<f64>,
+    /// Armed price alerts on this security, drawn as lines (set by the app each frame).
+    pub alert_lines: Vec<ChartAlert>,
+    /// The create / edit alert popup, when open.
+    alert_draft: Option<AlertDraft>,
+    /// The alert line under the pointer at the last right-click (id, pointer position).
+    menu_alert: Option<(u64, Pos2)>,
     /// Price under the pointer at the last right-click, and the price of a horizontal line
     /// drawn there (the context menu's "Alert at" entries).
     menu_at: Option<(f64, Option<f64>)>,
@@ -122,7 +156,9 @@ impl ChartState {
             magnet: false,
             currency: None,
             watched: false,
-            alert_levels: Vec::new(),
+            alert_lines: Vec::new(),
+            alert_draft: None,
+            menu_alert: None,
             menu_at: None,
             show_volume: true,
             show_congress: true,
@@ -691,6 +727,9 @@ impl ChartState {
             clicked = true;
         }
         let hover = plot_resp.hover_pos().filter(|p| self.hover_enabled && plot_all.contains(*p));
+        if axis_resp.double_clicked() {
+            self.alert_draft = None;
+        }
         // The menu opens after the drawings pass has recorded the right-clicked price.
         let menu_ok = self.draw.tool.is_none();
 
@@ -938,7 +977,7 @@ impl ChartState {
 
         // ---- drawings ----
         self.paint_drawings(ui, price_rect, &v, &scale, hover, &plot_resp);
-        self.paint_alert_levels(ui, price_rect, &scale);
+        self.alert_overlay(ui, price_rect, &axis_resp, &scale);
         if menu_ok {
             plot_resp.context_menu(|ui| self.context_menu(ui, w));
         }
@@ -1046,30 +1085,183 @@ impl ChartState {
         clicked
     }
 
-    /// Dashed lines with an `ALRT` tag at each armed price alert.
-    fn paint_alert_levels(&self, ui: &Ui, rect: Rect, s: &PriceScale) {
+    /// Amber alert lines across the whole plot with their price on the axis, the click-to-create
+    /// popup on the price axis, and its edit / create / cancel handling.
+    fn alert_overlay(&mut self, ui: &Ui, rect: Rect, axis: &egui::Response, s: &PriceScale) {
         if self.currency.is_some() {
-            return; // levels are in the quoted currency
+            self.alert_draft = None;
+            return; // alerts are in the quoted currency
         }
-        let p = ui.painter_at(rect.expand2(vec2(AXIS_W, 0.0)));
-        let color = theme::cyan().gamma_multiply(0.8);
-        for &level in &self.alert_levels {
-            let y = rect.top() + s.y_of(level) as f32;
+        let axis_area = Rect::from_min_max(pos2(rect.right(), rect.top()), pos2(rect.right() + AXIS_W, rect.bottom()));
+        let p = ui.painter_at(rect.union(axis_area));
+        let color = theme::amber();
+        let y_of = |level: f64| rect.top() + s.y_of(level) as f32;
+        for a in &self.alert_lines {
+            let y = y_of(a.level);
             if y < rect.top() || y > rect.bottom() {
                 continue;
             }
-            dashed_h(&p, rect.x_range(), y, Stroke::new(1.0, color));
-            let label = format!("ALRT {}", scale::format_price(level, self.sec.decimals(level)));
-            p.text(pos2(rect.right() - 4.0, y - 2.0), Align2::RIGHT_BOTTOM, label, mono(10.0), color);
+            p.hline(rect.x_range(), y, Stroke::new(1.2, color));
+            let price = scale::format_price(a.level, self.sec.decimals(a.level));
+            let tag = Rect::from_min_size(pos2(rect.right() + 1.0, y - 8.0), vec2(AXIS_W - 2.0, 16.0));
+            p.rect_filled(tag, 0.0, color);
+            p.text(tag.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, price, mono(11.0), Color32::BLACK);
+            let name = ALERT_OPS.iter().find(|(o, _)| *o == a.op).map_or("", |(_, n)| n);
+            let label = if a.note.is_empty() { format!("ALRT {name}") } else { format!("ALRT {name} · {}", a.note) };
+            p.text(pos2(rect.left() + 6.0, y - 2.0), Align2::LEFT_BOTTOM, label, mono(10.0), color);
+        }
+
+        // A click on the axis: an alert tag edits that alert, anywhere else starts a new one.
+        if axis.clicked()
+            && let Some(pos) = axis.interact_pointer_pos().filter(|p| rect.y_range().contains(p.y))
+        {
+            let hit = self.alert_lines.iter().find(|a| (y_of(a.level) - pos.y).abs() < ALERT_HIT).cloned();
+            self.alert_draft = Some(match hit {
+                Some(a) => self.draft_for(&a, pos),
+                None => {
+                    let price = price_at_y(s, rect.top(), pos.y);
+                    self.new_draft(price, pos)
+                }
+            });
+        }
+        if axis.hovered()
+            && let Some(pos) = axis.hover_pos()
+            && self.alert_lines.iter().any(|a| (y_of(a.level) - pos.y).abs() < ALERT_HIT)
+        {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        // Right-clicking an alert line remembers it for the context menu.
+        if axis.secondary_clicked() || ui.input(|i| i.pointer.secondary_clicked()) {
+            self.menu_alert = ui.input(|i| i.pointer.interact_pos()).and_then(|pos| {
+                self.alert_lines
+                    .iter()
+                    .find(|a| (y_of(a.level) - pos.y).abs() < ALERT_HIT && rect.union(axis_area).contains(pos))
+                    .map(|a| (a.id, pos))
+            });
+        }
+        self.alert_popup(ui, rect);
+    }
+
+    fn new_draft(&self, price: f64, at: Pos2) -> AlertDraft {
+        let last = self.bars.last().map(|b| b.close);
+        AlertDraft {
+            edit: None,
+            price: format!("{price:.d$}", d = self.sec.decimals(price)),
+            op: crate::alerts::default_chart_op(price, last),
+            note: String::new(),
+            at,
+            focus_price: true,
         }
     }
 
-    /// Arm a one-shot alert at `price`, above or below the last price.
+    fn draft_for(&self, a: &ChartAlert, at: Pos2) -> AlertDraft {
+        AlertDraft {
+            edit: Some(a.id),
+            price: format!("{:.d$}", a.level, d = self.sec.decimals(a.level)),
+            op: a.op,
+            note: a.note.clone(),
+            at,
+            focus_price: true,
+        }
+    }
+
+    /// The compact popup: price, condition, note, Create / Cancel (Save / Delete when editing).
+    fn alert_popup(&mut self, ui: &Ui, rect: Rect) {
+        let Some(mut d) = self.alert_draft.take() else { return };
+        let w = 230.0;
+        let x = (rect.right() - w - 6.0).max(rect.left());
+        let y = (d.at.y - 60.0).clamp(rect.top(), (rect.bottom() - 150.0).max(rect.top()));
+        let mut keep = true;
+        let mut submit = false;
+        let mut delete = false;
+        egui::Area::new(ui.id().with((self.id, "alert-popup")))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos2(x, y))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(w);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} alert · {} · {}",
+                            if d.edit.is_some() { "Edit" } else { "New" },
+                            self.sec.ticker,
+                            self.tf.label()
+                        ))
+                        .font(mono(11.5))
+                        .color(amber()),
+                    );
+                    egui::Grid::new("alert-grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+                        ui.label("Price");
+                        let r = ui.add(egui::TextEdit::singleline(&mut d.price).desired_width(130.0).font(mono(12.0)));
+                        if d.focus_price {
+                            r.request_focus();
+                            d.focus_price = false;
+                        }
+                        submit |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        ui.end_row();
+                        ui.label("When");
+                        egui::ComboBox::from_id_salt("alert-op")
+                            .width(130.0)
+                            .selected_text(ALERT_OPS.iter().find(|(o, _)| *o == d.op).map_or("", |(_, n)| n))
+                            .show_ui(ui, |ui| {
+                                for (o, name) in ALERT_OPS {
+                                    ui.selectable_value(&mut d.op, o, name);
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Note");
+                        ui.add(egui::TextEdit::singleline(&mut d.note).desired_width(130.0).hint_text("optional"));
+                        ui.end_row();
+                    });
+                    let valid = d.price.trim().parse::<f64>().is_ok_and(|p| p.is_finite() && p > 0.0);
+                    ui.horizontal(|ui| {
+                        let label = if d.edit.is_some() { "Save" } else { "Create" };
+                        submit |= ui.add_enabled(valid, egui::Button::new(label)).clicked();
+                        if ui.button("Cancel").clicked() {
+                            keep = false;
+                        }
+                        if d.edit.is_some() && ui.button("Delete").clicked() {
+                            delete = true;
+                        }
+                    });
+                });
+            });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            keep = false;
+        }
+        let price = d.price.trim().parse::<f64>().ok().filter(|p| p.is_finite() && *p > 0.0);
+        if delete && let Some(id) = d.edit {
+            self.actions.push(Action::AlertOp(RuleOp::Delete(id)));
+        } else if submit && let Some(price) = price {
+            let cond = Condition { metric: Metric::Price, op: d.op, target: Target::Level(price) };
+            let note = d.note.trim().to_string();
+            self.actions.push(match d.edit {
+                Some(id) => Action::AlertOp(RuleOp::Edit(id, cond, note)),
+                None => Action::AddAlert(Spec {
+                    symbol: Some(self.symbol.clone()),
+                    cond,
+                    repeat: false,
+                    tf: Some(self.tf),
+                    note,
+                }),
+            });
+        } else if keep {
+            self.alert_draft = Some(d);
+        }
+    }
+
+    /// Arm a one-shot alert at `price` (crossing up or down, by the side of the last price),
+    /// remembering the chart's timeframe.
     fn alert_at(&mut self, price: f64) {
-        let last = self.bars.last().map(|b| b.close);
-        let op = if last.is_some_and(|l| price < l) { "<" } else { ">" };
-        let d = self.sec.decimals(price);
-        self.actions.push(Action::Command(format!("ALRT {} {op} {price:.d$}", self.symbol)));
+        let op = crate::alerts::default_chart_op(price, self.bars.last().map(|b| b.close));
+        let cond = Condition { metric: Metric::Price, op, target: Target::Level(price) };
+        self.actions.push(Action::AddAlert(Spec {
+            symbol: Some(self.symbol.clone()),
+            cond,
+            repeat: false,
+            tf: Some(self.tf),
+            note: String::new(),
+        }));
     }
 
     fn context_menu(&mut self, ui: &mut Ui, w: &Worker) {
@@ -1077,6 +1269,20 @@ impl ChartState {
         if ui.button("Reset View").clicked() {
             self.reset_view();
             ui.close();
+        }
+        if let Some((id, at)) = self.menu_alert
+            && let Some(a) = self.alert_lines.iter().find(|a| a.id == id).cloned()
+        {
+            let price = scale::format_price(a.level, self.sec.decimals(a.level));
+            if ui.button(format!("Edit alert at {price}")).clicked() {
+                self.alert_draft = Some(self.draft_for(&a, at));
+                ui.close();
+            }
+            if ui.button(format!("Delete alert at {price}")).clicked() {
+                self.actions.push(Action::AlertOp(RuleOp::Delete(id)));
+                ui.close();
+            }
+            ui.separator();
         }
         if let Some((price, line)) = self.menu_at.filter(|(p, _)| *p > 0.0) {
             let sec = self.sec.clone();
@@ -1692,5 +1898,22 @@ fn hover_card(ui: &Ui, at: Pos2, t: &Trade) {
     p.rect_stroke(card, 0.0, Stroke::new(1.0, amber_dim()), StrokeKind::Inside);
     for (k, (l, c)) in lines.iter().enumerate() {
         p.text(card.left_top() + vec2(7.0, 4.0 + k as f32 * 14.0), Align2::LEFT_TOP, l, mono(11.5), *c);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn click_position_maps_to_price() {
+        // 100..200 over 400 px, pane starting at y = 50.
+        let s = PriceScale::new(100.0, 200.0, false, 400.0);
+        assert!((price_at_y(&s, 50.0, 50.0) - 200.0).abs() < 1e-9, "top is the high");
+        assert!((price_at_y(&s, 50.0, 450.0) - 100.0).abs() < 1e-9, "bottom is the low");
+        assert!((price_at_y(&s, 50.0, 250.0) - 150.0).abs() < 1e-9);
+        // A price drawn at y reads back as the same price (what the axis tag shows).
+        let y = 50.0 + s.y_of(137.5) as f32;
+        assert!((price_at_y(&s, 50.0, y) - 137.5).abs() < 0.01);
     }
 }

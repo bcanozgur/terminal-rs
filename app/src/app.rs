@@ -940,6 +940,9 @@ impl TerminalApp {
                     self.status = format!("Removed {key} from the watchlist");
                 }
                 Action::LinkedSymbol(link, s) => self.broadcast(link, &s, None),
+                Action::AddAlert(spec) => self.add_alert(spec),
+                Action::OpenAlertChart(id) => self.open_alert_chart(id),
+                Action::AlertOp(op) => self.worker.send(Request::AlertRules(op)),
                 Action::Command(line) => match command::parse(&line) {
                     Some(cmd) => self.dispatch(cmd),
                     None => tracing::warn!("internal command did not parse: {line}"),
@@ -1862,7 +1865,7 @@ impl eframe::App for TerminalApp {
         for p in &mut self.panes {
             if let PaneKind::Chart(c) = &mut p.kind {
                 c.watched = self.watchlist.contains(&c.symbol);
-                c.alert_levels = self.price_alerts.levels(&c.symbol);
+                c.alert_lines = self.price_alerts.chart_alerts(&c.symbol);
             }
         }
         actions.extend(self.render_dock(ui, area, gap));
