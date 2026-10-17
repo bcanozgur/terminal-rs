@@ -570,9 +570,17 @@ fn card(ui: &mut Ui, f: &FundData) {
         ui.end_row();
         field(
             ui,
-            "Settlement (valör)",
+            "Redemption valör",
             pr.valor.clone(),
-            "KAP's structured fund data does not carry the settlement day; it is only free text in the prospectus.",
+            "Read from the redemption-payment clause of the fund's KAP prospectus (İzahname); this fund has no prospectus \
+             among its disclosures of the last 365 days, or the clause could not be read.",
+        );
+        field(
+            ui,
+            "Purchase valör",
+            None,
+            "Not stated: the prospectus only says the purchase amount is collected when the order is placed, and gives \
+             no separate purchase settlement day. KAP has no structured valör field (TEFAS does, but is not used).",
         );
         ui.end_row();
     });
@@ -657,7 +665,15 @@ fn mix_block(ui: &mut Ui, f: &FundData) {
         dim(ui, "Not available: the report lists no portfolio mix.");
         return;
     }
-    dim(ui, "Average share of the month's portfolio (the report's own mix, not the month-end split).");
+    dim(
+        ui,
+        match r.mix_kind {
+            trfunds::MixKind::MonthEnd => "Share of the fund value at month end (the report's group totals).",
+            trfunds::MixKind::Average => {
+                "The report prints no group totals: this is its average mix over the month, not the month-end split."
+            }
+        },
+    );
     let top: Vec<&trfunds::Alloc> = r.mix.iter().take(TOP).collect();
     let slices: Vec<(String, f64, Color32)> =
         top.iter().enumerate().map(|(i, a)| (a.label.clone(), a.weight, slice_color(i))).collect();
@@ -676,6 +692,15 @@ fn stock_block(ui: &mut Ui, f: &FundData, actions: &mut Vec<Action>) {
     if top.is_empty() {
         dim(ui, "Not available: no stock positions could be read from the report.");
         return;
+    }
+    if r.approx_weights {
+        ui.label(
+            RichText::new(
+                "Weights are estimates: this report prints no market values, so nominal × unit cost is used.",
+            )
+            .font(ui_font(11.5))
+            .color(amber()),
+        );
     }
     dim(
         ui,
@@ -819,7 +844,12 @@ fn reverse(ui: &mut Ui, p: &mut TrfPane, t: &str, next: &mut Option<View>, actio
                     *next = Some(View::Detail(h.code.clone()));
                 }
                 ui.add(egui::Label::new(RichText::new(&h.name).font(ui_font(12.0)).color(text())).truncate());
-                ui.label(RichText::new(pct(h.weight)).font(mono(12.5)).color(text()));
+                let w = if h.approx { format!("~{}", pct(h.weight)) } else { pct(h.weight) };
+                ui.label(RichText::new(w).font(mono(12.5)).color(text())).on_hover_text(if h.approx {
+                    "Estimated: this report prints no market values (nominal × unit cost)."
+                } else {
+                    "Share of the fund value at month end"
+                });
                 ui.label(RichText::new(h.previous.map_or_else(|| "–".into(), pct)).font(mono(12.0)).color(muted()));
                 ui.label(RichText::new(&h.period).font(ui_font(11.5)).color(muted()));
                 ui.end_row();

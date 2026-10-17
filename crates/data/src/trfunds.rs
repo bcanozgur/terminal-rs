@@ -31,10 +31,10 @@ const LIST_TTL: i64 = 7 * 24 * 3600;
 /// Reports are monthly (filed in the first days of the month): a fund is re-checked daily.
 const FUND_TTL: i64 = 24 * 3600;
 const PROFILE_TTL: i64 = 14 * 24 * 3600;
-/// The "Portföy Dağılım Raporu" disclosure subject.
-const SUBJECT_PORTFOLIO: &str = "8aca490d502e34b801502e380044002b";
-/// How far back the report search looks (two reports are wanted, so more than two months).
-const LOOKBACK_DAYS: u32 = 100;
+const REPORT_TITLE: &str = "Portföy Dağılım Raporu";
+/// How far back the disclosure search looks (KAP's maximum), so a fund that files late or
+/// stopped reporting still shows its last reports.
+const LOOKBACK_DAYS: u32 = 365;
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 /// Positions under this weight (percent of fund value) are left out of lists and charts.
 pub const MIN_WEIGHT: f64 = 0.1;
@@ -93,6 +93,16 @@ pub struct Position {
     pub shares: Option<f64>,
 }
 
+/// What a [`Report::mix`] measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MixKind {
+    /// The report's average over the month.
+    #[default]
+    Average,
+    /// Share of the fund value at month end.
+    MonthEnd,
+}
+
 /// What a monthly "Portföy Dağılım Raporu" says.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Report {
@@ -110,9 +120,16 @@ pub struct Report {
     pub ytd: Option<f64>,
     #[serde(default)]
     pub yearly: Option<f64>,
-    /// "Average monthly portfolio mix" of the report, largest first.
+    /// Asset allocation, largest first: the month-end split from the report's group totals when
+    /// it has them, else the report's "average monthly portfolio mix" (see `mix_kind`).
     #[serde(default)]
     pub mix: Vec<Alloc>,
+    #[serde(default)]
+    pub mix_kind: MixKind,
+    /// The report prints no market values, so the weights are nominal × unit cost over the fund
+    /// value (an estimate).
+    #[serde(default)]
+    pub approx_weights: bool,
     /// Stocks held at the end of the month, largest weight first.
     #[serde(default)]
     pub positions: Vec<Position>,
@@ -317,6 +334,8 @@ pub struct Held {
     /// Weight in the previous report, when the fund has one.
     pub previous: Option<f64>,
     pub period: String,
+    /// The weight is an estimate (see [`Report::approx_weights`]).
+    pub approx: bool,
 }
 
 /// Which of `funds` hold `ticker` (as of their latest report), largest weight first.
@@ -336,6 +355,7 @@ pub fn reverse_search(funds: &[Arc<FundData>], ticker: &str) -> Vec<Held> {
                 weight: w,
                 previous: f.previous().and_then(|p| p.report.weight_of(&t)).map(|p| p.weight),
                 period: snap.label(),
+                approx: snap.report.approx_weights,
             })
         })
         .collect();
@@ -556,6 +576,9 @@ pub fn parse_report_refs(json: &str) -> Result<Vec<ReportRef>> {
         .iter()
         .filter_map(|d| {
             let b = d.get("disclosureBasic")?;
+            if b.get("title").and_then(|t| t.as_str()).is_some_and(|t| t.trim() != REPORT_TITLE) {
+                return None;
+            }
             Some(ReportRef {
                 index: b.get("disclosureIndex")?.as_u64()?,
                 year: b.get("year")?.as_i64()? as i32,
@@ -567,6 +590,71 @@ pub fn parse_report_refs(json: &str) -> Result<Vec<ReportRef>> {
     refs.sort_by_key(|r| std::cmp::Reverse((r.year, r.month, r.index)));
     refs.dedup_by_key(|r| (r.year, r.month));
     Ok(refs)
+}
+
+/// Disclosure numbers of the fund's prospectuses (`İzahname`, then amendments), newest first.
+pub fn parse_prospectus_refs(json: &str) -> Vec<u64> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    let mut found: Vec<(bool, u64)> = v
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|d| {
+            let b = d.get("disclosureBasic")?;
+            let title = b.get("title")?.as_str()?.trim();
+            let index = b.get("disclosureIndex")?.as_u64().unwrap_or(0);
+            title.starts_with("İzahname").then_some((title != "İzahname", index))
+        })
+        .collect();
+    // The prospectus proper before its amendments, newest first within each.
+    found.sort_by_key(|(amendment, index)| (*amendment, std::cmp::Reverse(*index)));
+    found.into_iter().map(|(_, i)| i).collect()
+}
+
+/// The settlement of redemptions from a prospectus's "Satım Bedellerinin Ödenme Esasları"
+/// section: `Sell T+1 (T+2 if ordered after 13:30)`. `None` when the text has no such section.
+pub fn parse_valor(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().collect();
+    let up: Vec<char> = chars
+        .iter()
+        .map(|c| match c {
+            'i' => 'İ',
+            'ı' => 'I',
+            c => c.to_uppercase().next().unwrap_or(*c),
+        })
+        .collect();
+    let needle: Vec<char> = "SATIM BEDELLERİNİN ÖDENME".chars().collect();
+    let at = up.windows(needle.len()).position(|w| w == needle.as_slice())?;
+    let mut window: String = chars[at..(at + 900).min(chars.len())].iter().collect();
+    if let Some(cut) = window.find("6.5") {
+        window.truncate(cut);
+    }
+    let words: Vec<String> = window.split_whitespace().map(tr_lower).collect();
+    let mut days: Vec<u32> = Vec::new();
+    for (i, w) in words.iter().enumerate() {
+        let n = match w.trim_matches(|c: char| !c.is_alphanumeric()) {
+            "birinci" | "1" => 1,
+            "ikinci" | "2" => 2,
+            "üçüncü" | "3" => 3,
+            "dördüncü" | "4" => 4,
+            "beşinci" | "5" => 5,
+            _ => continue,
+        };
+        if words.get(i + 1).is_some_and(|n| n.starts_with("işlem") || n.starts_with("iş")) {
+            days.push(n);
+        }
+    }
+    let first = *days.first()?;
+    let cutoff = words.iter().position(|w| w == "saat").and_then(|i| words.get(i + 1)).and_then(|t| {
+        let t: String = t.chars().take_while(|c| c.is_ascii_digit() || matches!(c, '.' | ':')).collect();
+        let (h, m) = t.split_once(['.', ':'])?;
+        (h.len() <= 2 && m.len() == 2).then(|| format!("{h}:{m}"))
+    });
+    Some(match (days.iter().find(|d| **d != first), cutoff) {
+        (Some(later), Some(c)) => format!("Sell T+{first} (T+{later} if ordered after {c})"),
+        (Some(later), None) => format!("Sell T+{first} (T+{later} when ordered late)"),
+        (None, _) => format!("Sell T+{first}"),
+    })
 }
 
 /// The attachment id of a disclosure from `attachment-detail`.
@@ -772,40 +860,38 @@ fn is_other_heading(up: &str) -> bool {
         return false;
     }
     let h = strip_label(up).trim();
-    // Whole words or phrases: a company called `Altınay …` must not end the stock section.
-    const OTHER: [&str; 30] = [
-        "REPO",
+    // A single word must be the whole line and a phrase its start: a company called
+    // `Altın Yunus …` or `Altınay …` must not end the stock section.
+    const WORDS: [&str; 6] = ["REPO", "MEVDUAT", "TÜREV", "DİĞER", "SERTİFİKALAR", "SERTIFIKALAR"];
+    const PHRASES: [&str; 22] = [
         "TERS REPO",
-        "MEVDUAT",
-        "TÜREV",
-        "DİĞER",
-        "BORÇLANMA",
+        "BORÇLANMA ARAÇ",
         "ÖZEL SEKTÖR",
-        "KAMU",
-        "KİRA",
-        "VARLIĞA",
-        "ALTIN",
-        "KIYMETLİ",
+        "KAMU BORÇ",
+        "KAMU KİRA",
+        "KİRA SERTİFİKA",
+        "VARLIĞA DAYALI",
+        "ALTIN VE",
+        "KIYMETLİ MADEN",
         "YABANCI KİRA",
         "YABANCI BORÇ",
         "YABANCI TAHVİL",
         "YATIRIM FONU",
         "BORSA YATIRIM",
         "KATILIM HESAB",
-        "VADELİ",
         "GAYRİMENKUL SERTİFİKA",
-        "VARANT",
         "KATILMA PAYI",
         "FON PORTFÖY DEĞERİ",
-        "TAHVİL",
-        "BONO",
         "FİNANSMAN BONOSU",
-        "SERTIFIKA",
-        "SERTİFİKA",
-        "SERTIFIKALAR",
-        "SERTİFİKALAR",
+        "TÜREV ARAÇ",
+        "DİĞER VARLIK",
+        "VADELİ İŞLEM",
     ];
-    OTHER.iter().any(|p| h == *p || h.strip_prefix(p).is_some_and(|r| r.starts_with([' ', '.'])))
+    let h = h.trim_end_matches([':', ' ']);
+    WORDS.contains(&h)
+        || PHRASES
+            .iter()
+            .any(|p| h.strip_prefix(p).is_some_and(|r| r.is_empty() || r.starts_with([' ', '.', 'L', 'İ', 'I'])))
 }
 
 fn is_isin(t: &str) -> bool {
@@ -829,12 +915,14 @@ fn last_num(line: &str, comma_decimal: bool) -> Option<f64> {
     value_part(line).split_whitespace().rev().find_map(|t| parse_num(t, comma_decimal))
 }
 
-/// One stock row of the portfolio table: ticker, shares and weight. Rows of the three layouts
-/// seen on KAP: `ASELS TL … TRAASELS91H2 1,946,160.80 264.70 25/09/26 … 31.13 29.77 29.02`
-/// (last column: percent of fund value), the same with `AEFES.E` and `0.07% 0.06%`, and
-/// `1 AKBNK.E AKBANK TAS 200.000,000 13.400.000,00 2,176842 …` (value in TL, divided by the
-/// fund total).
-fn stock_row(line: &str, comma_decimal: bool, total: Option<f64>) -> Option<Position> {
+/// One stock row of the portfolio table: ticker, shares and weight (and whether the weight is
+/// only estimated). Layouts seen on KAP: `ASELS TL … TRAASELS91H2 1,946,160.80 264.70 25/09/26
+/// … 31.13 29.77 29.02` (last column: percent of fund value), the same with `AEFES.E` and
+/// `0.07% 0.06%`, `1 AKBNK.E AKBANK TAS 200.000,000 13.400.000,00 2,176842 …` (value in TL,
+/// divided by the fund total), `AKBNK TRAAKBNK91N6 Akbank 1,634,550.35 109,514,873.32 4.47`
+/// and `AKBNK TL 9,600.00 72.773797 24/09/26` (market value and weight columns missing from
+/// the PDF: nominal × unit cost, divided by the fund total).
+fn stock_row(line: &str, comma_decimal: bool, total: Option<f64>) -> Option<(Position, bool)> {
     let toks: Vec<&str> = line.split_whitespace().collect();
     let off = usize::from(toks.len() > 1 && toks[0].chars().all(|c| c.is_ascii_digit()));
     let ticker = *toks.get(off)?;
@@ -843,22 +931,29 @@ fn stock_row(line: &str, comma_decimal: bool, total: Option<f64>) -> Option<Posi
     }
     let rest = &toks[off + 1..];
     let nums: Vec<&str> = rest.iter().copied().filter(|t| is_num(t)).collect();
+    let dated = rest.iter().any(|t| is_date(t));
+    let isin_first = rest.first().is_some_and(|t| is_isin(t));
+    let shares =
+        nums.iter().filter(|t| !t.ends_with('%')).filter_map(|t| parse_num(t, comma_decimal)).find(|v| *v != 0.0);
+    let position =
+        |weight: f64| Position { ticker: clean_ticker(ticker), weight, shares: shares.filter(|s| s.is_finite()) };
+    if dated && nums.len() == 2 {
+        let (nominal, cost) = (parse_num(nums[0], comma_decimal)?, parse_num(nums[1], comma_decimal)?);
+        return Some((position(nominal * cost / total? * 100.0), true));
+    }
     if nums.len() < 3 {
         return None;
     }
-    let shares =
-        nums.iter().filter(|t| !t.ends_with('%')).filter_map(|t| parse_num(t, comma_decimal)).find(|v| *v != 0.0);
     // Dated lot rows and `TICKER ISIN name nominal value %` rows end with the percent column.
-    let ends_with_pct = rest.iter().any(|t| is_date(t)) || rest.first().is_some_and(|t| is_isin(t));
-    if !ends_with_pct && nums.len() < 4 {
+    if !(dated || isin_first) && nums.len() < 4 {
         return None;
     }
-    let weight = if ends_with_pct || total.is_none() {
+    let weight = if dated || isin_first || total.is_none() {
         parse_num(nums.last()?, comma_decimal)?
     } else {
         parse_num(nums.get(1)?, comma_decimal)? / total? * 100.0
     };
-    Some(Position { ticker: clean_ticker(ticker), weight, shares: shares.filter(|s| s.is_finite()) })
+    Some((position(weight), false))
 }
 
 /// Parse the text lines of a "Portföy Dağılım Raporu" PDF (see [`pdf_lines`]).
@@ -933,6 +1028,9 @@ pub fn parse_report(lines: &[String]) -> Result<Report> {
     // Stock rows of the portfolio table.
     let mut equity = false;
     let mut by_ticker: HashMap<String, Position> = HashMap::new();
+    // Month-end split: the main group totals (`GRUP TOPLAMI`, indented ones are subgroups).
+    let mut group = String::from("Other");
+    let mut totals: Vec<Alloc> = Vec::new();
     // `A.PAY` can be printed over the ticker cell of the first stock row; the ISIN names it.
     let isin_ticker: HashMap<&str, &str> = (start..end)
         .filter_map(|i| {
@@ -945,10 +1043,23 @@ pub fn parse_report(lines: &[String]) -> Result<Report> {
         let mut text = lines[i].trim().to_string();
         if let Some(rest) = text.strip_prefix("A.PAY").filter(|r| !r.trim().is_empty()) {
             equity = true;
+            group = "Pay".into();
             let ticker = rest.split_whitespace().find(|t| is_isin(t)).and_then(|i| isin_ticker.get(i));
             text = format!("{} {}", ticker.unwrap_or(&"?"), rest.trim());
         }
-        if let Some(p) = stock_row(&text, comma_decimal, report.net_assets).filter(|_| equity) {
+        let raw = lines[i].as_str();
+        if raw.starts_with("GRUP TOPLAM") || raw.starts_with("Ana Grup Toplam") || raw.starts_with("TOPLAM ") {
+            let nums: Vec<f64> = raw.split_whitespace().filter_map(|t| parse_num(t, comma_decimal)).collect();
+            if let (true, Some(pct)) = (nums.len() >= 2, nums.last().copied().filter(|p| (-100.0..=150.0).contains(p)))
+            {
+                match totals.iter_mut().find(|a| a.label == group) {
+                    // A main total is the sum of the subtotals above it.
+                    Some(a) => a.weight = a.weight.max(pct),
+                    None => totals.push(Alloc { label: group.clone(), weight: pct }),
+                }
+            }
+        } else if let Some((p, approx)) = stock_row(&text, comma_decimal, report.net_assets).filter(|_| equity) {
+            report.approx_weights |= approx;
             let e =
                 by_ticker.entry(p.ticker.clone()).or_insert(Position { ticker: p.ticker, weight: 0.0, shares: None });
             e.weight += p.weight;
@@ -958,13 +1069,27 @@ pub fn parse_report(lines: &[String]) -> Result<Report> {
             };
         } else if is_equity_heading(&up[i]) {
             equity = true;
+            group = heading_label(&up[i]);
         } else if is_other_heading(&up[i]) {
             equity = false;
+            group = heading_label(&up[i]);
         }
+    }
+    totals.retain(|a| a.weight.abs() >= 0.05);
+    let covered: f64 = totals.iter().map(|a| a.weight).sum();
+    if !totals.is_empty() && (50.0..=200.0).contains(&covered) {
+        totals.sort_by(|a, b| b.weight.total_cmp(&a.weight));
+        report.mix = totals;
+        report.mix_kind = MixKind::MonthEnd;
     }
     report.positions = by_ticker.into_values().filter(|p| p.weight.abs() > 1e-9).collect();
     report.positions.sort_by(|a, b| b.weight.total_cmp(&a.weight).then(a.ticker.cmp(&b.ticker)));
     Ok(report)
+}
+
+/// `A) HİSSE SENETLERİ  :` → `Hisse Senetleri`.
+fn heading_label(up: &str) -> String {
+    tr_title(strip_label(up.trim()).trim_end_matches([':', ' ']).trim())
 }
 
 /// `a-)Hisse Senedi  :  88,52` → `Hisse Senedi`; `PAY  90.65%` → `Pay`.
@@ -1035,7 +1160,17 @@ struct ListFile {
 
 fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
-    C.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(90)).gzip(true).build().unwrap_or_default())
+    // A fresh connection per request: KAP closes idle ones without notice, which showed up as
+    // "connection closed before message completed" on the next report download.
+    C.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(0)
+            // Some report downloads die mid-body when compressed (identity works every time).
+            .no_gzip()
+            .build()
+            .unwrap_or_default()
+    })
 }
 
 async fn get_once(url: &str) -> Result<Vec<u8>> {
@@ -1054,15 +1189,33 @@ async fn get_once(url: &str) -> Result<Vec<u8>> {
     Ok(resp.bytes().await.context("reading the KAP response")?.to_vec())
 }
 
-/// GET with two retries after a dropped connection (the multi-megabyte report PDFs sometimes
-/// get reset); an HTTP error status is final.
+/// Process-wide pause between KAP requests; it answers a burst with 429 or a closed connection.
+async fn throttle() {
+    static NEXT: tokio::sync::Mutex<Option<std::time::Instant>> = tokio::sync::Mutex::const_new(None);
+    let mut next = NEXT.lock().await;
+    let now = std::time::Instant::now();
+    if let Some(t) = next.filter(|t| *t > now) {
+        tokio::time::sleep(t - now).await;
+    }
+    *next = Some(std::time::Instant::now() + Duration::from_millis(800));
+}
+
+/// GET with backoff (5 s … 60 s) when KAP throttles (HTTP 429/503, or it closes the connection);
+/// any other HTTP error status is final.
 async fn get(url: &str) -> Result<Vec<u8>> {
+    const BACKOFF: [u64; 4] = [5, 15, 30, 60];
     let mut attempt = 0;
     loop {
+        throttle().await;
         match get_once(url).await {
-            Err(e) if attempt < 2 && !format!("{e:#}").contains("KAP answered") => {
+            Err(e)
+                if attempt < BACKOFF.len() && {
+                    let m = format!("{e:#}");
+                    !m.contains("KAP answered") || m.contains("429") || m.contains("503")
+                } =>
+            {
+                tokio::time::sleep(Duration::from_secs(BACKOFF[attempt])).await;
                 attempt += 1;
-                tokio::time::sleep(Duration::from_secs(2 * attempt)).await;
             }
             r => return r,
         }
@@ -1071,6 +1224,23 @@ async fn get(url: &str) -> Result<Vec<u8>> {
 
 async fn get_text(url: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&get(url).await?).into_owned())
+}
+
+/// A JSON endpoint's body. KAP now and then answers with a type description instead of data;
+/// that is retried like a dropped connection.
+async fn get_json(url: &str) -> Result<String> {
+    let mut attempt = 0;
+    loop {
+        let body = get_text(url).await?;
+        if serde_json::from_str::<serde_json::Value>(&body).is_ok() {
+            return Ok(body);
+        }
+        attempt += 1;
+        if attempt > 4 {
+            bail!("KAP returned no JSON for {url}");
+        }
+        tokio::time::sleep(Duration::from_secs(3 * attempt)).await;
+    }
 }
 
 /// The fund list: the disk copy while it is under a week old, else KAP (falling back to an
@@ -1113,10 +1283,15 @@ pub fn read_fund_list(dir: &Path) -> Option<Vec<FundInfo>> {
     Some(l.funds)
 }
 
-async fn fetch_snapshot(r: &ReportRef) -> Result<Snapshot> {
-    let detail = get_text(&format!("{BASE}/tr/api/notification/attachment-detail/{}", r.index)).await?;
+/// The first PDF attached to a disclosure.
+async fn download_attachment(index: u64) -> Result<Vec<u8>> {
+    let detail = get_json(&format!("{BASE}/tr/api/notification/attachment-detail/{index}")).await?;
     let obj = parse_attachment(&detail)?;
-    let bytes = get(&format!("{BASE}/tr/api/file/download/{obj}")).await?;
+    get(&format!("{BASE}/tr/api/file/download/{obj}")).await
+}
+
+async fn fetch_snapshot(r: &ReportRef) -> Result<Snapshot> {
+    let bytes = download_attachment(r.index).await?;
     let report = tokio::task::spawn_blocking(move || {
         let pdf = strip_wrapper(&bytes);
         let lines = std::panic::catch_unwind(|| pdf_lines(pdf)).map_err(|_| anyhow!("PDF reader crashed"))??;
@@ -1157,6 +1332,30 @@ pub async fn load(dir: &Path, code: &str, force: bool) -> Result<FundData> {
     }
 }
 
+/// Settlement of the fund's redemptions, from its newest prospectus (a PDF on KAP).
+async fn fetch_valor(refs: &[u64]) -> Option<String> {
+    for index in refs.iter().take(2) {
+        let found = async {
+            let bytes = download_attachment(*index).await?;
+            tokio::task::spawn_blocking(move || {
+                let lines = std::panic::catch_unwind(|| pdf_lines(strip_wrapper(&bytes)))
+                    .map_err(|_| anyhow!("PDF reader crashed"))??;
+                Ok::<_, anyhow::Error>(parse_valor(&lines.join(" ")))
+            })
+            .await
+            .context("prospectus task")?
+        }
+        .await;
+        match found {
+            Ok(Some(v)) => return Some(v),
+            Ok(None) => {}
+            Err(e) => tracing::debug!("TRF prospectus {index}: {e:#}"),
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    None
+}
+
 async fn fetch_fund(dir: &Path, code: &str, cached: Option<&FundData>, now: i64) -> Result<FundData> {
     let info = match cached {
         Some(c) => c.info.clone(),
@@ -1166,22 +1365,24 @@ async fn fetch_fund(dir: &Path, code: &str, cached: Option<&FundData>, now: i64)
             .find(|f| f.code == code)
             .ok_or_else(|| anyhow!("{code} is not in KAP's investment fund list"))?,
     };
-    let (profile, profile_updated) =
-        match cached.filter(|c| now - c.profile_updated < PROFILE_TTL && c.profile_updated > 0) {
-            Some(c) => (c.profile.clone(), c.profile_updated),
-            None => {
-                let html = get_text(&format!("{BASE}/tr/fon-bilgileri/genel/{}", info.page_slug())).await?;
-                let p = tokio::task::spawn_blocking(move || parse_profile(&html)).await.context("profile task")??;
-                tokio::time::sleep(Duration::from_millis(400)).await;
-                (p, now)
-            }
-        };
-    let list = get_text(&format!(
-        "{BASE}/tr/api/disclosure/filter/FILTERYFBF/{}/{SUBJECT_PORTFOLIO}/{LOOKBACK_DAYS}",
-        info.oid
-    ))
-    .await?;
+    let list =
+        get_json(&format!("{BASE}/tr/api/disclosure/filter/FILTERYFBF/{}/ALL/{LOOKBACK_DAYS}", info.oid)).await?;
     let refs = parse_report_refs(&list)?;
+    let (profile, profile_updated) = match cached
+        .filter(|c| now - c.profile_updated < PROFILE_TTL && c.profile_updated > 0)
+    {
+        Some(c) => (c.profile.clone(), c.profile_updated),
+        None => {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            let html = get_text(&format!("{BASE}/tr/fon-bilgileri/genel/{}", info.page_slug())).await?;
+            let mut p = tokio::task::spawn_blocking(move || parse_profile(&html)).await.context("profile task")??;
+            p.valor = match fetch_valor(&parse_prospectus_refs(&list)).await {
+                Some(v) => Some(v),
+                None => cached.and_then(|c| c.profile.valor.clone()),
+            };
+            (p, now)
+        }
+    };
     let mut reports: Vec<Snapshot> = Vec::new();
     let mut note = None;
     for r in refs.iter().take(2) {
@@ -1307,7 +1508,10 @@ FON TOPLAM DEĞERİ:  2,660,056,681.11
         let r = parse_report(&lines(GARANTI)).unwrap();
         assert_eq!(r.net_assets, Some(2_660_056_681.11));
         let mix: Vec<&str> = r.mix.iter().map(|a| a.label.as_str()).collect();
-        assert_eq!(mix, ["Pay", "Ters Repo", "Türev Teminat"]);
+        // The report prints month-end group totals, which win over the monthly average.
+        assert_eq!(mix, ["Pay"]);
+        assert_eq!(r.mix_kind, MixKind::MonthEnd);
+        assert_eq!(r.mix[0].weight, 90.65);
         assert_eq!(r.positions.len(), 2, "{:?}", r.positions);
         assert!((r.weight_of("AEFES").unwrap().weight - 0.23).abs() < 1e-9);
         assert_eq!(r.weight_of("AEFES").unwrap().shares, Some(344_393.0));
@@ -1387,6 +1591,30 @@ FON TOPLAM DEĞERİ  2,429,017,049.68  100.00
         .unwrap();
         assert_eq!(r.positions.len(), 1);
         assert!((r.positions[0].weight - 5.03).abs() < 1e-9, "{:?}", r.positions);
+    }
+
+    #[test]
+    fn redemption_settlement_from_a_prospectus() {
+        let ti2 = "6.3. Katılma Payı Satım Esasları … 6.4. Satım Bedellerinin Ödenme Esasları Katılma payı bedelleri; iade talimatının, BIST Pay Piyasası’nın açık olduğu günlerde saat 13.30’a kadar verilmesi halinde, talimatın verilmesini takip eden ikinci işlem gününde, iade talimatının BIST Pay Piyasası’nın açık olduğu günlerde saat 13.30’dan sonra verilmesi halinde ise, talimatın verilmesini takip eden üçüncü işlem gününde yatırımcılara ödenir. 6.5. Giriş Çıkış Komisyonları: iki işlem günü";
+        assert_eq!(parse_valor(ti2).as_deref(), Some("Sell T+2 (T+3 if ordered after 13:30)"));
+        let tzt = "6.4.Satım Bedellerinin Ödenme Esasları Katılma payı bedelleri; iade talimatının saat 13:30’a kadar verilmesi halinde, talimatın verilmesini takip eden birinci işlem gününde, saat 13:30’dan sonra verilmesi halinde ise, talimatın verilmesini takip eden ikinci işlem gününde yatırımcılara ödenir.";
+        assert_eq!(parse_valor(tzt).as_deref(), Some("Sell T+1 (T+2 if ordered after 13:30)"));
+        assert_eq!(parse_valor("no such section"), None);
+    }
+
+    /// Variant 5 (ICBC/TEB): the PDF lost its value and weight columns.
+    #[test]
+    fn rows_without_market_values_are_estimated() {
+        let r = parse_report(&lines(
+            "D-)Toplam Değer/Net Varlık Değeri  :\n17,055,596.28\nIII-FON PORTFÖY DEĞERİ TABLOSU\nHİSSE SENETLERİ\nHisse Türk\nAKBANK   TRAAKBNK91  8010051\nAKBNK  TL  9,600.00  72.773797 24/09/26\nASELS  TL  3,430.00 368.133714 29/09/26\nGRUP TOPLAMI  291,576.42\nIV-FON TOPLAM DEĞERİ TABLOSU\nFON TOPLAM DEĞERİ  17,055,596.28  100,00 %",
+        ))
+        .unwrap();
+        assert!(r.approx_weights);
+        assert_eq!(r.mix_kind, MixKind::Average);
+        let a = r.weight_of("AKBNK").unwrap();
+        assert!((a.weight - 9600.0 * 72.773797 / 17_055_596.28 * 100.0).abs() < 1e-9);
+        assert_eq!(a.shares, Some(9600.0));
+        assert_eq!(r.positions.len(), 2);
     }
 
     #[test]
@@ -1523,12 +1751,17 @@ FON TOPLAM DEĞERİ  2,429,017,049.68  100.00
     #[test]
     fn report_list_and_attachment() {
         let json = r#"[
-          {"disclosureBasic":{"disclosureIndex":30,"year":2026,"donem":9,"publishDate":"05.10.2026 13:00:53"}},
-          {"disclosureBasic":{"disclosureIndex":31,"year":2026,"donem":9,"publishDate":"06.10.2026 09:00:00"}},
-          {"disclosureBasic":{"disclosureIndex":20,"year":2026,"donem":8,"publishDate":"03.09.2026 12:55:08"}},
-          {"disclosureBasic":{"disclosureIndex":10,"year":2026,"donem":7,"publishDate":"03.08.2026 10:00:00"}}]"#;
+          {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":30,"year":2026,"donem":9,"publishDate":"05.10.2026 13:00:53"}},
+          {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":31,"year":2026,"donem":9,"publishDate":"06.10.2026 09:00:00"}},
+          {"disclosureBasic":{"title":"İzahname","disclosureIndex":99,"year":2026,"donem":0}},
+          {"disclosureBasic":{"title":"İzahname (Değişiklik)","disclosureIndex":120,"year":2026,"donem":0}},
+          {"disclosureBasic":{"title":"İzahname","disclosureIndex":50,"year":2025,"donem":0}},
+          {"disclosureBasic":{"title":"Fon Gider Bilgileri","disclosureIndex":98,"year":2026,"donem":9}},
+          {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":20,"year":2026,"donem":8,"publishDate":"03.09.2026 12:55:08"}},
+          {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":10,"year":2026,"donem":7,"publishDate":"03.08.2026 10:00:00"}}]"#;
         let refs = parse_report_refs(json).unwrap();
         assert_eq!(refs.iter().map(|r| (r.month, r.index)).collect::<Vec<_>>(), [(9, 31), (8, 20), (7, 10)]);
+        assert_eq!(parse_prospectus_refs(json), [99, 50, 120]);
         let att =
             r#"[{"disclosure":{},"attachments":[{"objId":"abc123","fileName":"TTE.pdf","fileExtension":"pdf"}]}]"#;
         assert_eq!(parse_attachment(att).unwrap(), "abc123");

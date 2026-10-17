@@ -348,7 +348,7 @@ impl PaneKind {
                  sells between the latest two monthly portfolio reports. 'Held by' (or THYAO TRFS) lists which indexed \
                  funds hold a BIST stock; 'Index curated list' downloads popular funds' reports to disk. Data: KAP \
                  'Portföy Dağılım Raporu' PDFs (published in the first days of each month) and fund information forms. \
-                 Settlement day (valör) is not available from KAP and shows n/a."
+                 Redemption valör comes from the fund's prospectus on KAP; purchase valör is not stated there (n/a)."
             }
         }
     }

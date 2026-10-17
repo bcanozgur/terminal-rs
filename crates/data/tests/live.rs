@@ -214,6 +214,9 @@ async fn trfunds_kap() {
     assert!(snap.report.positions.len() > 10, "{:?}", f.note);
     assert!(f.profile.mgmt_fee.is_some());
     assert!(!f.changes().is_empty() || f.previous().is_none());
+    // The prospectus of TZT says redemptions are paid the first business day (TEFAS: sell valör 1).
+    let tzt = tr_data::trfunds::load(&dir, "TZT", false).await.unwrap();
+    assert!(tzt.profile.valor.as_deref().is_some_and(|v| v.starts_with("Sell T+1")), "{:?}", tzt.profile.valor);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
