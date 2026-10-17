@@ -128,6 +128,8 @@ pub struct OptionsPane {
     pub show_greeks: bool,
     /// Text being typed in the symbol box (`None` = showing the pane's own symbol).
     pub symbol_edit: Option<String>,
+    /// Analytics and strategy tabs: loaded expirations and the strategy legs.
+    pub an: options_view::analytics::AnState,
 }
 
 impl OptionsPane {
@@ -145,11 +147,28 @@ impl OptionsPane {
             strikes,
             show_greeks,
             symbol_edit: None,
+            an: Default::default(),
         }
+    }
+
+    /// The expiration to request next: a queued one for the analytics tab, else the selected one.
+    pub fn next_expiration(&mut self) -> Option<i64> {
+        self.an.queue.pop().or(self.expiration)
     }
 
     /// Store a chain and derive greeks from each contract's implied volatility.
     pub fn set_chain(&mut self, chain: Box<tr_data::OptionChain>, rate: f64, now: i64) {
+        self.an.cache.insert(chain.expiration, chain.clone());
+        if !self.an.queue.is_empty() {
+            self.fetched = None; // load the next queued expiration right away
+        }
+        // A background load for the analytics tab must not replace the chain on screen.
+        if self.expiration.is_some_and(|e| e != chain.expiration) && self.chain.is_some() {
+            if self.chain.as_ref().is_some_and(|c| Some(c.expiration) != self.expiration) {
+                self.fetched = None; // the selected expiration is still to come
+            }
+            return;
+        }
         // Expiry at the 16:00 New York close (≈ 20:00 UTC) of the expiration date.
         let t = ((chain.expiration + 20 * 3600 - now) as f64 / (365.0 * 86_400.0)).max(0.5 / 365.0);
         let g = |call: bool, c: &tr_data::OptionContract| {
@@ -1841,7 +1860,7 @@ impl TerminalApp {
                     self.worker.send(Request::Options {
                         pane: p.id,
                         symbol: o.symbol.clone(),
-                        expiration: o.expiration,
+                        expiration: o.next_expiration(),
                     });
                 }
                 PaneKind::OrderBook(b) if b.fetched.is_none_or(|t| t.elapsed() > Duration::from_millis(1000)) => {
