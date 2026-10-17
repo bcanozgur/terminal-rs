@@ -2,6 +2,7 @@
 //! crosshair, drawings and congressional trade markers.
 
 mod earnings_markers;
+mod extras;
 
 use std::sync::Arc;
 
@@ -68,9 +69,18 @@ const ALERT_HIT: f32 = 8.0;
 #[derive(Default)]
 struct DrawState {
     tool: Option<Tool>,
-    pending: Option<Anchor>,
+    /// Points placed so far for the tool being drawn.
+    pending: Vec<Anchor>,
     selected: Option<usize>,
+    /// The selected drawing being dragged: index, how it looked at the start, pointer travel.
+    moving: Option<(usize, Drawing, egui::Vec2)>,
+    /// The note whose text is being edited.
+    editing: Option<usize>,
+    /// The next click on a bar anchors a VWAP.
+    pick_avwap: bool,
 }
+
+type VpKey = (usize, usize, usize, usize, Option<u64>);
 
 pub struct ChartState {
     pub id: PaneId,
@@ -92,6 +102,15 @@ pub struct ChartState {
     /// Price under the pointer at the last right-click, and the price of a horizontal line
     /// drawn there (the context menu's "Alert at" entries).
     menu_at: Option<(f64, Option<f64>)>,
+    /// Timestamp of the bar and the drawing under the pointer at the last right-click.
+    menu_ts: Option<i64>,
+    menu_drawing: Option<usize>,
+    /// Plot rectangle, viewport and price scale of the last frame (hit tests before painting).
+    last_geom: Option<(Rect, Viewport, PriceScale)>,
+    /// An anchored VWAP chosen by click or menu, added once the frame ends.
+    pending_avwap: Option<i64>,
+    /// Volume profile of the visible bars, keyed by view, row count and last volume.
+    vp_cache: Option<(VpKey, Option<tr_core::indicators_ext::VolumeProfile>)>,
     pub show_volume: bool,
     pub show_congress: bool,
     /// Earnings "E" markers (report dates with EPS, surprise and price move).
@@ -160,6 +179,11 @@ impl ChartState {
             alert_draft: None,
             menu_alert: None,
             menu_at: None,
+            menu_ts: None,
+            menu_drawing: None,
+            last_geom: None,
+            pending_avwap: None,
+            vp_cache: None,
             show_volume: true,
             show_congress: true,
             earnings: Default::default(),
@@ -347,8 +371,7 @@ impl ChartState {
     }
 
     pub fn start_tool(&mut self, tool: Tool) {
-        self.draw.tool = Some(tool);
-        self.draw.pending = None;
+        self.draw = DrawState { tool: Some(tool), ..DrawState::default() };
     }
 
     /// Esc: cancel an in-progress drawing, then deselect. Returns whether it consumed the key.
@@ -750,7 +773,8 @@ impl ChartState {
                 self.follow_latest = false;
             }
         }
-        if self.draw.tool.is_none() && plot_resp.dragged() {
+        self.begin_drawing_drag(ui, &plot_resp);
+        if self.draw.tool.is_none() && self.draw.moving.is_none() && plot_resp.dragged() {
             let d = plot_resp.drag_delta();
             self.viewport.as_mut().expect("viewport").pan_px(d.x as f64);
             if d.x != 0.0 {
@@ -913,7 +937,7 @@ impl ChartState {
                     axis_painter.text(
                         pos2(plot_all.right() + 6.0, y),
                         Align2::LEFT_CENTER,
-                        format!("{t:.1}"),
+                        if t.abs() >= 10_000.0 { scale::format_volume(t) } else { format!("{t:.1}") },
                         mono(10.5),
                         muted(),
                     );
@@ -975,8 +999,15 @@ impl ChartState {
             }
         }
 
+        // ---- indicator shading (Ichimoku cloud, volume profile), under the drawings ----
+        self.paint_cloud(ui, price_rect, &v, &scale);
+        self.paint_profile(ui, price_rect, &v, &scale);
+
         // ---- drawings ----
         self.paint_drawings(ui, price_rect, &v, &scale, hover, &plot_resp);
+        if let Some(ts) = self.pending_avwap.take() {
+            self.toggle_indicator(IndicatorSpec::AnchoredVwap(ts), w);
+        }
         self.alert_overlay(ui, price_rect, &axis_resp, &scale);
         if menu_ok {
             plot_resp.context_menu(|ui| self.context_menu(ui, w));
@@ -1284,6 +1315,8 @@ impl ChartState {
             }
             ui.separator();
         }
+        self.drawing_menu(ui);
+        self.anchor_menu(ui);
         if let Some((price, line)) = self.menu_at.filter(|(p, _)| *p > 0.0) {
             let sec = self.sec.clone();
             let fmt = |p: f64| format!("{p:.d$}", d = sec.decimals(p));
@@ -1312,27 +1345,7 @@ impl ChartState {
                 }
             }
         });
-        ui.menu_button("Indicators", |ui| {
-            for spec in [
-                IndicatorSpec::Sma(20),
-                IndicatorSpec::Sma(50),
-                IndicatorSpec::Ema(20),
-                IndicatorSpec::Vwap,
-                IndicatorSpec::Bollinger(20, 2.0),
-                IndicatorSpec::Rsi(14),
-                IndicatorSpec::Macd(12, 26, 9),
-            ] {
-                let on = self.indicators.contains(&spec);
-                if ui.checkbox(&mut on.clone(), spec.label()).clicked() {
-                    self.toggle_indicator(spec, w);
-                }
-            }
-            ui.separator();
-            if ui.button("Remove All").clicked() {
-                self.clear_indicators();
-                ui.close();
-            }
-        });
+        self.indicator_menu(ui, w);
         if !studies::all().is_empty() {
             ui.menu_button("Studies", |ui| {
                 for st in studies::all() {
@@ -1363,21 +1376,7 @@ impl ChartState {
                 }
             });
         }
-        ui.menu_button("Draw", |ui| {
-            let alt = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
-            for (tool, key) in
-                [(Tool::Trendline, "T"), (Tool::Horizontal, "H"), (Tool::Vertical, "V"), (Tool::Fib, "F")]
-            {
-                if ui.add(egui::Button::new(tool.label()).shortcut_text(format!("{alt}{key}"))).clicked() {
-                    self.start_tool(tool);
-                    ui.close();
-                }
-            }
-            if ui.button("Remove All Drawings").clicked() {
-                self.drawings.clear();
-                ui.close();
-            }
-        });
+        self.draw_menu(ui);
         ui.menu_button("Currency", |ui| {
             let native = tr_data::native_currency(&self.symbol);
             if ui.radio(self.currency.is_none(), format!("As quoted ({native})")).clicked() {
@@ -1417,17 +1416,15 @@ impl ChartState {
     /// Oscillator sub-panes: built-in indicators first, then plug-in studies.
     fn sub_panes(&self) -> Vec<SubPane> {
         let ind = self.built.iter().filter(|b| b.spec.is_pane()).map(|b| {
-            let rsi = matches!(b.spec, IndicatorSpec::Rsi(_));
-            SubPane {
-                label: b.spec.label(),
-                overlays: b.overlays.clone(),
-                fixed: rsi.then_some((0.0, 100.0)),
-                levels: if rsi {
-                    vec![(30.0, Color32::from_rgb(60, 45, 80)), (70.0, Color32::from_rgb(60, 45, 80))]
-                } else {
-                    Vec::new()
-                },
-            }
+            let band =
+                |lo: f64, hi: f64| vec![(lo, Color32::from_rgb(60, 45, 80)), (hi, Color32::from_rgb(60, 45, 80))];
+            let (fixed, levels) = match b.spec {
+                IndicatorSpec::Rsi(_) => (Some((0.0, 100.0)), band(30.0, 70.0)),
+                IndicatorSpec::Stoch(..) => (Some((0.0, 100.0)), band(20.0, 80.0)),
+                IndicatorSpec::Adx(_) => (None, vec![(25.0, Color32::from_rgb(60, 45, 80))]),
+                _ => (None, Vec::new()),
+            };
+            SubPane { label: b.spec.label(), overlays: b.overlays.clone(), fixed, levels }
         });
         let st = self.built_studies.iter().flat_map(|b| {
             b.panes.iter().map(|p| SubPane {
@@ -1543,16 +1540,19 @@ impl ChartState {
             p.text(pos2(price_rect.left() + 6.0, ly), Align2::LEFT_TOP, text, mono(11.0), theme::series(5));
             ly += 14.0;
         }
-        if let Some(tool) = self.draw.tool {
-            let msg = if self.draw.pending.is_some() {
-                "click second point (Esc cancels)"
+        if self.draw.pick_avwap {
+            let msg = "Anchored VWAP: click a bar to anchor it (Esc cancels)";
+            p.text(pos2(price_rect.left() + 6.0, ly), Align2::LEFT_TOP, msg, mono(11.0), amber());
+        } else if let Some(tool) = self.draw.tool {
+            let msg = if tool.points() == 1 {
+                "click to place".to_string()
             } else {
-                "click to place (Esc cancels)"
+                format!("click point {} of {}", self.draw.pending.len() + 1, tool.points())
             };
             p.text(
                 pos2(price_rect.left() + 6.0, ly),
                 Align2::LEFT_TOP,
-                format!("{}: {msg}", tool.label()),
+                format!("{}: {msg} (Esc cancels)", tool.label()),
                 mono(11.0),
                 amber(),
             );
@@ -1568,133 +1568,6 @@ impl ChartState {
                 mono(10.5),
                 text(),
             );
-        }
-    }
-
-    fn drawing_shapes(&self, d: &Drawing, rect: Rect, v: &Viewport, s: &PriceScale) -> Vec<(Shape, Option<String>)> {
-        let px =
-            |a: &Anchor| [rect.left() as f64 + v.x_of(self.index_of_ts(a.ts)), rect.top() as f64 + s.y_of(a.price)];
-        match d.tool {
-            Tool::Trendline => vec![(Shape::Segment(px(&d.a), px(&d.b)), None)],
-            Tool::Horizontal => vec![(Shape::HLine(px(&d.a)[1]), Some(format!("{:.2}", d.a.price)))],
-            Tool::Vertical => vec![(Shape::VLine(px(&d.a)[0]), None)],
-            Tool::Fib => {
-                let (xa, xb) = (px(&d.a)[0], px(&d.b)[0]);
-                let (x0, x1) = (xa.min(xb), xa.max(xb));
-                d.fib_levels()
-                    .into_iter()
-                    .map(|(r, price)| {
-                        let y = rect.top() as f64 + s.y_of(price);
-                        (Shape::Segment([x0, y], [x1, y]), Some(format!("{r:.3} ({price:.2})")))
-                    })
-                    .collect()
-            }
-        }
-    }
-
-    fn paint_drawings(
-        &mut self,
-        ui: &Ui,
-        rect: Rect,
-        v: &Viewport,
-        s: &PriceScale,
-        hover: Option<Pos2>,
-        resp: &egui::Response,
-    ) {
-        let p = ui.painter_at(rect);
-        let pointer_anchor = |this: &Self, pos: Pos2| -> Anchor {
-            let idx = v.index_at((pos.x - rect.left()) as f64);
-            let mut price = s.price_at((pos.y - rect.top()) as f64);
-            if this.magnet
-                && let Some(b) = this.bars.get(idx.floor().max(0.0) as usize)
-            {
-                price = drawings::magnet(price, [b.open, b.high, b.low, b.close]);
-            }
-            Anchor { ts: this.ts_of_index(idx), price }
-        };
-
-        if resp.secondary_clicked() {
-            self.menu_at = resp.interact_pointer_pos().filter(|p| rect.contains(*p)).map(|pos| {
-                let price = s.price_at((pos.y - rect.top()) as f64);
-                let line = self
-                    .drawings
-                    .iter()
-                    .filter(|d| d.tool == Tool::Horizontal)
-                    .find(|d| (rect.top() as f64 + s.y_of(d.a.price) - pos.y as f64).abs() < 6.0)
-                    .map(|d| d.a.price);
-                (price, line)
-            });
-        }
-
-        // Placement.
-        if let (Some(tool), true, Some(pos)) = (self.draw.tool, resp.clicked(), resp.interact_pointer_pos()) {
-            let a = pointer_anchor(self, pos);
-            if tool.points() == 1 {
-                self.drawings.push(Drawing::new(tool, a, a));
-                self.draw = DrawState::default();
-            } else if let Some(first) = self.draw.pending.take() {
-                self.drawings.push(Drawing::new(tool, first, a));
-                self.draw = DrawState::default();
-            } else {
-                self.draw.pending = Some(a);
-            }
-        } else if self.draw.tool.is_none() && resp.clicked() {
-            // Selection by proximity.
-            self.draw.selected = resp.interact_pointer_pos().and_then(|pos| {
-                self.drawings.iter().enumerate().find_map(|(i, d)| {
-                    let near = self
-                        .drawing_shapes(d, rect, v, s)
-                        .iter()
-                        .any(|(sh, _)| drawings::distance(sh, [pos.x as f64, pos.y as f64]) < 6.0);
-                    near.then_some(i)
-                })
-            });
-        }
-
-        let mut all: Vec<(Drawing, bool)> =
-            self.drawings.iter().cloned().enumerate().map(|(i, d)| (d, self.draw.selected == Some(i))).collect();
-        if let (Some(tool), Some(first), Some(h)) = (self.draw.tool, self.draw.pending, hover) {
-            all.push((Drawing::new(tool, first, pointer_anchor(self, h)), true));
-        }
-        for (d, selected) in all {
-            let color = if selected { amber() } else { theme::cyan() };
-            let stroke = Stroke::new(if selected { 2.0 } else { 1.3 }, color);
-            for (shape, label) in self.drawing_shapes(&d, rect, v, s) {
-                match shape {
-                    Shape::Segment(a, b) => {
-                        p.line_segment([pos2(a[0] as f32, a[1] as f32), pos2(b[0] as f32, b[1] as f32)], stroke);
-                        if let Some(l) = label {
-                            p.text(
-                                pos2(a[0] as f32 + 3.0, a[1] as f32 - 1.0),
-                                Align2::LEFT_BOTTOM,
-                                l,
-                                mono(10.0),
-                                color,
-                            );
-                        }
-                        if selected && d.tool == Tool::Trendline {
-                            for q in [a, b] {
-                                p.circle_filled(pos2(q[0] as f32, q[1] as f32), 3.5, amber());
-                            }
-                        }
-                    }
-                    Shape::HLine(y) => {
-                        p.hline(rect.x_range(), y as f32, stroke);
-                        if let Some(l) = label {
-                            p.text(
-                                pos2(rect.right() - 4.0, y as f32 - 1.0),
-                                Align2::RIGHT_BOTTOM,
-                                l,
-                                mono(10.0),
-                                color,
-                            );
-                        }
-                    }
-                    Shape::VLine(x) => {
-                        p.vline(x as f32, rect.y_range(), stroke);
-                    }
-                }
-            }
         }
     }
 

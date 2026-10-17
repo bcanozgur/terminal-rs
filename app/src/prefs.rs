@@ -279,6 +279,13 @@ pub enum Action {
     DrawHorizontal,
     DrawVertical,
     DrawFib,
+    DrawRectangle,
+    DrawRay,
+    DrawChannel,
+    DrawText,
+    DrawMeasure,
+    DrawLong,
+    DrawShort,
     ResetView,
     LogScale,
     Magnet,
@@ -294,7 +301,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 52] = [
+    pub const ALL: [Action; 59] = [
         Action::Help,
         Action::Congress,
         Action::Politicians,
@@ -335,6 +342,13 @@ impl Action {
         Action::DrawHorizontal,
         Action::DrawVertical,
         Action::DrawFib,
+        Action::DrawRectangle,
+        Action::DrawRay,
+        Action::DrawChannel,
+        Action::DrawText,
+        Action::DrawMeasure,
+        Action::DrawLong,
+        Action::DrawShort,
         Action::ResetView,
         Action::LogScale,
         Action::Magnet,
@@ -392,6 +406,14 @@ impl Action {
             Action::DrawHorizontal => "Draw horizontal line".into(),
             Action::DrawVertical => "Draw vertical line".into(),
             Action::DrawFib => "Draw Fibonacci retracement".into(),
+            Action::DrawRectangle => "Draw rectangle".into(),
+            Action::DrawRay => "Draw ray".into(),
+            Action::DrawChannel => "Draw parallel channel".into(),
+            Action::DrawText => "Draw text note".into(),
+            Action::DrawMeasure => "Measure price and time".into(),
+            Action::DrawLong => "Draw long position".into(),
+            Action::DrawShort => "Draw short position".into(),
+
             Action::ResetView => "Reset chart view".into(),
             Action::LogScale => "Toggle log scale".into(),
             Action::Magnet => "Toggle magnet".into(),
@@ -421,6 +443,13 @@ impl Action {
             | A::DrawHorizontal
             | A::DrawVertical
             | A::DrawFib
+            | A::DrawRectangle
+            | A::DrawRay
+            | A::DrawChannel
+            | A::DrawText
+            | A::DrawMeasure
+            | A::DrawLong
+            | A::DrawShort
             | A::ResetView
             | A::LogScale
             | A::Magnet => "Chart",
@@ -619,6 +648,14 @@ impl Default for Keymap {
         bind(Action::DrawHorizontal, "Alt+H");
         bind(Action::DrawVertical, "Alt+V");
         bind(Action::DrawFib, "Alt+F");
+        bind(Action::DrawRectangle, "Alt+B");
+        bind(Action::DrawRay, "Alt+Y");
+        bind(Action::DrawChannel, "Alt+C");
+        bind(Action::DrawText, "Alt+N");
+        bind(Action::DrawMeasure, "Alt+D");
+        bind(Action::DrawLong, "Alt+U");
+        bind(Action::DrawShort, "Alt+J");
+
         bind(Action::ResetView, "Alt+R");
         bind(Action::LogScale, "Alt+L");
         bind(Action::Magnet, "Alt+M");

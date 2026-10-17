@@ -17,6 +17,7 @@ mod earnings_worker;
 mod eco;
 mod etf;
 mod fut;
+mod indicator_ext;
 mod layout;
 mod layouts;
 mod markets_view;
@@ -33,6 +34,7 @@ mod theme;
 mod themes;
 mod trfunds;
 mod widgets;
+mod wlcols;
 mod worker;
 
 use std::sync::Arc;

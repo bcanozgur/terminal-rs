@@ -15,7 +15,7 @@ use crate::{Extended, ExtendedQuote, MarketData, Quote, QuoteSource, SearchHit, 
 const BASE: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
 
 pub struct YahooProvider {
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
     /// Session crumb for endpoints that require one (options); the cookie lives in the
     /// client's cookie store.
     crumb: tokio::sync::Mutex<Option<String>>,
@@ -298,7 +298,7 @@ const OPTIONS: &str = "https://query2.finance.yahoo.com/v7/finance/options";
 impl YahooProvider {
     /// A session crumb: visiting fc.yahoo.com sets the consent cookie, then getcrumb
     /// returns the token bound to it. Cached until a request is rejected.
-    async fn crumb(&self, refresh: bool) -> Result<String> {
+    pub(crate) async fn crumb(&self, refresh: bool) -> Result<String> {
         let mut guard = self.crumb.lock().await;
         if let Some(c) = guard.as_ref().filter(|_| !refresh) {
             return Ok(c.clone());

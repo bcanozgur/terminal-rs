@@ -176,6 +176,8 @@ pub enum Request {
     TrFunds(crate::trfunds::TrfReq),
     /// US market movers: the three Yahoo screener lists (`MOST`).
     Most(crate::most::MostReq),
+    /// Statistics for the watchlist's extra columns.
+    Wl(crate::wlcols::WlReq),
     /// Futures curve, VIX term structure or sector heatmap (`FUT`).
     Fut(crate::fut::FutReq),
     /// Smart money: Form 4, 13F and FINRA short interest (`SMART`).
@@ -246,6 +248,8 @@ pub struct CapsError {
 pub struct BuiltIndicator {
     pub spec: IndicatorSpec,
     pub overlays: Vec<(String, Overlay)>,
+    /// Ichimoku's shaded cloud.
+    pub cloud: Option<std::sync::Arc<crate::indicator_ext::Cloud>>,
 }
 
 pub struct Profile {
@@ -369,6 +373,7 @@ pub enum Response {
     Etf(crate::etf::EtfResp),
     TrFunds(crate::trfunds::TrfResp),
     Most(crate::most::MostResp),
+    Wl(crate::wlcols::WlResp),
     Fut(crate::fut::FutResp),
     Smart(crate::smart::SmartResp),
     Risk(crate::risk::RiskResp),
@@ -627,7 +632,7 @@ fn session_key(tf: Timeframe) -> impl Fn(i64) -> i64 {
     }
 }
 
-fn overlay(values: &[f64], color: egui::Color32, kind: LineKind) -> Overlay {
+pub(crate) fn overlay(values: &[f64], color: egui::Color32, kind: LineKind) -> Overlay {
     Overlay { line: line_ref(values), color: theme::rgba(color), kind, scale: 1.0 }
 }
 
@@ -643,6 +648,9 @@ pub fn build_indicators(
         .enumerate()
         .map(|(i, spec)| {
             let c = palette.series[i % palette.series.len()];
+            if let Some(b) = crate::indicator_ext::build(spec, bars, palette, c) {
+                return BuiltIndicator { spec: *spec, overlays: b.overlays, cloud: b.cloud.map(Into::into) };
+            }
             let overlays = match *spec {
                 IndicatorSpec::Sma(n) => vec![(spec.label(), overlay(&indicators::sma(&closes, n), c, LineKind::Line))],
                 IndicatorSpec::Ema(n) => vec![(spec.label(), overlay(&indicators::ema(&closes, n), c, LineKind::Line))],
@@ -669,8 +677,16 @@ pub fn build_indicators(
                         ("Signal".into(), overlay(&m.signal, palette.amber, LineKind::Line)),
                     ]
                 }
+                // Built by `indicator_ext::build` above.
+                IndicatorSpec::Atr(_)
+                | IndicatorSpec::Stoch(..)
+                | IndicatorSpec::Adx(_)
+                | IndicatorSpec::Ichimoku(..)
+                | IndicatorSpec::Obv
+                | IndicatorSpec::AnchoredVwap(_)
+                | IndicatorSpec::VolumeProfile(_) => Vec::new(),
             };
-            BuiltIndicator { spec: *spec, overlays }
+            BuiltIndicator { spec: *spec, overlays, cloud: None }
         })
         .collect()
 }
@@ -1003,6 +1019,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
         Request::Most(r) => crate::most::handle(r, &|r| s.send(Response::Most(r))).await,
+        Request::Wl(r) => crate::wlcols::handle(r, &s.provider, &|r| s.send(Response::Wl(r))).await,
         Request::Fut(r) => crate::fut::handle(r, &|r| s.send(Response::Fut(r))).await,
         Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,
         Request::Risk(r) => crate::risk::handle(r, &s.provider, &s.cache, &|r| s.send(Response::Risk(r))).await,

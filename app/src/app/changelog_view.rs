@@ -51,6 +51,11 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "Options analytics: Chain | Analytics | Payoff tabs in OMON. IV smile and 25Δ skew, ATM IV term structure, \
              put/call ratios by volume and open interest, max pain and call/put walls, and a payoff builder \
              (presets or click a chain row) with break-evens, max profit/loss and position greeks.",
+            "Chart: ATR, Stochastic, ADX/DI, Ichimoku Cloud, OBV, anchored VWAP (AVWAP, or right-click a bar) and a \
+             volume profile with POC and 70% value area; new drawings: rectangle, ray, parallel channel, text note, \
+             measure and long / short position (risk:reward). Drag a selected drawing to move it, right-click it for \
+             colours. Watchlist: right-click the header for RelVol, RSI, ATR%, market cap, 52W position and volume \
+             columns; click a header to sort.",
             "Info (i) button on every pane header explains what the panel shows.",
             "Combo 11 chart study, with its table kept clear of the latest bars.",
             "Default zoom setting, search inside list panels, app icon, and a toolbar flush with the top in full \

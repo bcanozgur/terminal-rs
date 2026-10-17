@@ -15,6 +15,17 @@ pub enum IndicatorSpec {
     Bollinger(usize, f64),
     Rsi(usize),
     Macd(usize, usize, usize),
+    Atr(usize),
+    /// %K length, %K smoothing, %D length.
+    Stoch(usize, usize, usize),
+    Adx(usize),
+    /// Tenkan, kijun and senkou B periods.
+    Ichimoku(usize, usize, usize),
+    Obv,
+    /// VWAP anchored at the first bar at or after this timestamp.
+    AnchoredVwap(i64),
+    /// Visible-range volume profile with this many price rows.
+    VolumeProfile(usize),
 }
 
 impl IndicatorSpec {
@@ -26,12 +37,27 @@ impl IndicatorSpec {
             IndicatorSpec::Bollinger(n, k) => format!("BB {n} {k}"),
             IndicatorSpec::Rsi(n) => format!("RSI {n}"),
             IndicatorSpec::Macd(a, b, c) => format!("MACD {a} {b} {c}"),
+            IndicatorSpec::Atr(n) => format!("ATR {n}"),
+            IndicatorSpec::Stoch(k, s, d) => format!("STOCH {k} {s} {d}"),
+            IndicatorSpec::Adx(n) => format!("ADX {n}"),
+            IndicatorSpec::Ichimoku(t, k, s) => format!("ICHI {t} {k} {s}"),
+            IndicatorSpec::Obv => "OBV".into(),
+            IndicatorSpec::AnchoredVwap(ts) => format!("AVWAP {}", anchor_label(*ts)),
+            IndicatorSpec::VolumeProfile(rows) => format!("VP {rows}"),
         }
     }
 
     /// Oscillators get their own sub-pane.
     pub fn is_pane(&self) -> bool {
-        matches!(self, IndicatorSpec::Rsi(_) | IndicatorSpec::Macd(..))
+        matches!(
+            self,
+            IndicatorSpec::Rsi(_)
+                | IndicatorSpec::Macd(..)
+                | IndicatorSpec::Atr(_)
+                | IndicatorSpec::Stoch(..)
+                | IndicatorSpec::Adx(_)
+                | IndicatorSpec::Obv
+        )
     }
 
     /// Same indicator family (used to toggle and replace).
@@ -41,9 +67,16 @@ impl IndicatorSpec {
                 (IndicatorSpec::Sma(a), IndicatorSpec::Sma(b)) | (IndicatorSpec::Ema(a), IndicatorSpec::Ema(b)) => {
                     a == b
                 }
+                // Several anchored VWAPs can sit on one chart; each is identified by its anchor.
+                (IndicatorSpec::AnchoredVwap(a), IndicatorSpec::AnchoredVwap(b)) => a == b,
                 _ => true,
             }
     }
+}
+
+/// `Oct 16 14:30`-style tag of an anchored VWAP's start.
+pub fn anchor_label(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0).map(|d| d.format("%b %d %H:%M").to_string()).unwrap_or_default()
 }
 
 /// Views of the brokerage portfolio pane (`PORT`, `ACCT`, `POS`, `ORD`, `ACTV`).
@@ -251,6 +284,8 @@ pub enum Function {
     LogScale,
     Range(Range),
     Draw(Tool),
+    /// Click a bar to anchor a VWAP to it (`AVWAP`).
+    AnchorVwap,
     ClearDrawings,
     Magnet,
     /// Congress trades: feed when used alone, per-ticker list after a symbol.
@@ -365,6 +400,21 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             num(rest.get(1)).unwrap_or(26),
             num(rest.get(2)).unwrap_or(9),
         )),
+        "ATR" => Function::Indicator(IndicatorSpec::Atr(num(rest.first()).unwrap_or(14))),
+        "STOCH" | "STO" | "STOCHASTIC" => Function::Indicator(IndicatorSpec::Stoch(
+            num(rest.first()).unwrap_or(14),
+            num(rest.get(1)).unwrap_or(3),
+            num(rest.get(2)).unwrap_or(3),
+        )),
+        "ADX" | "DMI" => Function::Indicator(IndicatorSpec::Adx(num(rest.first()).unwrap_or(14))),
+        "ICHI" | "ICHIMOKU" => Function::Indicator(IndicatorSpec::Ichimoku(
+            num(rest.first()).unwrap_or(9),
+            num(rest.get(1)).unwrap_or(26),
+            num(rest.get(2)).unwrap_or(52),
+        )),
+        "OBV" => Function::Indicator(IndicatorSpec::Obv),
+        "VP" | "VPVR" => Function::Indicator(IndicatorSpec::VolumeProfile(num(rest.first()).unwrap_or(48))),
+        "AVWAP" | "AVWP" => Function::AnchorVwap,
         "CLEAR" | "CLR" => match words().first().map(String::as_str) {
             Some("DRAW") | Some("DRAWINGS") => Function::ClearDrawings,
             _ => Function::ClearIndicators,
@@ -375,6 +425,13 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "HL" | "HLINE" => Function::Draw(Tool::Horizontal),
         "VL" | "VLINE" => Function::Draw(Tool::Vertical),
         "FIB" => Function::Draw(Tool::Fib),
+        "RECT" | "RECTANGLE" | "BOX" => Function::Draw(Tool::Rectangle),
+        "RAY" => Function::Draw(Tool::Ray),
+        "CHANNEL" | "CH" | "PCH" => Function::Draw(Tool::Channel),
+        "NOTE" | "TEXT" | "TXT" => Function::Draw(Tool::Text),
+        "MEASURE" | "MEAS" | "RULER" => Function::Draw(Tool::Measure),
+        "LONG" | "LPOS" => Function::Draw(Tool::Long),
+        "SHORT" | "SPOS" => Function::Draw(Tool::Short),
         "MAGNET" | "MAG" => Function::Magnet,
         "CONG" | "CONGRESS" => Function::Congress,
         "POL" | "PROFILE" => Function::Politician(joined()),
@@ -542,6 +599,7 @@ fn describe(f: &Function) -> String {
         Function::LogScale => "Toggle log scale".into(),
         Function::Range(r) => format!("Show {} at {}", r.label(), r.timeframe()),
         Function::Draw(t) => format!("Draw {}", t.label()),
+        Function::AnchorVwap => "Anchored VWAP: click a bar to anchor it".into(),
         Function::ClearDrawings => "Remove all drawings".into(),
         Function::Magnet => "Toggle magnet (snap to OHLC)".into(),
         Function::Congress => "Congressional trades".into(),
@@ -720,6 +778,16 @@ mod tests {
         assert_eq!(parse("CMP msft"), Some(Command::Function(Function::Compare(Some("MSFT".into())))));
         assert_eq!(parse("CMP"), Some(Command::Function(Function::Compare(None))));
         assert_eq!(parse("FIB"), Some(Command::Function(Function::Draw(Tool::Fib))));
+        assert_eq!(parse("atr"), Some(Command::Function(Function::Indicator(IndicatorSpec::Atr(14)))));
+        assert_eq!(parse("stoch 5 3 3"), Some(Command::Function(Function::Indicator(IndicatorSpec::Stoch(5, 3, 3)))));
+        assert_eq!(parse("ADX"), Some(Command::Function(Function::Indicator(IndicatorSpec::Adx(14)))));
+        assert_eq!(parse("ichi"), Some(Command::Function(Function::Indicator(IndicatorSpec::Ichimoku(9, 26, 52)))));
+        assert_eq!(parse("OBV"), Some(Command::Function(Function::Indicator(IndicatorSpec::Obv))));
+        assert_eq!(parse("vp 24"), Some(Command::Function(Function::Indicator(IndicatorSpec::VolumeProfile(24)))));
+        assert_eq!(parse("AVWAP"), Some(Command::Function(Function::AnchorVwap)));
+        assert_eq!(parse("RECT"), Some(Command::Function(Function::Draw(Tool::Rectangle))));
+        assert_eq!(parse("long"), Some(Command::Function(Function::Draw(Tool::Long))));
+        assert_eq!(parse("MEASURE"), Some(Command::Function(Function::Draw(Tool::Measure))));
         assert_eq!(parse("CLEAR DRAW"), Some(Command::Function(Function::ClearDrawings)));
         assert_eq!(parse("POL Nancy Pelosi"), Some(Command::Function(Function::Politician("Nancy Pelosi".into()))));
         assert_eq!(

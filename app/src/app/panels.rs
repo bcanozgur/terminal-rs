@@ -8,7 +8,6 @@ use tr_data::OrderBook;
 use super::{PaneKind, ReadState, Reading, TerminalApp};
 use crate::congress_view::{self, Action};
 use crate::markets_view;
-use crate::quote_tag;
 use crate::theme::{self, amber, dp, mono, muted, text, ui_font};
 use crate::widgets;
 use crate::worker::Request;
@@ -185,7 +184,6 @@ impl TerminalApp {
         (actions, false)
     }
 
-    /// The watchlist table; `group` selects a sidebar list instead of the main watchlist.
     /// Pane `i`'s filter box, when open (see the strip's search button). Returns the
     /// trimmed, lowercased query, empty when the box is closed or blank.
     fn search_bar(&mut self, ui: &mut Ui, i: usize) -> String {
@@ -211,152 +209,6 @@ impl TerminalApp {
         }
         ui.add_space(4.0);
         needle
-    }
-
-    fn watchlist(&mut self, ui: &mut Ui, group: Option<usize>, q: &str) -> Vec<Action> {
-        let mut keys: Vec<String> = match group {
-            Some(gi) => self.groups[gi].keys.clone(),
-            None => self.watchlist.clone(),
-        };
-        let mut out = Vec::new();
-        let filtering = !q.is_empty();
-        if filtering {
-            keys.retain(|k| {
-                tr_data::security(k).ticker.to_ascii_lowercase().contains(q) || k.to_ascii_lowercase().contains(q)
-            });
-        }
-        let row_h = dp(22.0);
-        let w = ui.available_width();
-        let (hdr, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
-        let p = ui.painter();
-        p.rect_filled(hdr, theme::CONTROL_RADIUS, theme::header());
-        let cols = [0.0, 0.34, 0.58, 0.79, 1.0];
-        let col = |r: Rect, k: usize| r.left() + 8.0 + (r.width() - 16.0) * cols[k];
-        p.text(pos2(col(hdr, 0), hdr.center().y), Align2::LEFT_CENTER, "Security", ui_font(11.5), muted());
-        for (k, h) in [(2, "Last"), (3, "Change"), (4, "%")] {
-            p.text(pos2(col(hdr, k), hdr.center().y), Align2::RIGHT_CENTER, h, ui_font(11.5), muted());
-        }
-        let mut remove = None;
-        let mut moved = None;
-        let now = quote_tag::now();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let mut reorder = widgets::Reorder::new(egui::Id::new("wl-pane-reorder"));
-            for s in &keys {
-                let sec = tr_data::security(s);
-                let (r, resp) = ui.allocate_exact_size(vec2(w, row_h), Sense::click_and_drag());
-                reorder.row(r, &resp);
-                widgets::hover_wash(ui, r, &resp, false);
-                let p = ui.painter();
-                let name = p.text(pos2(col(r, 0), r.center().y), Align2::LEFT_CENTER, &sec.ticker, mono(12.5), amber());
-                let mut tip = None;
-                if let Some(q) = self.quotes.get(s)
-                    && let Some(c) = quote_tag::marker(q, now)
-                {
-                    p.circle_filled(pos2(name.right() + 6.0, r.center().y), 2.5, c);
-                    tip = Some(quote_tag::tooltip(q, now));
-                }
-                p.text(
-                    pos2(col(r, 0) + 74.0, r.center().y),
-                    Align2::LEFT_CENTER,
-                    sec.class.yellow_key().label(),
-                    ui_font(11.0),
-                    muted(),
-                );
-                match self.quotes.get(s) {
-                    Some(q) => {
-                        let c = if q.change() >= 0.0 { theme::up() } else { theme::down() };
-                        let d = sec.decimals(q.last);
-                        p.text(
-                            pos2(col(r, 2), r.center().y),
-                            Align2::RIGHT_CENTER,
-                            format!("{:.d$}", q.last),
-                            mono(12.5),
-                            text(),
-                        );
-                        p.text(
-                            pos2(col(r, 3), r.center().y),
-                            Align2::RIGHT_CENTER,
-                            markets_view::change_text(&sec, q),
-                            mono(12.5),
-                            c,
-                        );
-                        p.text(
-                            pos2(col(r, 4), r.center().y),
-                            Align2::RIGHT_CENTER,
-                            format!("{:+.2}%", q.change_pct()),
-                            mono(12.5),
-                            c,
-                        );
-                    }
-                    None => {
-                        p.text(pos2(col(r, 4), r.center().y), Align2::RIGHT_CENTER, "…", mono(12.5), muted());
-                    }
-                }
-                let tradable = matches!(sec.class, tr_core::AssetClass::Equity | tr_core::AssetClass::Etf);
-                let pills = if tradable { widgets::buy_sell_pills().to_vec() } else { Vec::new() };
-                let tips = [format!("Buy {} (⇧B)", sec.ticker), format!("Sell {} (⇧S)", sec.ticker)];
-                let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
-                match widgets::row_pills(ui, r, ("wl-pills", s), &pills, &tips) {
-                    Some(i) => out.push(Action::Command(format!("{} {s}", if i == 0 { "BUY" } else { "SELL" }))),
-                    None if resp.clicked() => out.push(Action::OpenChart(s.clone())),
-                    None => {}
-                }
-                let resp = match tip {
-                    Some(t) => resp.on_hover_text(t),
-                    None => resp,
-                };
-                resp.context_menu(|ui| {
-                    if tradable {
-                        for (label, side) in [("Buy", "BUY"), ("Sell", "SELL")] {
-                            if ui.button(format!("{label} {}…", sec.ticker)).clicked() {
-                                out.push(Action::Command(format!("{side} {s}")));
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                    }
-                    if ui.button("Open Chart").clicked() {
-                        out.push(Action::OpenChart(s.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Open Chart as New").clicked() {
-                        out.push(Action::OpenChartNew(s.clone()));
-                        ui.close();
-                    }
-                    if let Some(code) = widgets::research_menu(ui, s) {
-                        out.push(Action::Command(format!("{s} {code}")));
-                    }
-                    if sec.has_congress_trades() && ui.button("Who in Congress Traded This").clicked() {
-                        out.push(Action::OpenTicker(sec.ticker.clone()));
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Remove from Watchlist").clicked() {
-                        remove = Some(s.clone());
-                        ui.close();
-                    }
-                });
-            }
-            moved = reorder.finish(ui);
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("WL ADD <KEY> to add · drag to reorder · right-click a row for options")
-                    .font(ui_font(11.0))
-                    .color(muted()),
-            );
-        });
-        let list = match group {
-            Some(gi) => &mut self.groups[gi].keys,
-            None => &mut self.watchlist,
-        };
-        if let Some(s) = remove {
-            list.retain(|x| *x != s);
-        }
-        if let Some((from, to)) = moved.filter(|_| !filtering) {
-            let item = list.remove(from);
-            list.insert(to, item);
-        }
-        out
     }
 }
 

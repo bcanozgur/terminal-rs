@@ -25,6 +25,7 @@ pub mod freshness;
 pub mod fut;
 pub mod markets;
 pub mod most;
+pub mod qstats;
 pub mod rss;
 pub mod sample;
 pub mod smartmoney;
@@ -350,6 +351,13 @@ pub trait MarketData: Send + Sync {
         self.history(symbol, tf, None, limit).await
     }
 
+    /// Market cap, day and average volume and the 52 week range for market keys, from the
+    /// real source (`symbol` in each row is the market key). Rows and fields a source lacks
+    /// are simply absent; the default has none.
+    async fn quote_stats(&self, _symbols: &[String]) -> Result<Vec<qstats::QuoteStats>> {
+        Ok(Vec::new())
+    }
+
     /// Pre/post-market state of a security (`None` = the source has none for it).
     async fn extended(&self, _symbol: &str) -> Result<Option<ExtendedQuote>> {
         Ok(None)
@@ -470,6 +478,10 @@ impl<P: MarketData> MarketData for Fallback<P> {
 
     async fn extended(&self, symbol: &str) -> Result<Option<ExtendedQuote>> {
         self.primary.extended(symbol).await
+    }
+
+    async fn quote_stats(&self, symbols: &[String]) -> Result<Vec<qstats::QuoteStats>> {
+        self.primary.quote_stats(symbols).await
     }
 
     async fn search(&self, query: &str) -> Result<Vec<SearchHit>> {

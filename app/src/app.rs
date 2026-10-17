@@ -28,11 +28,12 @@ mod smart_view;
 mod theming;
 mod trading;
 mod trfunds_view;
+mod wlcols_view;
 mod workspace;
 
 pub use broker::PosSort;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use egui::{Color32, Event, Key, Modifiers, Rect, Ui, UiBuilder, pos2, vec2};
@@ -680,6 +681,9 @@ struct Settings {
     wei_order: Vec<String>,
     #[serde(default)]
     groups: Option<Vec<WatchGroup>>,
+    /// Extra watchlist columns and sorting, per list (the main watchlist is the "" key).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    wl_columns: BTreeMap<String, crate::wlcols::ListCols>,
     #[serde(default = "default_true")]
     sidebar: bool,
     /// Name of the layout to restore on launch.
@@ -816,6 +820,8 @@ pub struct TerminalApp {
     wei_order: Vec<String>,
     /// Extra sidebar lists under the watchlist.
     groups: Vec<WatchGroup>,
+    /// Watchlist column settings and their statistics.
+    wl: crate::wlcols::State,
     /// Latest network search results and the query they answer.
     net_hits: (String, Vec<SearchHit>),
     /// Query typed in the command line awaiting a debounced network search.
@@ -979,6 +985,7 @@ impl TerminalApp {
             wei_updated: None,
             wei_order: Vec::new(),
             groups: vec![WatchGroup::bist30()],
+            wl: Default::default(),
             net_hits: (String::new(), Vec::new()),
             search_pending: None,
             suggestion: None,
@@ -1026,6 +1033,7 @@ impl TerminalApp {
                 app.watchlist.dedup();
             }
             app.wei_order = s.wei_order.clone();
+            app.wl.lists = s.wl_columns.clone();
             if let Some(g) = &s.groups {
                 app.groups = g.clone();
             }
@@ -1062,6 +1070,7 @@ impl TerminalApp {
             watchlist: self.watchlist.clone(),
             wei_order: self.wei_order.clone(),
             groups: Some(self.groups.clone()),
+            wl_columns: self.wl.lists.clone(),
             sidebar: self.sidebar_open,
             active_layout: Some(self.layout_name.clone()),
             layout: None,
@@ -1208,6 +1217,7 @@ impl TerminalApp {
             Function::LogScale => self.with_chart(|c, _| c.log = !c.log),
             Function::Range(r) => self.with_chart(|c, w| c.set_range(r, w)),
             Function::Draw(t) => self.with_chart(|c, _| c.start_tool(t)),
+            Function::AnchorVwap => self.with_chart(|c, _| c.start_anchor_pick()),
             Function::ClearDrawings => self.with_chart(|c, _| c.drawings.clear()),
             Function::Magnet => self.with_chart(|c, _| c.magnet = !c.magnet),
             Function::Congress => self.open_panel(PaneKind::Feed { filter: FeedFilter::default() }),
@@ -1574,6 +1584,7 @@ impl TerminalApp {
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
                 Response::Most(resp) => self.on_most(resp),
+                Response::Wl(resp) => self.on_wl(resp),
                 Response::Fut(resp) => self.on_fut(resp),
                 Response::Smart(resp) => self.on_smart(resp),
                 Response::Risk(resp) => self.on_risk(resp),
@@ -1767,6 +1778,13 @@ impl TerminalApp {
             | A::DrawHorizontal
             | A::DrawVertical
             | A::DrawFib
+            | A::DrawRectangle
+            | A::DrawRay
+            | A::DrawChannel
+            | A::DrawText
+            | A::DrawMeasure
+            | A::DrawLong
+            | A::DrawShort
             | A::ResetView
             | A::LogScale
             | A::Magnet => self.focused_is_chart(),
@@ -1814,6 +1832,13 @@ impl TerminalApp {
             A::DrawHorizontal => self.with_chart(|c, _| c.start_tool(Tool::Horizontal)),
             A::DrawVertical => self.with_chart(|c, _| c.start_tool(Tool::Vertical)),
             A::DrawFib => self.with_chart(|c, _| c.start_tool(Tool::Fib)),
+            A::DrawRectangle => self.with_chart(|c, _| c.start_tool(Tool::Rectangle)),
+            A::DrawRay => self.with_chart(|c, _| c.start_tool(Tool::Ray)),
+            A::DrawChannel => self.with_chart(|c, _| c.start_tool(Tool::Channel)),
+            A::DrawText => self.with_chart(|c, _| c.start_tool(Tool::Text)),
+            A::DrawMeasure => self.with_chart(|c, _| c.start_tool(Tool::Measure)),
+            A::DrawLong => self.with_chart(|c, _| c.start_tool(Tool::Long)),
+            A::DrawShort => self.with_chart(|c, _| c.start_tool(Tool::Short)),
             A::ResetView => self.with_chart(|c, _| c.reset_view()),
             A::LogScale => self.with_chart(|c, _| c.log = !c.log),
             A::Magnet => self.with_chart(|c, _| c.magnet = !c.magnet),
@@ -1864,6 +1889,7 @@ impl TerminalApp {
             self.worker.send(Request::YieldCurves);
             self.last_curve = Some(Instant::now());
         }
+        self.wl_periodic(&visible);
         // News every 5 minutes and order books every second, while visible.
         for &i in &visible {
             let p = &mut self.panes[i];

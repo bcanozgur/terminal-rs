@@ -170,6 +170,29 @@ impl MarketData for Markets {
         self.yahoo.search(query).await
     }
 
+    /// Yahoo's quote statistics for stocks and ETFs (crypto and Treasuries have none).
+    async fn quote_stats(&self, symbols: &[String]) -> Result<Vec<crate::qstats::QuoteStats>> {
+        let wanted: Vec<(String, String)> = symbols
+            .iter()
+            .map(|k| (k.clone(), security(k)))
+            .filter(|(_, s)| matches!(s.class, AssetClass::Equity | AssetClass::Etf))
+            .map(|(k, s)| (k, yahoo_symbol(&s)))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ys: Vec<String> = wanted.iter().map(|(_, y)| y.clone()).collect();
+        let rows = self.yahoo.quote_stats(&ys).await?;
+        Ok(wanted
+            .iter()
+            .filter_map(|(key, y)| {
+                rows.iter()
+                    .find(|r| &r.symbol == y)
+                    .map(|r| crate::qstats::QuoteStats { symbol: key.clone(), ..r.clone() })
+            })
+            .collect())
+    }
+
     /// US stocks and ETFs trade pre- and post-market (Yahoo); other classes have no
     /// extended session.
     async fn extended(&self, symbol: &str) -> Result<Option<ExtendedQuote>> {

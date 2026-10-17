@@ -4,6 +4,7 @@
 pub mod bar;
 pub mod catalog;
 pub mod indicators;
+pub mod indicators_ext;
 pub mod options;
 pub mod optstrat;
 pub mod risk;

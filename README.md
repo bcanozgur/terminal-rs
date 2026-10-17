@@ -51,9 +51,25 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   1M plus quick ranges (1D … ALL); volume; SMA, EMA, VWAP, Bollinger overlays; RSI and MACD
   sub-panes; `CMP <SYM>` compare; log scale; crosshair with OHLC legend; smooth pan and zoom over
   a million bars. Live crypto bars from the Binance websocket (Coinbase fallback).
-- **Drawings** — trendline (Alt+T), horizontal (Alt+H), vertical (Alt+V) and fib retracement
-  (Alt+F), stored in (time, price) so they survive zoom and timeframe changes; magnet (Alt+M) snaps
-  to OHLC; click to select, Del to remove.
+- **Drawings** — trendline (Alt+T), horizontal (Alt+H), vertical (Alt+V), fib retracement (Alt+F),
+  rectangle (Alt+B), ray (Alt+Y), parallel channel (Alt+C, three clicks), text note (Alt+N),
+  measure (Alt+D: price change, %, bars and time span) and long / short position (Alt+U / Alt+J:
+  entry, stop and target clicks, shows risk:reward and % to each). Stored in (time, price) so they
+  survive zoom and timeframe changes and are saved with the pane's layout; magnet (Alt+M) snaps to
+  OHLC; click to select, drag to move, right-click for colour / edit text / delete, Del to remove.
+- **More indicators** — ATR (`ATR 14`), Stochastic (`STOCH 14 3 3`), ADX with +DI/-DI (`ADX 14`),
+  Ichimoku Cloud (`ICHI 9 26 52`: tenkan, kijun, shaded senkou A/B cloud, chikou), OBV, anchored
+  VWAP (`AVWAP` then click a bar, or right-click a bar › Anchored VWAP from Here) and a volume
+  profile of the visible bars with POC and 70% value area (`VP 48`). All are in the chart's
+  Indicators menu, which has a Settings submenu per active indicator for its parameters; they are
+  saved with the layout. ATR, Stochastic, ADX and OBV get their own sub-panes. Session VWAP
+  (`VWAP`, resets each day on intraday charts) was already there.
+- **Watchlist columns** — right-click the watchlist header to add RelVol (day volume over the
+  3-month average), RSI(14), ATR(14)%, market cap, 52-week range position and day volume; click any
+  header to sort (click again to reverse, a third time to clear). Values come from Yahoo daily
+  history and quote statistics, are fetched lazily for visible lists (3 at a time, cached for 15
+  minutes) and show `n/a` when the source has no value (e.g. no market cap for crypto, no 52-week
+  range for a listing under a year old). Columns and sort are kept per list in `settings.json`.
 - **Options** (`AAPL OMON`, ⌘⇧O) — full chains from Yahoo for US equities, ETFs and indices
   (SPX via ^SPX): every expiration, calls and puts by strike with bid/ask/last, change, volume,
   open interest and IV, plus Black-Scholes greeks (Δ, Γ, Θ/day, vega) from each contract's IV, the
@@ -440,6 +456,7 @@ Settings › Hotkeys. On Linux and Windows ⌘ is Ctrl and ⌥ is Alt.
 | ⌃⌘S (Ctrl+Shift+S) · ⌘⌥S | toggle sidebar · move sidebar to the other side |
 | ⌘⌥T · ⌘, | cycle theme · settings |
 | ⌥T · ⌥H · ⌥V · ⌥F · ⌥M | draw trendline · horizontal · vertical · fib · magnet |
+| ⌥B · ⌥Y · ⌥C · ⌥N · ⌥D · ⌥U · ⌥J | draw rectangle · ray · channel · text note · measure · long · short |
 | ⌥R · ⌥L · Esc · Del | reset chart view · log scale · cancel · delete selected drawing |
 | wheel · drag · drag axes · double-click | zoom · pan · stretch · reset |
 
@@ -448,7 +465,8 @@ Settings › Hotkeys. On Linux and Windows ⌘ is Ctrl and ⌥ is Alt.
 | `AAPL` · `AAPL US EQUITY <GO>` | load a security in the focused chart |
 | `BTCUSD <CRNCY>` · `EURUSD <CRNCY>` · `US10Y <GOVT>` · `CL1 <CMDTY>` · `SPX <INDEX>` | other asset classes |
 | `5` `1H` `D` `1W` `1M` · `YTD` `5Y` `ALL` | interval · quick range |
-| `RSI` `MACD` `BB` `SMA 50` `EMA 20` `VWAP` · `CLEAR` | toggle indicators |
+| `RSI` `MACD` `BB` `SMA 50` `EMA 20` `VWAP` `ATR` `STOCH` `ADX` `ICHI` `OBV` `VP` `AVWAP` · `CLEAR` | toggle indicators |
+| `RECT` `RAY` `CHANNEL` `NOTE` `MEASURE` `LONG` `SHORT` · `TL` `HL` `VL` `FIB` | start a drawing tool |
 | `CMP MSFT` · `LOG` · `CANDLE` `BAR` `LINE` `AREA` | compare · log scale · chart type |
 | `AAPL OMON` · `AAPL CN` · `BTCUSD CRNCY OB` · `WEI` · `GC` · `SECF <query>` | options · news · order book · world markets · yield curve · search |
 | `CONG` · `NVDA CONG` · `POL PELOSI` · `TRACK PELOSI` · `ALERTS` · `REFRESH` | Congress feed · who traded it · profile · track · alerts · refresh |
