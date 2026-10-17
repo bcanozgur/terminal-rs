@@ -15,8 +15,8 @@
 pub mod alpaca;
 pub mod cache;
 pub mod crypto;
-pub mod edgar;
 pub mod earnings;
+pub mod edgar;
 pub mod markets;
 pub mod rss;
 pub mod sample;
@@ -108,7 +108,8 @@ pub struct ExtendedQuote {
 impl ExtendedQuote {
     /// Percent move from the reference (`None` during the regular session).
     pub fn move_pct(&self) -> Option<f64> {
-        (self.session != TradingSession::Regular && self.reference > 0.0).then(|| (self.price / self.reference - 1.0) * 100.0)
+        (self.session != TradingSession::Regular && self.reference > 0.0)
+            .then(|| (self.price / self.reference - 1.0) * 100.0)
     }
 }
 

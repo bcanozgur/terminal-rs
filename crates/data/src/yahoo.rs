@@ -492,7 +492,9 @@ pub fn parse_extended_chart(json: &str, now: i64) -> Result<Option<ExtendedQuote
     let closes = r["indicators"]["quote"][0]["close"].as_array().cloned().unwrap_or_default();
     let last = ts.iter().zip(&closes).rev().find_map(|(t, c)| Some((t.as_i64()?, c.as_f64()?)));
     Ok(Some(match last {
-        Some((t, p)) if t >= regular.1 => ExtendedQuote { session: TradingSession::Post, price: p, reference: price, ts: t },
+        Some((t, p)) if t >= regular.1 => {
+            ExtendedQuote { session: TradingSession::Post, price: p, reference: price, ts: t }
+        }
         Some((t, p)) if t < regular.0 => match prev {
             Some(prev) => ExtendedQuote { session: TradingSession::Pre, price: p, reference: prev, ts: t },
             None => return Ok(None),

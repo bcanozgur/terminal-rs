@@ -1212,7 +1212,14 @@ mod tests {
         // Quotes for other securities are ignored.
         alert_quotes(
             &s,
-            &[Quote { symbol: "MSFT US Equity".into(), last: 900.0, prev_close: 1.0, ts: 0, spark: vec![], extended: None }],
+            &[Quote {
+                symbol: "MSFT US Equity".into(),
+                last: 900.0,
+                prev_close: 1.0,
+                ts: 0,
+                spark: vec![],
+                extended: None,
+            }],
         );
         let fired: Vec<_> = rx
             .try_iter()
