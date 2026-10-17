@@ -135,6 +135,11 @@ pub enum Request {
     Search(String),
     /// Order entry (see `app::trading`); only sent once trading is enabled.
     Trade(TradeRequest),
+    /// Economic calendar week or release history (`ECO`, `ECOF`).
+    Eco {
+        pane: PaneId,
+        req: crate::eco::EcoRequest,
+    },
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -294,6 +299,10 @@ pub enum Response {
         hits: Vec<SearchHit>,
     },
     Trade(Box<TradeResponse>),
+    Eco {
+        pane: PaneId,
+        resp: crate::eco::EcoResponse,
+    },
 }
 
 pub struct Worker {
@@ -759,6 +768,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             s.send(Response::SearchHits { query, hits });
         }
         Request::Trade(t) => s.send(Response::Trade(Box::new(trade(t).await))),
+        Request::Eco { pane, req } => s.send(Response::Eco { pane, resp: crate::eco::fetch(req).await }),
     }
 }
 

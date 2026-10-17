@@ -118,6 +118,7 @@ impl TerminalApp {
                     }
                 }
             }
+            PaneKind::Eco(e) => super::eco_view::eco(ui, e, q),
             PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
         }
         match self.panes[i].kind {

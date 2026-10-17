@@ -7,6 +7,7 @@
 mod broker;
 mod chrome;
 mod demo;
+mod eco_view;
 mod hotkeys_view;
 mod options_view;
 mod palette_view;
@@ -76,6 +77,8 @@ pub enum PaneKind {
     /// Brokerage accounts through SnapTrade (`PORT`, `ACCT`, `POS`, `ORD`, `ACTV`).
     Portfolio(Box<broker::PortfolioPane>),
     Settings,
+    /// US economic calendar (`ECO`) and release history (`ECOF`).
+    Eco(Box<eco_view::EcoPane>),
 }
 
 pub struct OptionsPane {
@@ -192,6 +195,7 @@ impl PaneKind {
             PaneKind::Options(o) => format!("{} Options", short(&o.symbol)),
             PaneKind::Portfolio(p) => p.title(),
             PaneKind::Settings => "Settings".into(),
+            PaneKind::Eco(e) => e.title(),
         }
     }
 
@@ -213,6 +217,7 @@ impl PaneKind {
             PaneKind::Options(_) => "OMON",
             PaneKind::Portfolio(p) => p.view.code(),
             PaneKind::Settings => "PDF",
+            PaneKind::Eco(e) => e.code(),
         }
     }
 
@@ -298,6 +303,7 @@ impl PaneKind {
                 sort: p.sort,
                 open_only: p.open_only,
             },
+            PaneKind::Eco(e) => PaneSettings::Eco { min_importance: e.min_importance, series: e.series_code.clone() },
         }
     }
 
@@ -358,6 +364,9 @@ impl PaneKind {
                     open_only,
                     query: String::new(),
                 }))
+            }
+            PaneSettings::Eco { min_importance, series } => {
+                PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
         }
     }
@@ -992,6 +1001,8 @@ impl TerminalApp {
                 }
                 self.set_account_mode(mode, false);
             }
+            Function::Eco(arg) => self.eco_command(&arg),
+            Function::EcoSeries(name) => self.eco_series_command(&name),
         }
     }
 
@@ -1157,6 +1168,7 @@ impl TerminalApp {
                     self.status = format!("Congress disclosures updated: {summary}");
                     self.refresh_congress_views();
                 }
+                Response::Eco { pane, resp } => self.on_eco(pane, resp),
             }
         }
     }
@@ -1455,6 +1467,7 @@ impl TerminalApp {
             }
         }
         self.broker_periodic(&visible);
+        self.eco_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

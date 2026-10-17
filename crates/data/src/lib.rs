@@ -15,6 +15,7 @@
 pub mod alpaca;
 pub mod cache;
 pub mod crypto;
+pub mod eco;
 pub mod markets;
 pub mod rss;
 pub mod sample;

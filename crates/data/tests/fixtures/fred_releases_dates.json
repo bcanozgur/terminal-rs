@@ -1,0 +1,18 @@
+{
+    "realtime_start": "2026-10-12",
+    "realtime_end": "2026-10-18",
+    "order_by": "release_date",
+    "sort_order": "asc",
+    "count": 7,
+    "offset": 0,
+    "limit": 1000,
+    "release_dates": [
+        {"release_id": 22, "release_name": "H.8 Assets and Liabilities of Commercial Banks in the United States", "date": "2026-10-13"},
+        {"release_id": 10, "release_name": "Consumer Price Index", "date": "2026-10-14"},
+        {"release_id": 180, "release_name": "Unemployment Insurance Weekly Claims Report", "date": "2026-10-15"},
+        {"release_id": 9, "release_name": "Advance Monthly Sales for Retail and Food Services", "date": "2026-10-15"},
+        {"release_id": 13, "release_name": "G.17 Industrial Production and Capacity Utilization", "date": "2026-10-16"},
+        {"release_id": 91, "release_name": "Surveys of Consumers", "date": "2026-10-16"},
+        {"release_id": 10, "release_name": "Consumer Price Index", "date": "2026-11-12"}
+    ]
+}

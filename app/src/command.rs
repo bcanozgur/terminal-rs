@@ -305,6 +305,10 @@ pub enum Function {
     Trade(TradeArgs),
     /// Switch between the demo account and live accounts (`DEMO`, `MODE LIVE`); `true` = live.
     AccountMode(bool),
+    /// US economic calendar (`ECO`, `ECO NEXT`, `ECO PREV`, `ECO HIGH`).
+    Eco(String),
+    /// History of one economic release (`ECOF CPI`).
+    EcoSeries(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -399,6 +403,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             "LIVE" | "REAL" => Function::AccountMode(true),
             _ => return None,
         },
+        "ECO" | "ECON" => Function::Eco(words().join(" ")),
+        "ECOF" => Function::EcoSeries(joined()),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         _ if crate::studies::by_command(&up).is_some() => {
             Function::Study(crate::studies::by_command(&up)?.id().to_string())
@@ -570,6 +576,12 @@ fn describe(f: &Function) -> String {
         }
         Function::AccountMode(false) => "Switch to the DEMO account (paper trading)".into(),
         Function::AccountMode(true) => "Switch to LIVE brokerage accounts (asks first)".into(),
+        Function::Eco(a) if a.is_empty() => "US economic calendar: this week's releases, actual vs prior".into(),
+        Function::Eco(a) => format!("US economic calendar: {}", a.to_lowercase()),
+        Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
+            Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
+            None => format!("Release history: unknown release {n}"),
+        },
     }
 }
 
@@ -752,5 +764,14 @@ mod tests {
         assert!(IndicatorSpec::Rsi(14).same_kind(&IndicatorSpec::Rsi(21)));
         assert!(!IndicatorSpec::Sma(20).same_kind(&IndicatorSpec::Sma(50)));
         assert!(IndicatorSpec::Macd(12, 26, 9).is_pane());
+    }
+
+    #[test]
+    fn economic_calendar() {
+        assert_eq!(parse("ECO"), Some(Command::Function(Function::Eco(String::new()))));
+        assert_eq!(parse("eco next"), Some(Command::Function(Function::Eco("NEXT".into()))));
+        assert_eq!(parse("ECON PREV"), Some(Command::Function(Function::Eco("PREV".into()))));
+        assert_eq!(parse("ECOF core cpi"), Some(Command::Function(Function::EcoSeries("core cpi".into()))));
+        assert!(hint("ECOF CPI").contains("CPIAUCSL"));
     }
 }
