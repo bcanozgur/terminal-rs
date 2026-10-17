@@ -917,6 +917,9 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Smart(String::new())))
         );
         assert!(hint("SMART 13F").contains("13F"));
+    }
+
+    #[test]
     fn risk_commands() {
         assert_eq!(parse("RISK"), Some(Command::Function(Function::Risk(String::new()))));
         assert_eq!(parse("risk qqq 2y"), Some(Command::Function(Function::Risk("qqq 2y".into()))));

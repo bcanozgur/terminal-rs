@@ -171,12 +171,14 @@ pub enum PaneSettings {
     Most {
         #[serde(default)]
         list: String,
+    },
     /// Smart money: the followed security and the tab (`insiders`, `institutions`, `short`).
     Smart {
         #[serde(default)]
         symbol: String,
         #[serde(default)]
         tab: String,
+    },
     /// Portfolio risk: `tab` is `overview`, `contrib` or `corr`; `window` is trading days.
     Risk {
         #[serde(default)]

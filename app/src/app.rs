@@ -363,6 +363,7 @@ impl PaneKind {
                  type in the filter box to narrow by symbol or name. Rel Vol is today's volume over the 3-month average. \
                  Refreshes every minute while visible. Prices are delayed about 15 minutes; pre-market and after-hours \
                  moves are not included."
+            }
             PaneKind::Smart(_) => {
                 "Smart money (SMART): what insiders, big institutions and short sellers are doing in the active symbol. \
                  Insiders: recent Form 4 transactions (buys, sells, size, shares owned after) and a net buy/sell \

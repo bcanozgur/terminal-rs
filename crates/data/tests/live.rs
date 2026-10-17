@@ -261,6 +261,8 @@ async fn yahoo_most_movers() {
     assert!(b.gainers.len() >= 10 && b.losers.len() >= 10 && b.active.len() >= 10);
     assert!(b.gainers[0].change_pct >= b.gainers[b.gainers.len() - 1].change_pct);
     assert!(b.active.iter().all(|m| m.price > 0.0 && m.volume.is_some()));
+}
+
 /// Needs `TR_SEC_USER_AGENT`. Form 4s of an active large issuer, a manager's 13F and the reverse lookup.
 #[tokio::test]
 #[ignore = "network"]
