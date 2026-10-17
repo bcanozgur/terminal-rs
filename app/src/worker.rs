@@ -171,6 +171,8 @@ pub enum Request {
     TrFunds(crate::trfunds::TrfReq),
     /// US market movers: the three Yahoo screener lists (`MOST`).
     Most(crate::most::MostReq),
+    /// Futures curve, VIX term structure or sector heatmap (`FUT`).
+    Fut(crate::fut::FutReq),
     /// Smart money: Form 4, 13F and FINRA short interest (`SMART`).
     Smart(crate::smart::SmartReq),
     /// Daily history for the portfolio risk pane (`RISK`).
@@ -357,6 +359,7 @@ pub enum Response {
     Etf(crate::etf::EtfResp),
     TrFunds(crate::trfunds::TrfResp),
     Most(crate::most::MostResp),
+    Fut(crate::fut::FutResp),
     Smart(crate::smart::SmartResp),
     Risk(crate::risk::RiskResp),
 }
@@ -986,6 +989,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
         Request::Most(r) => crate::most::handle(r, &|r| s.send(Response::Most(r))).await,
+        Request::Fut(r) => crate::fut::handle(r, &|r| s.send(Response::Fut(r))).await,
         Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,
         Request::Risk(r) => crate::risk::handle(r, &s.provider, &s.cache, &|r| s.send(Response::Risk(r))).await,
     }

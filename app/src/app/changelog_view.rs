@@ -31,6 +31,7 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
              allocation donuts and the buys and sells between the latest two monthly reports; reverse search \
              (which funds hold a BIST stock, also THYAO TRFS).",
             "MOST: US day gainers, losers and most active stocks from Yahoo screeners with volume, relative volume and market cap; click a row for its chart.",
+            "FUT / VIX / HEAT: futures curves (contango, backwardation, roll yield), VIX term structure with the Cboe VX settlement strip, and a sector / world heatmap by 1D, 1W, 1M and YTD.",
             "SMART: insider trades (SEC Form 4) with a 90-day net buy/sell summary, 13F holdings of ~18 famous \
              managers (top positions, new/added/reduced/sold, who holds the symbol) and FINRA short interest with \
              days to cover; also AAPL SMART.",

@@ -21,7 +21,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 24] = [
+pub const PANELS: [(&str, &str); 25] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -39,6 +39,7 @@ pub const PANELS: [(&str, &str); 24] = [
     ("ETFs", "ETF"),
     ("TR Funds", "TRF"),
     ("Market Movers", "MOST"),
+    ("Futures & Volatility", "FUT"),
     ("Smart Money", "SMART"),
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
@@ -691,6 +692,9 @@ impl TerminalApp {
             ))),
             "MOST" | "MOVERS" => {
                 PaneKind::Most(Box::new(super::most_view::MostPane::new(words.get(1).copied().unwrap_or(""))))
+            }
+            "FUT" | "FUTURES" => {
+                PaneKind::Fut(Box::new(super::fut_view::FutPane::new(words.get(1).copied().unwrap_or(""))))
             }
             "SMART" | "SMARTMONEY" => PaneKind::Smart(Box::new(super::smart_view::SmartPane::new(
                 current.as_deref().unwrap_or("AAPL US Equity"),

@@ -261,6 +261,23 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
   A failed refresh shows the error and keeps the last lists, marked as old.
 
+- **Futures and volatility (`FUT`, `VIX`, `HEAT`)** — three tabs, all from free sources:
+  - *Futures curve* (`FUT`, `FUT CL`): pick a root (ES NQ YM RTY CL NG GC SI HG ZB ZN ZC ZS ZW 6E KC).
+    The terminal builds the contract tickers from the month codes (`CLZ26.NYM`), probes the next
+    listing-cycle months on Yahoo and keeps the live ones (up to 12; unlisted or expired months are
+    skipped and counted). Line chart of price against expiry, a table with change and volume, and the
+    front-to-last slope: contango or backwardation and the annualised roll yield. Yahoo lists fewer
+    months for some roots (ES about 5 quarters, ZN 2); open interest is not available.
+  - *VIX term structure* (`VIX`): VIX9D, VIX, VIX3M, VIX6M and VIX1Y from Yahoo, the monthly VIX
+    futures from Cboe's end-of-day settlement CSV (previous close; Cboe's delayed-quote JSON for
+    individual VX contracts returns 403 without a browser session, so there is no intraday strip),
+    VIX/VIX3M and VIX9D/VIX ratios and a plain-language reading.
+  - *Sector heatmap* (`HEAT`, `HEAT WORLD`): the 11 SPDR sector ETFs, or 14 country ETFs, as a
+    treemap coloured by 1D / 1W / 1M / YTD change (computed from a year of Yahoo daily closes). Tile
+    area uses a fixed table of approximate weights, not live market caps. Click a tile for its
+    chart; right-click for the ETF's holdings (`ETF XLK`).
+  Quotes are delayed; the pane refreshes every minute while visible, with a 50-second cache.
+
 - **Portfolio risk (`RISK`, `CORR`)** — risk of the portfolio you hold (demo account or brokerage),
   computed locally from about two years of daily bars of each position (Yahoo/Alpaca through the
   usual provider, kept in the bar cache so reopening is instant), weighted by current market value

@@ -172,6 +172,17 @@ pub enum PaneSettings {
         #[serde(default)]
         list: String,
     },
+    /// Futures / VIX / heatmap: the tab (`curve`, `vix`, `heat`), futures root, heatmap period and universe.
+    Fut {
+        #[serde(default)]
+        tab: String,
+        #[serde(default)]
+        root: String,
+        #[serde(default)]
+        period: String,
+        #[serde(default)]
+        world: bool,
+    },
     /// Smart money: the followed security and the tab (`insiders`, `institutions`, `short`).
     Smart {
         #[serde(default)]

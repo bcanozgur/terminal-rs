@@ -21,6 +21,7 @@ pub mod eco;
 pub mod edgar;
 pub mod etf;
 pub mod freshness;
+pub mod fut;
 pub mod markets;
 pub mod most;
 pub mod rss;

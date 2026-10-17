@@ -133,6 +133,20 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("MOST", "Market movers: US gainers, losers, most active", "most movers gainers losers active volume top", None),
     ("MOST LOSERS", "Market movers: day losers", "most movers losers biggest decliners", None),
     ("MOST ACTIVE", "Market movers: most active by volume", "most movers active volume", None),
+    (
+        "FUT",
+        "Futures curve: contango / backwardation by contract month",
+        "fut futures curve contango backwardation roll",
+        None,
+    ),
+    ("FUT CL", "Futures curve: WTI crude oil", "fut futures cl crude oil wti curve", None),
+    ("VIX", "VIX term structure: VIX9D to VIX1Y and VX futures", "vix volatility term structure vx futures", None),
+    (
+        "HEAT",
+        "Sector heatmap: SPDR sector ETFs by 1D / 1W / 1M / YTD",
+        "heat heatmap sector xlk xlf etf performance",
+        None,
+    ),
     ("TRF HELD THYAO", "Turkish funds holding THYAO", "trf funds reverse search holders bist hisse", None),
 ];
 
