@@ -64,8 +64,14 @@ enum GroupCmd {
     Close(PaneId),
     CloseOthers(PaneId),
     PopOut(PaneId),
-    Add { target: PaneId, zone: Zone, spec: &'static str },
+    Add {
+        target: PaneId,
+        zone: Zone,
+        spec: &'static str,
+    },
     Link(PaneId, Option<Link>),
+    /// Load the active chart's symbol into this pane.
+    Sync(PaneId),
     StartRename(PaneId),
     Rename(PaneId, String),
 }
@@ -220,6 +226,28 @@ impl TerminalApp {
             PaneKind::Chart(c) => Some(c.symbol.clone()),
             _ => None,
         })
+    }
+
+    /// The chart whose symbol Sync uses: the focused chart, else the most recently focused
+    /// one that still exists, else the first chart.
+    pub(super) fn active_chart(&self) -> Option<PaneId> {
+        let charts: Vec<PaneId> =
+            self.panes.iter().filter(|p| matches!(p.kind, PaneKind::Chart(_))).map(|p| p.id).collect();
+        pick_chart(&charts, self.focus, self.last_chart)
+    }
+
+    /// One-shot: point pane `id` at the active chart's symbol (no continuous following).
+    fn sync_to_chart(&mut self, id: PaneId) {
+        let Some(chart) = self.active_chart().and_then(|c| self.idx(c)) else {
+            self.status = "No chart open to sync from".into();
+            return;
+        };
+        let PaneKind::Chart(c) = &self.panes[chart].kind else { return };
+        let symbol = c.symbol.clone();
+        if let Some(i) = self.idx(id) {
+            self.set_pane_symbol(i, &symbol);
+            self.status = format!("{} synced to {}", self.panes[i].display_title(), tr_data::security(&symbol).key());
+        }
     }
 
     /// The focused security if it has listed options (US equity, ETF, index), else AAPL.
@@ -903,6 +931,9 @@ impl TerminalApp {
     pub(super) fn render_dock(&mut self, ui: &mut Ui, area: Rect, gap: f32) -> Vec<Action> {
         let mut actions = Vec::new();
         let mut cmds = Vec::new();
+        if self.focused_is_chart() {
+            self.last_chart = Some(self.focus);
+        }
         if self.dock.is_empty() {
             self.empty_state(ui, area, &mut cmds);
         }
@@ -987,7 +1018,11 @@ impl TerminalApp {
             |i: f32| Rect::from_min_size(pos2(strip.right() - 26.0 * i - 2.0, strip.top() + 2.0), vec2(24.0, th - 4.0));
         let searchable = self.idx(active).is_some_and(|i| self.panes[i].kind.search_hint().is_some());
         let info_slot = if searchable { 4.0 } else { 3.0 };
-        let tabs_right = btn(info_slot).left() - 4.0;
+        let syncable = self
+            .idx(active)
+            .is_some_and(|i| self.panes[i].kind.follows_symbol() && !matches!(self.panes[i].kind, PaneKind::Chart(_)));
+        let sync_w = if syncable { 44.0 } else { 0.0 };
+        let tabs_right = btn(info_slot).left() - 4.0 - sync_w;
         // A chart's interval and type controls share the tab strip when there is room,
         // which saves the chart a whole header row.
         let chart_idx = self.idx(active).filter(|&i| matches!(self.panes[i].kind, PaneKind::Chart(_)));
@@ -1113,6 +1148,20 @@ impl TerminalApp {
         }
 
         // Group buttons.
+        if syncable {
+            let r = Rect::from_min_size(
+                pos2(btn(info_slot).left() - 4.0 - sync_w + 4.0, strip.top() + 3.0),
+                vec2(sync_w - 4.0, th - 6.0),
+            );
+            let has_chart = self.active_chart().is_some();
+            let mut b =
+                ui.new_child(UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            let resp = b.add_enabled(has_chart, egui::Button::new(egui::RichText::new("Sync").font(ui_font(11.0))));
+            let tip = if has_chart { "Show the active chart's symbol here" } else { "Open a chart to sync from" };
+            if resp.on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                cmds.push(GroupCmd::Sync(active));
+            }
+        }
         if searchable {
             let mut b = ui.new_child(UiBuilder::new().max_rect(btn(3.0)));
             let open = self.pane_search.contains_key(&active);
@@ -1359,6 +1408,7 @@ impl TerminalApp {
                     }
                 }
                 GroupCmd::Link(id, l) => self.set_link(id, l),
+                GroupCmd::Sync(id) => self.sync_to_chart(id),
                 GroupCmd::StartRename(id) => {
                     let t = self.idx(id).map(|i| self.panes[i].display_title()).unwrap_or_default();
                     self.renaming_tab = Some((id, t));
@@ -1451,6 +1501,15 @@ impl TerminalApp {
 }
 
 /// Shared tab / pane options menu.
+/// The chart Sync reads: `focus` if it is a chart, else `last` if still a chart, else the
+/// first chart.
+fn pick_chart(charts: &[PaneId], focus: PaneId, last: Option<PaneId>) -> Option<PaneId> {
+    if charts.contains(&focus) {
+        return Some(focus);
+    }
+    last.filter(|l| charts.contains(l)).or_else(|| charts.first().copied())
+}
+
 fn tab_menu(ui: &mut Ui, pid: PaneId, link: Option<Link>, cmds: &mut Vec<GroupCmd>) {
     ui.set_min_width(200.0);
     for (label, zone) in [("Split Right", Zone::Right), ("Split Down", Zone::Bottom)] {
@@ -1503,6 +1562,15 @@ mod tests {
     fn groups(n: &Node) -> (Rect, Vec<crate::dock::Group>) {
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0));
         (area, n.layout(area, 6.0).0)
+    }
+
+    #[test]
+    fn sync_picks_focused_then_last_then_first_chart() {
+        assert_eq!(pick_chart(&[2, 5], 5, Some(2)), Some(5));
+        assert_eq!(pick_chart(&[2, 5], 9, Some(5)), Some(5));
+        assert_eq!(pick_chart(&[2, 5], 9, Some(7)), Some(2));
+        assert_eq!(pick_chart(&[2, 5], 9, None), Some(2));
+        assert_eq!(pick_chart(&[], 9, Some(2)), None);
     }
 
     #[test]

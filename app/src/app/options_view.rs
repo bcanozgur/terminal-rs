@@ -124,14 +124,39 @@ fn rows(o: &OptionsPane) -> Vec<Row> {
     all.into_iter().skip(lo).take(hi - lo).collect()
 }
 
+/// Editable ticker: type a symbol and press Enter to load it; Escape keeps the old one.
+fn symbol_box(ui: &mut Ui, o: &mut OptionsPane) {
+    let mut buf = o.symbol_edit.take().unwrap_or_else(|| tr_data::security(&o.symbol).ticker);
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut buf)
+            .font(mono(13.0))
+            .text_color(amber())
+            .hint_text("AAPL / SPY")
+            .desired_width(theme::dp(72.0)),
+    );
+    let r = r.on_hover_text("Type a ticker and press Enter");
+    if r.lost_focus() {
+        let entered = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let typed = buf.trim().to_ascii_uppercase();
+        if entered && !typed.is_empty() {
+            let key = tr_data::security(&typed).key();
+            if key != o.symbol {
+                *o = OptionsPane::new(&key, o.strikes, o.show_greeks);
+            }
+        }
+    } else if r.has_focus() {
+        o.symbol_edit = Some(buf);
+    }
+}
+
 /// Draw the chain. Returns an action (open the underlying's chart) and whether a refetch
 /// is needed (expiration changed or refresh clicked).
 pub fn options_chain(ui: &mut Ui, o: &mut OptionsPane) -> (Option<Action>, bool) {
     let mut action = None;
     let mut refetch = false;
-    let key = tr_data::security(&o.symbol);
     ui.horizontal_wrapped(|ui| {
-        let r = ui.label(RichText::new(&key.ticker).font(mono(13.0)).color(amber())).interact(Sense::click());
+        symbol_box(ui, o);
+        let r = ui.label(RichText::new("↗").font(mono(13.0)).color(amber())).interact(Sense::click());
         if r.clicked() {
             action = Some(Action::OpenChart(o.symbol.clone()));
         }

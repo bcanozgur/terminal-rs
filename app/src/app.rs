@@ -108,6 +108,8 @@ pub struct OptionsPane {
     /// Strikes each side of the money (0 = all).
     pub strikes: usize,
     pub show_greeks: bool,
+    /// Text being typed in the symbol box (`None` = showing the pane's own symbol).
+    pub symbol_edit: Option<String>,
 }
 
 impl OptionsPane {
@@ -124,6 +126,7 @@ impl OptionsPane {
             fetched: None,
             strikes,
             show_greeks,
+            symbol_edit: None,
         }
     }
 
@@ -605,6 +608,8 @@ pub struct TerminalApp {
     panes: Vec<Pane>,
     dock: Node,
     focus: PaneId,
+    /// The chart pane that was focused most recently (target of the pane Sync buttons).
+    last_chart: Option<PaneId>,
     next_id: PaneId,
     last_opened: Option<PaneId>,
     /// Preset last applied, for the toolbar picker (cleared by manual rearranging).
@@ -777,6 +782,7 @@ impl TerminalApp {
             panes: Vec::new(),
             dock: Node::default(),
             focus: 0,
+            last_chart: None,
             next_id: 1,
             last_opened: None,
             preset: None,
