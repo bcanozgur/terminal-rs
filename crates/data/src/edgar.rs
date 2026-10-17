@@ -25,8 +25,8 @@ use tr_core::AssetClass;
 /// Environment variable holding the SEC User-Agent (e.g. `Jane Doe jane@example.com`).
 pub const UA_ENV: &str = "TR_SEC_USER_AGENT";
 
-const TICKERS_URL: &str = "https://www.sec.gov/files/company_tickers.json";
-const TICKERS_TTL: Duration = Duration::from_secs(24 * 3600);
+pub(crate) const TICKERS_URL: &str = "https://www.sec.gov/files/company_tickers.json";
+pub(crate) const TICKERS_TTL: Duration = Duration::from_secs(24 * 3600);
 const SUBMISSIONS_TTL: Duration = Duration::from_secs(6 * 3600);
 const FACTS_TTL: Duration = Duration::from_secs(12 * 3600);
 /// Minimum spacing between SEC requests (8 per second, under the 10/s limit).
@@ -951,12 +951,12 @@ async fn throttle() {
     *next = Some(Instant::now() + MIN_GAP);
 }
 
-async fn fetch(url: &str, ua: &str) -> Result<String> {
+pub(crate) async fn fetch(url: &str, ua: &str) -> Result<String> {
     throttle().await;
     let resp = client()
         .get(url)
         .header(reqwest::header::USER_AGENT, ua)
-        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT, "application/json, application/xml;q=0.9, */*;q=0.8")
         .send()
         .await
         .with_context(|| format!("GET {url}"))?;
@@ -975,7 +975,7 @@ async fn fetch(url: &str, ua: &str) -> Result<String> {
 
 /// A disk-cached GET: fresh files are served without a request; on a network error a stale
 /// file is served rather than nothing.
-async fn cached(dir: &Path, name: &str, ttl: Duration, url: &str, ua: &str) -> Result<String> {
+pub(crate) async fn cached(dir: &Path, name: &str, ttl: Duration, url: &str, ua: &str) -> Result<String> {
     let path = dir.join(name);
     let age =
         std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| SystemTime::now().duration_since(t).ok());
