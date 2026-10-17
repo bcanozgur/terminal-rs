@@ -25,6 +25,12 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "Pre-market and after-hours prices for US stocks in quotes and the portfolio.",
             "Every price shows its source and delay (e.g. Yahoo · 15m delayed, Binance · live); stale prices are \
              flagged and simulated data shows a red warning.",
+            "ETF: US ETF contents from SEC N-PORT and Yahoo. Click a fund for a top-10 donut chart and list plus \
+             sector weights; reverse search (which ETFs hold a stock) and two-fund overlap.",
+            "Sync button on symbol panes (News, Options, DES/FA, Order Book, ...) shows the active chart's symbol; \
+             Options now has a ticker box too.",
+            "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \
+             its timeframe; click an ALRT row to open that chart.",
             "Info (i) button on every pane header explains what the panel shows.",
             "Combo 11 chart study, with its table kept clear of the latest bars.",
             "Default zoom setting, search inside list panels, app icon, and a toolbar flush with the top in full \
