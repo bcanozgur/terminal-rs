@@ -22,6 +22,7 @@ mod markets_view;
 mod palette;
 mod prefs;
 mod quote_tag;
+mod smart;
 mod studies;
 mod theme;
 mod themes;

@@ -30,6 +30,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "TRF: Turkish mutual funds from KAP. Search the fund list, open a fund for its card, asset and stock \
              allocation donuts and the buys and sells between the latest two monthly reports; reverse search \
              (which funds hold a BIST stock, also THYAO TRFS).",
+            "SMART: insider trades (SEC Form 4) with a 90-day net buy/sell summary, 13F holdings of ~18 famous \
+             managers (top positions, new/added/reduced/sold, who holds the symbol) and FINRA short interest with \
+             days to cover; also AAPL SMART.",
             "Sync button on symbol panes (News, Options, DES/FA, Order Book, ...) shows the active chart's symbol; \
              Options now has a ticker box too.",
             "Chart alerts: click the price axis for a small popup, amber line across the chart, and the alert keeps \

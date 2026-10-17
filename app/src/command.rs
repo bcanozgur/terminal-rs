@@ -325,6 +325,8 @@ pub enum Function {
     Etf(String),
     /// Turkish mutual funds from KAP (`TRF`, `TRF AFT`, `TRF HELD THYAO`; `THYAO TRFS`: the funds holding a stock).
     TrFunds(String),
+    /// Smart money (`SMART`, `SMART SHORT`, `SMART 13F`, `AAPL SMART`): Form 4, 13F and FINRA short interest.
+    Smart(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -427,6 +429,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ECOF" => Function::EcoSeries(joined()),
         "ETF" | "ETFS" => Function::Etf(joined()),
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
+        "SMART" | "SMARTMONEY" => Function::Smart(joined()),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -619,6 +622,8 @@ fn describe(f: &Function) -> String {
             1 => format!("ETF holdings and sectors: {}", a.to_ascii_uppercase()),
             _ => format!("ETF holdings: {}", a.to_ascii_uppercase()),
         },
+        Function::Smart(a) if a.is_empty() => "Smart money: insider trades, 13F holders, short interest".into(),
+        Function::Smart(a) => format!("Smart money: {}", a.to_ascii_uppercase()),
         Function::TrFunds(a) => match a.split_whitespace().count() {
             0 => "Turkish funds (KAP): allocation, buys and sells, reverse search".into(),
             _ => format!("Turkish funds: {}", a.to_ascii_uppercase()),
@@ -880,6 +885,17 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Etf(String::new())))
         );
         assert!(hint("ETF SPY").contains("SPY"));
+    }
+
+    #[test]
+    fn smart_commands() {
+        assert_eq!(parse("SMART"), Some(Command::Function(Function::Smart(String::new()))));
+        assert_eq!(parse("smart short"), Some(Command::Function(Function::Smart("short".into()))));
+        assert_eq!(
+            parse("AAPL SMART"),
+            Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Smart(String::new())))
+        );
+        assert!(hint("SMART 13F").contains("13F"));
     }
 
     #[test]

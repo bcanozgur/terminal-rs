@@ -21,7 +21,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 21] = [
+pub const PANELS: [(&str, &str); 22] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -37,6 +37,7 @@ pub const PANELS: [(&str, &str); 21] = [
     ("Economic Calendar", "ECO"),
     ("ETFs", "ETF"),
     ("TR Funds", "TRF"),
+    ("Smart Money", "SMART"),
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
     ("Alerts", "ALRT"),
@@ -421,6 +422,7 @@ impl TerminalApp {
                 }
             }
             PaneKind::Edgar(e) => e.set_symbol(&key),
+            PaneKind::Smart(e) => e.set_symbol(&key),
             PaneKind::Earnings(e) if e.symbol.is_some() => e.set_symbol(&key),
             _ => return false,
         }
@@ -684,6 +686,10 @@ impl TerminalApp {
             "TRF" | "TRFS" | "TRFUNDS" => PaneKind::TrFunds(Box::new(super::trfunds_view::TrfPane::new(
                 if words.len() > 1 { "detail" } else { "list" },
                 words.get(1).copied().unwrap_or(""),
+            ))),
+            "SMART" | "SMARTMONEY" => PaneKind::Smart(Box::new(super::smart_view::SmartPane::new(
+                current.as_deref().unwrap_or("AAPL US Equity"),
+                super::smart_view::Tab::Insiders,
             ))),
             "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
                 1,

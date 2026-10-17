@@ -227,6 +227,19 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   cached in `<data dir>/etf/`; reverse search and overlap cover the funds cached there ("Index
   curated list" fetches the popular ones one at a time).
 
+- **Smart money (`SMART`, `AAPL SMART`)** — three tabs for the active symbol. *Insiders*: recent SEC
+  Form 4 transactions (insider, title, buy/sell, shares, price, value, shares owned after) with a
+  90-day net open-market buy/sell summary. *Institutions*: the latest two 13F-HR filings of 18
+  well-known managers (Berkshire, Bridgewater, Renaissance, Citadel, Soros, Tiger Global,
+  Pershing Square, …): top 25 positions with new/added/reduced/sold vs the previous quarter, and
+  "Who holds AAPL" across the managers indexed on disk (`<data dir>/smartmoney/`; the "Index
+  curated managers" button downloads them politely at well under SEC's 10 requests/second). 13F has
+  no tickers, so they are matched from issuer names (best effort), and the data is 6 weeks to 4½
+  months old. *Short interest*: FINRA's twice-monthly consolidated short interest files
+  (`cdn.finra.org`, no login) with change and days to cover, plus the daily Reg SHO short *sale
+  volume* files, shown separately and labelled as sale volume (not short interest). Needs the
+  same SEC User-Agent as DES/FA for the EDGAR tabs; FINRA needs nothing. Not included: a
+  market-wide feed of large insider purchases.
 - **Turkish funds (`TRF`)** — every investment fund on KAP (kap.org.tr) in a searchable list; click a
   code for the fund card (founder, fund manager, management/entry/exit fee from the fund's KAP
   information form, fund size, units and price from the report), the asset allocation and the top-10 stock

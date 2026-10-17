@@ -169,6 +169,8 @@ pub enum Request {
     Etf(crate::etf::EtfReq),
     /// Turkish fund list, one fund or an index run (`TRF`).
     TrFunds(crate::trfunds::TrfReq),
+    /// Smart money: Form 4, 13F and FINRA short interest (`SMART`).
+    Smart(crate::smart::SmartReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -350,6 +352,7 @@ pub enum Response {
     },
     Etf(crate::etf::EtfResp),
     TrFunds(crate::trfunds::TrfResp),
+    Smart(crate::smart::SmartResp),
 }
 
 pub struct Worker {
@@ -976,6 +979,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Eco { pane, req } => s.send(Response::Eco { pane, resp: crate::eco::fetch(req).await }),
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
+        Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,
     }
 }
 

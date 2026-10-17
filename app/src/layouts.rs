@@ -167,6 +167,13 @@ pub enum PaneSettings {
         #[serde(default)]
         a: String,
     },
+    /// Smart money: the followed security and the tab (`insiders`, `institutions`, `short`).
+    Smart {
+        #[serde(default)]
+        symbol: String,
+        #[serde(default)]
+        tab: String,
+    },
 }
 
 fn yes() -> bool {
