@@ -24,8 +24,6 @@ pub const TOOLBAR_H: f32 = if cfg!(target_os = "macos") { tr_macos::TITLEBAR_HEI
 /// Default space kept clear for the traffic lights when the sidebar is collapsed.
 pub const TRAFFIC_INSET: f32 = if cfg!(target_os = "macos") { tr_macos::TRAFFIC_LIGHTS_WIDTH } else { 0.0 };
 pub const STATUS_H: f32 = 22.0;
-/// Strip above the toolbar in macOS full screen where clicks do not reach the window.
-const FULLSCREEN_TOP_PAD: f32 = 30.0;
 pub const SIDEBAR_W: f32 = 232.0;
 const ROW_H: f32 = 24.0;
 const MAC: bool = cfg!(target_os = "macos");
@@ -55,18 +53,10 @@ impl TerminalApp {
     pub(super) fn toolbar_h(&self) -> f32 {
         match self.chrome {
             Some(c) if c.titlebar_height > 0.0 => c.titlebar_height.max(TOOLBAR_H),
-            // Full screen: no title bar, but macOS keeps the top strip for its menu bar reveal
-            // and swallows clicks there, so the toolbar's controls sit below it.
-            Some(_) => 34.0 + self.fullscreen_pad(),
+            // Full screen: no title bar, so the toolbar sits flush with the top edge (the menu
+            // bar slides down over it on hover, as in other full-screen apps).
+            Some(_) => 34.0,
             None => TOOLBAR_H,
-        }
-    }
-
-    /// Extra space above the toolbar controls in full screen on macOS.
-    pub(super) fn fullscreen_pad(&self) -> f32 {
-        match self.chrome {
-            Some(c) if cfg!(target_os = "macos") && c.titlebar_height == 0.0 => FULLSCREEN_TOP_PAD,
-            _ => 0.0,
         }
     }
 
@@ -86,7 +76,7 @@ impl TerminalApp {
         window_drag_region(ui, rect, "toolbar");
         let p = ui.painter_at(rect);
         p.hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, theme::border()));
-        let cy = rect.center().y + self.fullscreen_pad() / 2.0;
+        let cy = rect.center().y;
         let mut x = rect.left() + left_inset + 8.0;
 
         // The sidebar toggle sits on the sidebar's side, its glyph pointing at it.
