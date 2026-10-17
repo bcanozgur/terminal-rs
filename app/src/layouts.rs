@@ -150,6 +150,16 @@ pub enum PaneSettings {
         #[serde(default)]
         series: Option<String>,
     },
+    /// ETF contents: `mode` is `list`, `detail` (`a` = fund), `reverse` (`a` = stock) or
+    /// `overlap` (`a` and `b` = funds).
+    Etf {
+        #[serde(default)]
+        mode: String,
+        #[serde(default)]
+        a: String,
+        #[serde(default)]
+        b: String,
+    },
 }
 
 fn yes() -> bool {

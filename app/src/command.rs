@@ -321,6 +321,8 @@ pub enum Function {
     Eco(String),
     /// History of one economic release (`ECOF CPI`).
     EcoSeries(String),
+    /// US ETF contents (`ETF`, `ETF SPY`, `ETF VOO QQQ`, `ETF HELD AAPL`; `AAPL ETFS`: the ETFs holding a stock).
+    Etf(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -421,6 +423,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "EE" => Function::EarningsMarkers,
         "ECO" | "ECON" => Function::Eco(words().join(" ")),
         "ECOF" => Function::EcoSeries(joined()),
+        "ETF" | "ETFS" => Function::Etf(joined()),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -608,6 +611,11 @@ fn describe(f: &Function) -> String {
         Function::Edgar { fa: true } => "Financial analysis: statements and ratios from SEC XBRL filings".into(),
         Function::Eco(a) if a.is_empty() => "US economic calendar: this week's releases, actual vs prior".into(),
         Function::Eco(a) => format!("US economic calendar: {}", a.to_lowercase()),
+        Function::Etf(a) => match a.split_whitespace().count() {
+            0 => "US ETFs: top holdings, sectors, reverse search and overlap".into(),
+            1 => format!("ETF holdings and sectors: {}", a.to_ascii_uppercase()),
+            _ => format!("ETF holdings: {}", a.to_ascii_uppercase()),
+        },
         Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
             Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
             None => format!("Release history: unknown release {n}"),
@@ -854,5 +862,16 @@ mod tests {
         assert_eq!(parse("ECON PREV"), Some(Command::Function(Function::Eco("PREV".into()))));
         assert_eq!(parse("ECOF core cpi"), Some(Command::Function(Function::EcoSeries("core cpi".into()))));
         assert!(hint("ECOF CPI").contains("CPIAUCSL"));
+    }
+
+    #[test]
+    fn etf_commands() {
+        assert_eq!(parse("ETF"), Some(Command::Function(Function::Etf(String::new()))));
+        assert_eq!(parse("etf voo qqq"), Some(Command::Function(Function::Etf("voo qqq".into()))));
+        assert_eq!(
+            parse("AAPL ETFS"),
+            Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Etf(String::new())))
+        );
+        assert!(hint("ETF SPY").contains("SPY"));
     }
 }

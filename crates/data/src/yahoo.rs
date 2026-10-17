@@ -338,6 +338,35 @@ impl YahooProvider {
         Err(last_err.unwrap_or_else(|| anyhow!("yahoo options failed")))
     }
 
+    /// Raw `quoteSummary` JSON for a Yahoo symbol and comma-separated modules (needs a crumb).
+    pub async fn quote_summary(&self, symbol: &str, modules: &str) -> Result<String> {
+        const URL: &str = "https://query2.finance.yahoo.com/v10/finance/quoteSummary";
+        let mut last_err = None;
+        for refresh in [false, true] {
+            let crumb = self.crumb(refresh).await?;
+            let resp = self
+                .client
+                .get(format!("{URL}/{}", urlencode(symbol)))
+                .query(&[("modules", modules), ("crumb", crumb.as_str())])
+                .send()
+                .await?;
+            let status = resp.status();
+            let body = resp.text().await?;
+            if status.as_u16() == 401 || body.contains("Invalid Crumb") {
+                last_err = Some(anyhow!("yahoo quoteSummary: crumb rejected"));
+                continue;
+            }
+            if status.as_u16() == 404 {
+                bail!("yahoo has no fund data for {symbol}");
+            }
+            if !status.is_success() {
+                bail!("yahoo quoteSummary: HTTP {status}");
+            }
+            return Ok(body);
+        }
+        Err(last_err.unwrap_or_else(|| anyhow!("yahoo quoteSummary failed")))
+    }
+
     /// Headlines related to a Yahoo symbol or free-text query.
     pub async fn news(&self, query: &str) -> Result<Vec<crate::NewsItem>> {
         let resp = self

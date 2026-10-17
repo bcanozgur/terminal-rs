@@ -15,6 +15,7 @@ mod dock;
 mod earnings_view;
 mod earnings_worker;
 mod eco;
+mod etf;
 mod layout;
 mod layouts;
 mod markets_view;

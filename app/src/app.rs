@@ -12,6 +12,7 @@ mod des_view;
 mod earnings;
 mod eco_view;
 mod edgar_view;
+mod etf_view;
 mod fa_view;
 mod hotkeys_view;
 mod options_view;
@@ -90,6 +91,8 @@ pub enum PaneKind {
     Earnings(Box<ErnPane>),
     /// US economic calendar (`ECO`) and release history (`ECOF`).
     Eco(Box<eco_view::EcoPane>),
+    /// US ETF contents (`ETF`): holdings, sectors, reverse search and overlap.
+    Etf(Box<etf_view::EtfPane>),
 }
 
 pub struct OptionsPane {
@@ -216,6 +219,7 @@ impl PaneKind {
                 None => "Earnings".into(),
             },
             PaneKind::Eco(e) => e.title(),
+            PaneKind::Etf(e) => e.title(),
         }
     }
 
@@ -241,6 +245,7 @@ impl PaneKind {
             PaneKind::Edgar(e) => e.code(),
             PaneKind::Earnings(_) => "ERN",
             PaneKind::Eco(e) => e.code(),
+            PaneKind::Etf(e) => e.code(),
         }
     }
 
@@ -323,6 +328,14 @@ impl PaneKind {
                 "Economic calendar (ECO): this week's US releases (CPI, payrolls, retail sales, FOMC…) with \
                  consensus, actual, prior and change. Actual vs consensus is the surprise markets react to. \
                  Click a row for its history (ECOF). Sources: FRED, ForexFactory."
+            }
+            PaneKind::Etf(_) => {
+                "US ETFs (ETF): pick a fund for its largest holdings as a donut chart and list, plus sector weights. \
+                 Type a ticker to open any ETF (ETF SPY). 'Held by' shows which indexed ETFs hold a stock; 'Overlap' \
+                 compares two funds (ETF VOO QQQ); AAPL ETFS lists the funds holding a stock. Holdings come from SEC N-PORT filings (full portfolio, as of the \
+                 filing's report date, usually 2-4 months old); Yahoo supplies the top 10 for funds without N-PORT \
+                 (SPY, DIA, GLD) and the sector weights. Reverse search and overlap cover the funds indexed on disk: \
+                 use 'Index curated list' to fetch the popular ones."
             }
         }
     }
@@ -417,6 +430,10 @@ impl PaneKind {
             },
             PaneKind::Edgar(e) => e.settings(),
             PaneKind::Eco(e) => PaneSettings::Eco { min_importance: e.min_importance, series: e.series_code.clone() },
+            PaneKind::Etf(e) => {
+                let (mode, a, b) = e.settings();
+                PaneSettings::Etf { mode: mode.into(), a, b }
+            }
         }
     }
 
@@ -486,6 +503,7 @@ impl PaneKind {
             PaneSettings::Edgar { symbol, fa, quarterly, tab, usd } => {
                 PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab, usd)))
             }
+            PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
@@ -1002,6 +1020,11 @@ impl TerminalApp {
                 self.open_panel(PaneKind::Edgar(Box::new(edgar_view::EdgarPane::new(&s, fa))));
                 self.status = format!("{s}: {}", if fa { "financial analysis" } else { "description" });
             }
+            Command::SymbolFunction(s, Function::Etf(_)) => {
+                let ticker = tr_data::security(&s).ticker;
+                self.etf_command(&format!("HELD {ticker}"));
+                self.status = format!("{ticker}: ETFs that hold it");
+            }
             Command::SymbolFunction(s, Function::AddAlert(mut a)) => {
                 a.symbol.get_or_insert(s);
                 self.add_alert(a);
@@ -1162,6 +1185,7 @@ impl TerminalApp {
             }
             Function::Eco(arg) => self.eco_command(&arg),
             Function::EcoSeries(name) => self.eco_series_command(&name),
+            Function::Etf(arg) => self.etf_command(&arg),
         }
     }
 
@@ -1376,6 +1400,7 @@ impl TerminalApp {
                     }
                 }
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
+                Response::Etf(resp) => self.on_etf(resp),
             }
         }
     }
@@ -1705,6 +1730,7 @@ impl TerminalApp {
         self.broker_periodic(&visible);
         self.earnings_periodic(&visible);
         self.eco_periodic(&visible);
+        self.etf_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

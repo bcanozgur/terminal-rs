@@ -140,6 +140,41 @@ async fn edgar_profile_and_financials() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// ETF holdings from SEC N-PORT (VOO, QQQ) and Yahoo (SPY, no N-PORT).
+/// Needs `TR_SEC_USER_AGENT`; prints what was found.
+#[tokio::test]
+#[ignore = "network"]
+async fn etf_holdings() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let ua = tr_data::edgar::user_agent("").expect("set TR_SEC_USER_AGENT to run this test");
+    let dir = std::env::temp_dir().join(format!("tr-etf-live-{}", std::process::id()));
+    for t in ["VOO", "QQQ", "SPY", "GLD"] {
+        match tr_data::etf::load(&dir, t, &ua, false).await {
+            Ok(f) => {
+                println!(
+                    "{t}: {} · {:?} as of {:?} · {} holdings ({} positions, {} with ticker) · {} sectors",
+                    f.name,
+                    f.source,
+                    f.as_of,
+                    f.holdings.len(),
+                    f.positions,
+                    f.resolved(),
+                    f.sectors.len()
+                );
+                for h in f.holdings.iter().take(5) {
+                    println!("   {:>6.2}%  {:<28} {:?}", h.weight, h.name, h.ticker);
+                }
+            }
+            Err(e) => println!("{t}: {e:#}"),
+        }
+    }
+    let voo = tr_data::etf::read_cached(&dir, "VOO").expect("VOO from N-PORT");
+    assert_eq!(voo.source, tr_data::etf::Source::Nport);
+    assert!(voo.holdings.len() > 400 && voo.as_of.is_some());
+    assert!(voo.holdings.iter().any(|h| h.ticker.as_deref() == Some("AAPL")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 mod earnings {
     use tr_data::earnings::{Nasdaq, Timing};
 

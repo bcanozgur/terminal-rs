@@ -19,6 +19,7 @@ pub mod crypto;
 pub mod earnings;
 pub mod eco;
 pub mod edgar;
+pub mod etf;
 pub mod freshness;
 pub mod markets;
 pub mod rss;

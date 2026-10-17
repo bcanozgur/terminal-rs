@@ -134,6 +134,7 @@ impl TerminalApp {
                 actions.extend(crate::earnings_view::pane(ui, e, &cx));
             }
             PaneKind::Eco(e) => super::eco_view::eco(ui, e, q),
+            PaneKind::Etf(e) => actions.extend(super::etf_view::etf(ui, e)),
             PaneKind::Watchlist
             | PaneKind::List(_)
             | PaneKind::Settings

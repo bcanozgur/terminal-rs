@@ -99,6 +99,9 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("ECO NEXT", "Economic calendar: next week", "economic calendar releases", None),
     ("ECO PREV", "Economic calendar: previous week", "economic calendar releases", None),
     ("ECOF CPI", "", "economic release history inflation chart", None),
+    ("ETF", "US ETFs: holdings, sectors, overlap", "etf fund holdings sector overlap spy qqq voo", None),
+    ("ETF SPY", "ETF holdings and sectors: SPY", "etf fund holdings sector spy", None),
+    ("ETF VOO QQQ", "ETF overlap: VOO vs QQQ", "etf overlap compare shared holdings", None),
 ];
 
 /// Workspace actions run through their hotkey handler, with extra search words.

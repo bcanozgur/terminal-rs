@@ -165,6 +165,8 @@ pub enum Request {
         pane: PaneId,
         req: crate::eco::EcoRequest,
     },
+    /// ETF contents: disk cache, one fund or an index run (`ETF`).
+    Etf(crate::etf::EtfReq),
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -344,6 +346,7 @@ pub enum Response {
         pane: PaneId,
         resp: crate::eco::EcoResponse,
     },
+    Etf(crate::etf::EtfResp),
 }
 
 pub struct Worker {
@@ -968,6 +971,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
             crate::earnings_worker::handle(r, &s.provider, &|r| s.send(Response::Earnings(r))).await
         }
         Request::Eco { pane, req } => s.send(Response::Eco { pane, resp: crate::eco::fetch(req).await }),
+        Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
     }
 }
 
