@@ -81,6 +81,35 @@ fn unescape(s: &str) -> String {
         .to_string()
 }
 
+/// Drop XML namespace prefixes from element names (`<ns1:infoTable>` becomes `<infoTable>`);
+/// some filing agents prefix every element.
+fn strip_ns(xml: &str) -> std::borrow::Cow<'_, str> {
+    if !xml.contains("<ns") && !xml.contains("<n1:") && !xml.contains("<ns1:") {
+        // Cheap exit for the common unprefixed layout; prefixes other than these are rare.
+        let probe = xml.find("infoTable>").and_then(|i| xml[..i].rfind('<').map(|j| &xml[j..i]));
+        if probe.is_none_or(|p| !p.contains(':')) {
+            return xml.into();
+        }
+    }
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..=i]);
+        rest = &rest[i + 1..];
+        if let Some(r) = rest.strip_prefix('/') {
+            out.push('/');
+            rest = r;
+        }
+        let name_end =
+            rest.find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'))).unwrap_or(rest.len());
+        let name = &rest[..name_end];
+        out.push_str(name.rsplit_once(':').map_or(name, |(_, n)| n));
+        rest = &rest[name_end..];
+    }
+    out.push_str(rest);
+    out.into()
+}
+
 /// Text of the first `<tag>…</tag>` in `s`.
 fn tag<'a>(s: &'a str, name: &str) -> Option<&'a str> {
     let open = format!("<{name}>");
@@ -230,6 +259,7 @@ impl InsiderTx {
 
 /// Parse the ownership XML of a Form 4. `filed` and `accession` come from the submissions feed.
 pub fn parse_form4(xml: &str, accession: &str, filed: NaiveDate) -> Vec<InsiderTx> {
+    let xml = &*strip_ns(xml);
     let mut owners: Vec<(String, String)> = Vec::new();
     for chunk in xml.split("<reportingOwner>").skip(1) {
         let body = chunk.split("</reportingOwner>").next().unwrap_or(chunk);
@@ -434,6 +464,7 @@ impl Manager {
 /// Parse a 13F information table. `values_in_thousands` is true for filings before 2023.
 pub fn parse_info_table(xml: &str, values_in_thousands: bool) -> Vec<Position> {
     let mult = if values_in_thousands { 1000.0 } else { 1.0 };
+    let xml = &*strip_ns(xml);
     let mut by_cusip: HashMap<String, Position> = HashMap::new();
     for chunk in xml.split("<infoTable>").skip(1) {
         let body = chunk.split("</infoTable>").next().unwrap_or(chunk);
@@ -461,6 +492,15 @@ pub fn parse_info_table(xml: &str, values_in_thousands: bool) -> Vec<Position> {
         e.value += value * mult;
     }
     let mut out: Vec<Position> = by_cusip.into_values().collect();
+    // Some filers still report thousands after the schedule change: a median implied price under
+    // $1 a share (values are summed in dollars here, so 1000x too small) gives it away.
+    let mut px: Vec<f64> = out.iter().filter(|p| p.shares > 0.0).map(|p| p.value / p.shares / mult).collect();
+    px.sort_by(f64::total_cmp);
+    if !values_in_thousands && px.get(px.len() / 2).is_some_and(|m| *m < 1.0) {
+        for p in &mut out {
+            p.value *= 1000.0;
+        }
+    }
     out.sort_by(|a, b| b.value.total_cmp(&a.value).then_with(|| a.cusip.cmp(&b.cusip)));
     out
 }
@@ -506,7 +546,7 @@ async fn load_filing(cik: u64, f: &edgar::Filing, ua: &str) -> Result<Filing13F>
 }
 
 fn manager_path(dir: &Path, cik: u64) -> PathBuf {
-    cache_dir(dir).join("13f").join(format!("{cik}.json"))
+    cache_dir(dir).join("13f_v2").join(format!("{cik}.json"))
 }
 
 /// A manager from the disk cache.
@@ -1339,6 +1379,25 @@ mod tests {
         assert_eq!((p[0].cusip.as_str(), p[0].value, p[0].shares), ("037833100", 5000.0, 20.0));
         assert_eq!((p[1].value, p[1].shares), (706.0, 15.0));
         assert_eq!(parse_info_table(&xml, true)[0].value, 5_000_000.0);
+    }
+
+    #[test]
+    fn info_table_reported_in_thousands_after_2023() {
+        // $353 a share reported as 484744 (thousands) for 1,371,931 shares.
+        let xml = table(&[
+            ("ALPHABET INC", "CL C", "02079K107", 484_744, 1_371_931, ""),
+            ("AMAZON COM INC", "COM", "023135106", 892_310, 4_000_000, ""),
+        ]);
+        let p = parse_info_table(&xml, false);
+        assert_eq!(p[1].value, 484_744_000.0);
+    }
+
+    #[test]
+    fn info_table_with_namespace_prefixes() {
+        let xml = "<?xml version=\"1.0\"?><ns1:informationTable xmlns:ns1=\"x\"><ns1:infoTable><ns1:nameOfIssuer>ALPHABET INC</ns1:nameOfIssuer><ns1:titleOfClass>CAP STK CL A</ns1:titleOfClass><ns1:cusip>02079K305</ns1:cusip><ns1:value>366</ns1:value><ns1:shrsOrPrnAmt><ns1:sshPrnamt>10</ns1:sshPrnamt><ns1:sshPrnamtType>SH</ns1:sshPrnamtType></ns1:shrsOrPrnAmt></ns1:infoTable></ns1:informationTable>";
+        let p = parse_info_table(xml, false);
+        assert_eq!(p.len(), 1);
+        assert_eq!((p[0].name.as_str(), p[0].shares, p[0].value), ("ALPHABET INC", 10.0, 366.0));
     }
 
     #[test]

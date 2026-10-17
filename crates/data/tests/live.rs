@@ -297,3 +297,19 @@ async fn smartmoney_finra() {
     assert!(d.volume_error.is_none() && d.volume.len() >= 5, "short volume: {:?}", d.volume_error);
     assert!(d.volume.iter().all(|v| v.ratio().is_some_and(|r| r > 0.0 && r <= 100.0)));
 }
+
+/// Every curated manager's 13F parses (several filing agents prefix the XML elements).
+#[tokio::test]
+#[ignore = "network"]
+async fn smartmoney_all_managers() {
+    use tr_data::smartmoney as sm;
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let ua = tr_data::edgar::user_agent("").expect("set TR_SEC_USER_AGENT to run this test");
+    let dir = std::env::temp_dir().join(format!("tr-smart-all-{}", std::process::id()));
+    for (name, cik, _) in sm::MANAGERS {
+        let m = sm::load_manager(&dir, *cik, &ua, false).await.unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let l = m.latest.as_ref().unwrap();
+        println!("{name}: {} positions, {:.1}B, prev {}", l.positions.len(), l.total / 1e9, m.prev.is_some());
+        assert!(!l.positions.is_empty());
+    }
+}
