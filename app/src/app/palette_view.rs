@@ -104,6 +104,9 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("ETF VOO QQQ", "ETF overlap: VOO vs QQQ", "etf overlap compare shared holdings", None),
     ("TRF", "Turkish funds (KAP): allocation, buys and sells", "trf turkish funds fon kap portfoy yatirim", None),
     ("TRF TI2", "Turkish fund detail: TI2", "trf fon detail kap portfolio allocation", None),
+    ("MOST", "Market movers: US gainers, losers, most active", "most movers gainers losers active volume top", None),
+    ("MOST LOSERS", "Market movers: day losers", "most movers losers biggest decliners", None),
+    ("MOST ACTIVE", "Market movers: most active by volume", "most movers active volume", None),
     ("TRF HELD THYAO", "Turkish funds holding THYAO", "trf funds reverse search holders bist hisse", None),
 ];
 

@@ -19,6 +19,7 @@ mod etf;
 mod layout;
 mod layouts;
 mod markets_view;
+mod most;
 mod palette;
 mod prefs;
 mod quote_tag;

@@ -1,0 +1,62 @@
+{
+ "finance": {
+  "error": null,
+  "result": [
+   {
+    "title": "Day Losers",
+    "canonicalName": "DAY_LOSERS",
+    "total": 411,
+    "quotes": [
+     {
+      "symbol": "BSP",
+      "shortName": "Bending Spoons S.p.A.",
+      "longName": "Bending Spoons S.p.A.",
+      "regularMarketPrice": 47.01,
+      "regularMarketChange": -8.760002,
+      "regularMarketChangePercent": -15.707374,
+      "regularMarketVolume": 4867393,
+      "averageDailyVolume3Month": 2716300,
+      "marketCap": 29861658624,
+      "marketState": "REGULAR",
+      "exchangeDataDelayedBy": 15,
+      "fullExchangeName": "NasdaqGS",
+      "quoteType": "EQUITY"
+     },
+     {
+      "symbol": "GRAL",
+      "shortName": "GRAIL, Inc.",
+      "longName": "GRAIL, Inc.",
+      "regularMarketPrice": 117.455,
+      "regularMarketChange": -18.005005,
+      "regularMarketChangePercent": -13.29175,
+      "regularMarketVolume": 855766,
+      "averageDailyVolume3Month": 963035,
+      "marketCap": 5246272512,
+      "marketState": "REGULAR",
+      "exchangeDataDelayedBy": 15,
+      "fullExchangeName": "NasdaqGS",
+      "quoteType": "EQUITY"
+     },
+     {
+      "symbol": "TLK",
+      "shortName": "PT Telekomunikasi Indonesia, Tb",
+      "longName": "Perusahaan Perseroan (Persero) PT Telekomunikasi Indonesia Tbk",
+      "regularMarketPrice": 11.075,
+      "regularMarketChange": -1.7049999,
+      "regularMarketChangePercent": -13.341158,
+      "regularMarketVolume": 6495712,
+      "averageDailyVolume3Month": 842671,
+      "marketCap": 10917838848,
+      "marketState": "REGULAR",
+      "exchangeDataDelayedBy": 20,
+      "fullExchangeName": "NYSE",
+      "quoteType": "EQUITY"
+     },
+     {
+      "symbol": "BAD"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -15,6 +15,7 @@ mod edgar_view;
 mod etf_view;
 mod fa_view;
 mod hotkeys_view;
+mod most_view;
 mod options_view;
 mod palette_view;
 mod panels;
@@ -96,6 +97,8 @@ pub enum PaneKind {
     Etf(Box<etf_view::EtfPane>),
     /// Turkish mutual funds (`TRF`): KAP portfolio reports, allocation, buys/sells, reverse search.
     TrFunds(Box<trfunds_view::TrfPane>),
+    /// US market movers (`MOST`): day gainers, losers and most active from Yahoo screeners.
+    Most(Box<most_view::MostPane>),
 }
 
 pub struct OptionsPane {
@@ -224,6 +227,7 @@ impl PaneKind {
             PaneKind::Eco(e) => e.title(),
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
+            PaneKind::Most(e) => e.title(),
         }
     }
 
@@ -251,6 +255,7 @@ impl PaneKind {
             PaneKind::Eco(e) => e.code(),
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
+            PaneKind::Most(e) => e.code(),
         }
     }
 
@@ -341,6 +346,13 @@ impl PaneKind {
                  filing's report date, usually 2-4 months old); Yahoo supplies the top 10 for funds without N-PORT \
                  (SPY, DIA, GLD) and the sector weights. Reverse search and overlap cover the funds indexed on disk: \
                  use 'Index curated list' to fetch the popular ones."
+            }
+            PaneKind::Most(_) => {
+                "Market movers (MOST): US stocks with the biggest day gains, biggest day losses and highest volume, from \
+                 Yahoo's predefined screeners (top 100 each). Click a symbol or name for its chart, right-click for more; \
+                 type in the filter box to narrow by symbol or name. Rel Vol is today's volume over the 3-month average. \
+                 Refreshes every minute while visible. Prices are delayed about 15 minutes; pre-market and after-hours \
+                 moves are not included."
             }
             PaneKind::TrFunds(_) => {
                 "Turkish funds (TRF): every investment fund on KAP with a search box; click a code for the fund card \
@@ -451,6 +463,7 @@ impl PaneKind {
                 let (mode, a) = e.settings();
                 PaneSettings::TrFunds { mode: mode.into(), a }
             }
+            PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
         }
     }
 
@@ -522,6 +535,7 @@ impl PaneKind {
             }
             PaneSettings::Etf { mode, a, b } => PaneKind::Etf(Box::new(etf_view::EtfPane::new(&mode, &a, &b))),
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
+            PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
             PaneSettings::Eco { min_importance, series } => {
                 PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
@@ -1210,6 +1224,7 @@ impl TerminalApp {
             Function::EcoSeries(name) => self.eco_series_command(&name),
             Function::Etf(arg) => self.etf_command(&arg),
             Function::TrFunds(arg) => self.trf_command(&arg),
+            Function::Most(arg) => self.most_command(&arg),
         }
     }
 
@@ -1426,6 +1441,7 @@ impl TerminalApp {
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
+                Response::Most(resp) => self.on_most(resp),
             }
         }
     }
@@ -1757,6 +1773,7 @@ impl TerminalApp {
         self.eco_periodic(&visible);
         self.etf_periodic(&visible);
         self.trf_periodic(&visible);
+        self.most_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

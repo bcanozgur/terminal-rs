@@ -167,6 +167,11 @@ pub enum PaneSettings {
         #[serde(default)]
         a: String,
     },
+    /// Market movers: `list` is `gainers`, `losers` or `active`.
+    Most {
+        #[serde(default)]
+        list: String,
+    },
 }
 
 fn yes() -> bool {

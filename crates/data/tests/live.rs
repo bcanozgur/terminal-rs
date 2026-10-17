@@ -245,3 +245,20 @@ async fn trfunds_curated_coverage() {
     }
     println!("{ok}/{} funds with stock positions", tr_data::trfunds::CURATED.len());
 }
+
+#[tokio::test]
+#[ignore = "network"]
+async fn yahoo_most_movers() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let b = tr_data::most::fetch().await.unwrap();
+    println!(
+        "{} gainers, {} losers, {} active; delay {:?}",
+        b.gainers.len(),
+        b.losers.len(),
+        b.active.len(),
+        b.delay_min()
+    );
+    assert!(b.gainers.len() >= 10 && b.losers.len() >= 10 && b.active.len() >= 10);
+    assert!(b.gainers[0].change_pct >= b.gainers[b.gainers.len() - 1].change_pct);
+    assert!(b.active.iter().all(|m| m.price > 0.0 && m.volume.is_some()));
+}

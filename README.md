@@ -241,6 +241,12 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   read from the fund's prospectus on KAP; the purchase valör is not stated there and shows n/a (TEFAS
   has both, but is not used). Funds are cached in `<data dir>/trfunds/`; "Index curated list"
   fetches ~50 popular funds one at a time with a pause.
+- **Market movers (`MOST`)** — US day gainers, day losers and most active stocks (top 100 each) from
+  Yahoo's predefined screeners, which need no key or crumb. Columns: price, change, % change, volume,
+  3-month average volume, relative volume (today over average) and market cap. Click a symbol or name
+  for its chart, right-click for more, filter by symbol or name. `MOST LOSERS` / `MOST ACTIVE` pick a
+  tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
+  A failed refresh shows the error and keeps the last lists, marked as old.
 
 ## Running
 
