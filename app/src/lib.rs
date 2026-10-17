@@ -14,6 +14,7 @@ mod congress_view;
 mod dock;
 mod earnings_view;
 mod earnings_worker;
+mod eco;
 mod layout;
 mod layouts;
 mod markets_view;

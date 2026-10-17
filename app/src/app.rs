@@ -9,6 +9,7 @@ mod chrome;
 mod demo;
 mod des_view;
 mod earnings;
+mod eco_view;
 mod edgar_view;
 mod fa_view;
 mod hotkeys_view;
@@ -85,6 +86,8 @@ pub enum PaneKind {
     Edgar(Box<edgar_view::EdgarPane>),
     /// Earnings calendar (`ERN`) or one ticker's history (`AAPL ERN`).
     Earnings(Box<ErnPane>),
+    /// US economic calendar (`ECO`) and release history (`ECOF`).
+    Eco(Box<eco_view::EcoPane>),
 }
 
 pub struct OptionsPane {
@@ -206,6 +209,7 @@ impl PaneKind {
                 Some(s) => format!("{} Earnings", short(s)),
                 None => "Earnings".into(),
             },
+            PaneKind::Eco(e) => e.title(),
         }
     }
 
@@ -229,6 +233,7 @@ impl PaneKind {
             PaneKind::Settings => "PDF",
             PaneKind::Edgar(e) => e.code(),
             PaneKind::Earnings(_) => "ERN",
+            PaneKind::Eco(e) => e.code(),
         }
     }
 
@@ -320,6 +325,7 @@ impl PaneKind {
                 open_only: p.open_only,
             },
             PaneKind::Edgar(e) => e.settings(),
+            PaneKind::Eco(e) => PaneSettings::Eco { min_importance: e.min_importance, series: e.series_code.clone() },
         }
     }
 
@@ -387,6 +393,9 @@ impl PaneKind {
             }
             PaneSettings::Edgar { symbol, fa, quarterly, tab } => {
                 PaneKind::Edgar(Box::new(edgar_view::EdgarPane::from_settings(&symbol, fa, quarterly, tab)))
+            }
+            PaneSettings::Eco { min_importance, series } => {
+                PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
             }
         }
     }
@@ -1052,6 +1061,8 @@ impl TerminalApp {
                 let sym = self.focused_symbol().unwrap_or_default();
                 self.open_panel(PaneKind::Edgar(Box::new(edgar_view::EdgarPane::new(&sym, fa))));
             }
+            Function::Eco(arg) => self.eco_command(&arg),
+            Function::EcoSeries(name) => self.eco_series_command(&name),
         }
     }
 
@@ -1257,6 +1268,7 @@ impl TerminalApp {
                         e.set_result(company);
                     }
                 }
+                Response::Eco { pane, resp } => self.on_eco(pane, resp),
             }
         }
     }
@@ -1568,6 +1580,7 @@ impl TerminalApp {
         }
         self.broker_periodic(&visible);
         self.earnings_periodic(&visible);
+        self.eco_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

@@ -127,6 +127,7 @@ impl TerminalApp {
                     crate::earnings_view::ViewCtx { today: tr_data::earnings::today_et(), mine: &earn_mine, query: q };
                 actions.extend(crate::earnings_view::pane(ui, e, &cx));
             }
+            PaneKind::Eco(e) => super::eco_view::eco(ui, e, q),
             PaneKind::Watchlist | PaneKind::List(_) | PaneKind::Settings | PaneKind::Help | PaneKind::Chart(_) => {}
             PaneKind::Edgar(e) => {
                 let out = super::edgar_view::edgar_pane(ui, e, &self.quotes, &mut self.prefs.panels);

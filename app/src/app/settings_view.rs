@@ -636,6 +636,7 @@ impl TerminalApp {
                 .font(ui_font(11.5))
                 .color(muted()),
         );
+        self.eco_key_settings(ui);
         if self.prefs.panels != before {
             cmds.push(SettingsCmd::SavePrefs);
         }

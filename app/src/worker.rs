@@ -154,6 +154,11 @@ pub enum Request {
     },
     /// Earnings calendar and history (see `earnings_worker`).
     Earnings(crate::earnings_worker::EarnReq),
+    /// Economic calendar week or release history (`ECO`, `ECOF`).
+    Eco {
+        pane: PaneId,
+        req: crate::eco::EcoRequest,
+    },
 }
 
 /// A trading call through SnapTrade. Previews never place anything; placing takes a preview
@@ -323,6 +328,10 @@ pub enum Response {
         company: Result<Arc<tr_data::edgar::Company>, String>,
     },
     Earnings(crate::earnings_worker::EarnResp),
+    Eco {
+        pane: PaneId,
+        resp: crate::eco::EcoResponse,
+    },
 }
 
 pub struct Worker {
@@ -940,6 +949,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Earnings(r) => {
             crate::earnings_worker::handle(r, &s.provider, &|r| s.send(Response::Earnings(r))).await
         }
+        Request::Eco { pane, req } => s.send(Response::Eco { pane, resp: crate::eco::fetch(req).await }),
     }
 }
 

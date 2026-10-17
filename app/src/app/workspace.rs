@@ -610,6 +610,11 @@ impl TerminalApp {
                 head == "FA",
             ))),
             "HELP" => PaneKind::Help,
+            "ECO" | "ECON" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(1, None))),
+            "ECOF" => PaneKind::Eco(Box::new(super::eco_view::EcoPane::new(
+                1,
+                Some(words.get(1).map_or_else(|| "CPI".into(), |w| w.to_string())),
+            ))),
             _ => return None,
         })
     }

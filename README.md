@@ -199,6 +199,21 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   toggles them (also in the chart's right-click menu). Watchlist symbols reporting today raise a
   toast. Dates and estimates come from Nasdaq's public, unofficial calendar API, cached in
   `earnings.sqlite3`; if it is unreachable the pane says so and shows cached data.
+- **Economic calendar (`ECO`, `ECOF`)** — a Bloomberg-style week view of market-moving US
+  releases: CPI and core CPI, PPI, PCE and core PCE, nonfarm payrolls and the unemployment rate,
+  initial jobless claims, GDP, retail sales, industrial production, housing starts, UMich
+  sentiment, JOLTS and FOMC decisions. Rows show the release time in US Eastern and your local
+  time, the period, actual, prior and change (as first published that day, from ALFRED vintages),
+  and 1–3 importance bars; released numbers are highlighted against the prior and releases due
+  within 24 hours are shaded. `ECO NEXT` / `ECO PREV` (or the pane's arrows) move by week,
+  `ECO HIGH|MED|ALL` filters by importance, and a toast fires five minutes before a
+  high-importance release while the pane is open. Click a row, or type `ECOF CPI` (`ECOF NFP`,
+  `ECOF CORE PCE`, …), for the release's history as a chart and table. All sources are free:
+  release dates come from the FRED API with a free key (`FRED_API_KEY` or Settings › Panels; stored
+  owner-only in the app data folder) or, without one, FRED's public release-calendar pages;
+  FOMC dates are the Fed's published 2026–27 schedule; values come from keyless FRED/ALFRED CSV
+  downloads, cached in `eco.sqlite3`. There is no consensus/forecast column, since survey
+  expectations are not available for free, and ISM is proprietary and not on FRED.
 
 ## Running
 

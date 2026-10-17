@@ -95,6 +95,10 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
     ("RANGE 1Y", "", "quick range history year", None),
     ("RANGE 5Y", "", "quick range history years", None),
     ("RANGE ALL", "", "quick range full history", None),
+    ("ECO", "", "economic calendar releases cpi payrolls fomc macro", None),
+    ("ECO NEXT", "Economic calendar: next week", "economic calendar releases", None),
+    ("ECO PREV", "Economic calendar: previous week", "economic calendar releases", None),
+    ("ECOF CPI", "", "economic release history inflation chart", None),
 ];
 
 /// Workspace actions run through their hotkey handler, with extra search words.

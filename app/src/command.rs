@@ -315,6 +315,10 @@ pub enum Function {
     Earnings,
     /// Toggle the earnings "E" markers on the focused chart.
     EarningsMarkers,
+    /// US economic calendar (`ECO`, `ECO NEXT`, `ECO PREV`, `ECO HIGH`).
+    Eco(String),
+    /// History of one economic release (`ECOF CPI`).
+    EcoSeries(String),
 }
 
 fn num<T: std::str::FromStr>(t: Option<&&str>) -> Option<T> {
@@ -412,6 +416,8 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         },
         "ERN" | "EVTS" | "EARN" | "EARNINGS" => Function::Earnings,
         "EE" => Function::EarningsMarkers,
+        "ECO" | "ECON" => Function::Eco(words().join(" ")),
+        "ECOF" => Function::EcoSeries(joined()),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
         "DES" | "DESC" => Function::Edgar { fa: false },
         "FA" | "FIN" | "FINANCIALS" => Function::Edgar { fa: true },
@@ -596,6 +602,12 @@ fn describe(f: &Function) -> String {
         Function::AccountMode(true) => "Switch to LIVE brokerage accounts (asks first)".into(),
         Function::Edgar { fa: false } => "Security description: SEC profile, key stats, recent filings".into(),
         Function::Edgar { fa: true } => "Financial analysis: statements and ratios from SEC XBRL filings".into(),
+        Function::Eco(a) if a.is_empty() => "US economic calendar: this week's releases, actual vs prior".into(),
+        Function::Eco(a) => format!("US economic calendar: {}", a.to_lowercase()),
+        Function::EcoSeries(n) => match tr_data::eco::event(if n.trim().is_empty() { "CPI" } else { n }) {
+            Some(e) => format!("Release history: {} (FRED {})", e.name, e.series),
+            None => format!("Release history: unknown release {n}"),
+        },
     }
 }
 
@@ -819,5 +831,14 @@ mod tests {
         assert_eq!(parse("EVTS <GO>"), Some(Command::Function(Function::Earnings)));
         assert_eq!(parse("EE"), Some(Command::Function(Function::EarningsMarkers)));
         assert_eq!(parse("AAPL ERN"), Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Earnings)));
+    }
+
+    #[test]
+    fn economic_calendar() {
+        assert_eq!(parse("ECO"), Some(Command::Function(Function::Eco(String::new()))));
+        assert_eq!(parse("eco next"), Some(Command::Function(Function::Eco("NEXT".into()))));
+        assert_eq!(parse("ECON PREV"), Some(Command::Function(Function::Eco("PREV".into()))));
+        assert_eq!(parse("ECOF core cpi"), Some(Command::Function(Function::EcoSeries("core cpi".into()))));
+        assert!(hint("ECOF CPI").contains("CPIAUCSL"));
     }
 }

@@ -139,6 +139,13 @@ pub enum PaneSettings {
         #[serde(default)]
         cap: usize,
     },
+    /// Economic calendar; `series` is the release shown as history (`ECOF`).
+    Eco {
+        #[serde(default)]
+        min_importance: u8,
+        #[serde(default)]
+        series: Option<String>,
+    },
 }
 
 fn yes() -> bool {

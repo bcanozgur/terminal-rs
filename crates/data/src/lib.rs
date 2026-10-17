@@ -16,6 +16,7 @@ pub mod alpaca;
 pub mod cache;
 pub mod crypto;
 pub mod earnings;
+pub mod eco;
 pub mod edgar;
 pub mod markets;
 pub mod rss;
