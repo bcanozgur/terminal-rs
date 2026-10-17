@@ -408,7 +408,7 @@ pub fn portfolio(
                         .show(ui, |ui| summary(ui, pane, pf, &price_of, &prev_of, &ext_of, &mut out));
                 }
                 PortView::Accounts => accounts(ui, pane, pf, &price_of),
-                PortView::Positions => positions(ui, pane, pf, &price_of, &ext_of, &mut out),
+                PortView::Positions => positions(ui, pane, pf, &price_of, &prev_of, &ext_of, &mut out),
                 PortView::Orders => orders(ui, pane, pf, &mut out),
                 PortView::Activity => activity(ui, pane, pf, &mut out),
             }
@@ -936,11 +936,20 @@ fn accounts(ui: &mut Ui, pane: &mut PortfolioPane, pf: &Portfolio, price_of: &dy
     }
 }
 
+/// Today's move on a position: units × (price − previous close). Cash equivalents have none.
+fn day_pnl(p: &Position, live: Option<f64>, prev: Option<f64>) -> Option<f64> {
+    if p.cash_equivalent {
+        return None;
+    }
+    Some(p.units * (live.or(p.price)? - prev?) * p.multiplier)
+}
+
 fn positions(
     ui: &mut Ui,
     pane: &mut PortfolioPane,
     pf: &Portfolio,
     price_of: &dyn Fn(&Position) -> Option<f64>,
+    prev_of: &dyn Fn(&Position) -> Option<f64>,
     ext_of: ExtOf,
     out: &mut Vec<PortAction>,
 ) {
@@ -977,6 +986,7 @@ fn positions(
         Col { sort: Some(PosSort::Value), ..col("Value", 1.3, true) },
         Col { sort: Some(PosSort::Pnl), ..col("P&L", 1.3, true) },
         Col { sort: Some(PosSort::PnlPct), ..col("P&L %", 1.0, true) },
+        opt(col("Day P&L", 1.2, true), 3),
         opt(col("Weight", 0.8, true), 4),
     ];
     if all {
@@ -1049,8 +1059,18 @@ fn positions(
                     );
                     let pc = p.pnl_pct_at(live);
                     cell(painter, r, cols, 8, pc.map_or("—".into(), pct), mono(12.0), pc.map_or(muted(), pnl_color));
-                    cell(painter, r, cols, 9, share.map_or("—".into(), |s| format!("{s:.1}%")), mono(12.0), muted());
-                    cell(painter, r, cols, 10, &account, ui_font(11.5), muted());
+                    let day = day_pnl(p, live, prev_of(p));
+                    cell(
+                        painter,
+                        r,
+                        cols,
+                        9,
+                        day.map_or("—".into(), |v| signed_money(v, "").replace('$', "")),
+                        mono(12.0),
+                        day.map_or(muted(), pnl_color),
+                    );
+                    cell(painter, r, cols, 10, share.map_or("—".into(), |s| format!("{s:.1}%")), mono(12.0), muted());
+                    cell(painter, r, cols, 11, &account, ui_font(11.5), muted());
                 });
             }
         });
@@ -1289,6 +1309,28 @@ mod tests {
             "highest number goes first"
         );
         assert_eq!(shown(&fit(cols, 10.0)), [true, false, false, true], "required columns stay");
+    }
+
+    #[test]
+    fn day_pnl_is_units_times_move() {
+        let p = Position {
+            account_id: "a".into(),
+            symbol: "AAPL".into(),
+            description: String::new(),
+            kind: tr_broker::InstrumentKind::Stock,
+            units: 10.0,
+            price: Some(105.0),
+            cost_basis: None,
+            multiplier: 1.0,
+            currency: "USD".into(),
+            cash_equivalent: false,
+            underlying: None,
+        };
+        assert_eq!(day_pnl(&p, None, Some(100.0)), Some(50.0));
+        assert_eq!(day_pnl(&p, Some(98.0), Some(100.0)), Some(-20.0), "live quote wins over the synced price");
+        assert_eq!(day_pnl(&p, None, None), None, "no previous close");
+        let cash = Position { cash_equivalent: true, ..p.clone() };
+        assert_eq!(day_pnl(&cash, None, Some(100.0)), None);
     }
 
     #[test]
