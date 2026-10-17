@@ -16,6 +16,7 @@ mod earnings_view;
 mod earnings_worker;
 mod eco;
 mod etf;
+mod fut;
 mod layout;
 mod layouts;
 mod markets_view;

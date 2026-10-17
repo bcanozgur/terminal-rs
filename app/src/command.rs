@@ -331,6 +331,8 @@ pub enum Function {
     Audit(String),
     /// Kill switch (`KILL`, `KILL CANCEL`, `KILL OFF`).
     Kill(String),
+    /// Futures curve, VIX term structure, sector heatmap (`FUT`, `FUT CL`, `VIX`, `HEAT`).
+    Fut(String),
     /// Smart money (`SMART`, `SMART SHORT`, `SMART 13F`, `AAPL SMART`): Form 4, 13F and FINRA short interest.
     Smart(String),
     /// Portfolio risk (`RISK`, `RISK QQQ 2Y`; `CORR` opens the correlation heatmap).
@@ -441,6 +443,9 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "AUDIT" => Function::Audit(joined()),
         "HOL" | "HOLIDAYS" => Function::Audit("hol".into()),
         "KILL" | "KILLSWITCH" => Function::Kill(joined()),
+        "FUT" | "FUTURES" => Function::Fut(joined()),
+        "VIX" => Function::Fut("VIX".into()),
+        "HEAT" | "HEATMAP" => Function::Fut(format!("HEAT {}", joined())),
         "SMART" | "SMARTMONEY" => Function::Smart(joined()),
         "RISK" | "VAR" => Function::Risk(joined()),
         "CORR" => Function::Risk(format!("CORR {}", joined())),
@@ -655,6 +660,12 @@ fn describe(f: &Function) -> String {
             Some("losers") => "Market movers: US day losers".into(),
             Some("active" | "actives" | "volume") => "Market movers: US most active by volume".into(),
             _ => "Market movers: US day gainers, losers and most active (Yahoo)".into(),
+        },
+        Function::Fut(a) => match a.split_whitespace().next().map(str::to_ascii_uppercase).as_deref() {
+            None => "Futures curve: contango / backwardation by contract month (Yahoo)".into(),
+            Some("VIX") => "VIX term structure: VIX9D to VIX1Y and VX futures".into(),
+            Some("HEAT") => "Sector heatmap: SPDR sector ETFs by 1D / 1W / 1M / YTD".into(),
+            Some(root) => format!("Futures curve: {root}"),
         },
         Function::Risk(a) if a.trim().is_empty() => "Portfolio risk: VaR, beta, drawdown, risk contribution".into(),
         Function::Risk(a) => format!("Portfolio risk: {}", a.trim().to_ascii_uppercase()),
@@ -914,6 +925,13 @@ mod tests {
         assert_eq!(parse("HOL"), Some(Command::Function(Function::Audit("hol".into()))));
         assert!(hint("KILL OFF").contains("OFF"));
         assert!(hint("HOL").contains("holidays"));
+    fn fut_commands() {
+        assert_eq!(parse("FUT"), Some(Command::Function(Function::Fut(String::new()))));
+        assert_eq!(parse("fut cl"), Some(Command::Function(Function::Fut("cl".into()))));
+        assert_eq!(parse("VIX"), Some(Command::Function(Function::Fut("VIX".into()))));
+        assert!(matches!(parse("HEAT"), Some(Command::Function(Function::Fut(a))) if a.trim() == "HEAT"));
+        assert!(hint("FUT CL").contains("CL"));
+        assert!(hint("VIX").contains("VIX"));
     }
 
     #[test]

@@ -14,6 +14,7 @@ mod eco_view;
 mod edgar_view;
 mod etf_view;
 mod fa_view;
+mod fut_view;
 mod hotkeys_view;
 mod most_view;
 mod options_view;
@@ -102,6 +103,8 @@ pub enum PaneKind {
     TrFunds(Box<trfunds_view::TrfPane>),
     /// US market movers (`MOST`): day gainers, losers and most active from Yahoo screeners.
     Most(Box<most_view::MostPane>),
+    /// Futures curve, VIX term structure and sector heatmap (`FUT`, `VIX`, `HEAT`).
+    Fut(Box<fut_view::FutPane>),
     /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
     Smart(Box<smart_view::SmartPane>),
     /// Portfolio risk (`RISK`, `CORR`): VaR, beta, drawdown, risk contribution, correlation heatmap.
@@ -280,6 +283,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
             PaneKind::Most(e) => e.title(),
+            PaneKind::Fut(e) => e.title(),
             PaneKind::Smart(e) => e.title(),
             PaneKind::Risk(e) => e.title(),
             PaneKind::Audit(e) => e.title(),
@@ -311,6 +315,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
             PaneKind::Most(e) => e.code(),
+            PaneKind::Fut(e) => e.code(),
             PaneKind::Smart(e) => e.code(),
             PaneKind::Risk(e) => e.code(),
             PaneKind::Audit(e) => e.code(),
@@ -411,6 +416,9 @@ impl PaneKind {
                  type in the filter box to narrow by symbol or name. Rel Vol is today's volume over the 3-month average. \
                  Refreshes every minute while visible. Prices are delayed about 15 minutes; pre-market and after-hours \
                  moves are not included."
+            }
+            PaneKind::Fut(_) => {
+                "Futures and volatility (FUT, VIX, HEAT). Futures Curve: the next ~12 contract months of a futures root (pick a chip: ES, CL, GC, ZN...) as a line chart and table with change and volume, plus contango / backwardation and the annualised roll yield between the front and last contract; contract months Yahoo does not list are skipped. VIX Term Structure: VIX9D, VIX, VIX3M, VIX6M and VIX1Y from Yahoo, plus the monthly VIX futures from Cboe's end-of-day settlement file (previous close; intraday VX quotes need a browser session and are not available), the VIX/VIX3M ratio and a short reading. Sector Heatmap: the 11 SPDR sector ETFs (or a world mini-map of country ETFs) coloured by 1D / 1W / 1M / YTD change; tile area uses approximate fixed weights, not live market caps. Click a tile for its chart, right-click for the ETF's holdings. Data is delayed; refreshes every minute while visible."
             }
             PaneKind::Smart(_) => {
                 "Smart money (SMART): what insiders, big institutions and short sellers are doing in the active symbol. \
@@ -548,6 +556,10 @@ impl PaneKind {
                 PaneSettings::TrFunds { mode: mode.into(), a }
             }
             PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
+            PaneKind::Fut(e) => {
+                let (tab, root, period, world) = e.settings();
+                PaneSettings::Fut { tab: tab.into(), root, period: period.into(), world }
+            }
             PaneKind::Smart(e) => e.settings(),
             PaneKind::Risk(e) => {
                 let (tab, benchmark, window) = e.settings();
@@ -630,6 +642,9 @@ impl PaneKind {
             PaneSettings::Audit { tab } => PaneKind::Audit(Box::new(safety_view::AuditPane::new(&tab))),
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
+            PaneSettings::Fut { tab, root, period, world } => {
+                PaneKind::Fut(Box::new(fut_view::FutPane::from_settings(&tab, &root, &period, world)))
+            }
             PaneSettings::Smart { symbol, tab } => {
                 PaneKind::Smart(Box::new(smart_view::SmartPane::from_settings(&symbol, &tab)))
             }
@@ -1326,6 +1341,7 @@ impl TerminalApp {
             Function::Etf(arg) => self.etf_command(&arg),
             Function::TrFunds(arg) => self.trf_command(&arg),
             Function::Most(arg) => self.most_command(&arg),
+            Function::Fut(arg) => self.fut_command(&arg),
             Function::Smart(arg) => self.smart_command(&arg, None),
             Function::Risk(arg) => self.risk_command(&arg),
             Function::Audit(arg) => self.audit_command(&arg),
@@ -1558,6 +1574,7 @@ impl TerminalApp {
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
                 Response::Most(resp) => self.on_most(resp),
+                Response::Fut(resp) => self.on_fut(resp),
                 Response::Smart(resp) => self.on_smart(resp),
                 Response::Risk(resp) => self.on_risk(resp),
             }
@@ -1892,6 +1909,7 @@ impl TerminalApp {
         self.etf_periodic(&visible);
         self.trf_periodic(&visible);
         self.most_periodic(&visible);
+        self.fut_periodic(&visible);
         self.smart_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)

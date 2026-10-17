@@ -147,6 +147,7 @@ impl TerminalApp {
             PaneKind::Audit(_) => actions.extend(self.audit_pane(ui, i)),
             PaneKind::TrFunds(e) => actions.extend(super::trfunds_view::trfunds(ui, e)),
             PaneKind::Most(e) => actions.extend(super::most_view::most(ui, e)),
+            PaneKind::Fut(e) => actions.extend(super::fut_view::fut(ui, e)),
             PaneKind::Smart(e) => actions.extend(super::smart_view::smart(ui, e)),
             PaneKind::Watchlist
             | PaneKind::List(_)
