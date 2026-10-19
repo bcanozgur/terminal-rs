@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tr_core::{Security, Timeframe, indicators};
+use tr_core::{Bar, Security, Timeframe, indicators};
 
 /// History of fired alerts kept in the book.
 const HISTORY: usize = 200;
@@ -87,6 +87,9 @@ pub struct Market {
     /// Daily closes, oldest first; the newest is replaced by `last` when evaluating.
     pub closes: Vec<f64>,
     pub ext: Ext,
+    /// Recent intraday bars, oldest first: price-level rules read their highs and lows to catch
+    /// a level touched while no tick was watching (app closed, a gap between polls).
+    pub bars: Vec<Bar>,
 }
 
 impl Market {
@@ -120,6 +123,34 @@ impl Condition {
 
     pub fn needs_ext(&self) -> bool {
         self.metric == Metric::ExtMovePct
+    }
+
+    /// A price against a fixed level: bars show whether it was touched unobserved.
+    pub fn needs_bars(&self) -> bool {
+        self.metric == Metric::Price && matches!(self.target, Target::Level(_))
+    }
+
+    /// The extreme (high or low) of the bars opened after `since` when it hit the level while
+    /// the rule was last seen on the other side. Catches a move that ticks never saw.
+    fn missed(&self, prev: Option<bool>, m: &Market, since: i64) -> Option<f64> {
+        let (Metric::Price, Target::Level(t)) = (self.metric, self.target) else { return None };
+        let (mut high, mut low) = (f64::NEG_INFINITY, f64::INFINITY);
+        for b in m.bars.iter().filter(|b| b.ts > since) {
+            high = high.max(b.high);
+            low = low.min(b.low);
+        }
+        let (up, down) = (high >= t, low <= t);
+        match self.op {
+            Op::Above => (up && prev != Some(true)).then_some(high),
+            Op::Below => (down && prev != Some(true)).then_some(low),
+            Op::CrossAbove => (prev == Some(false) && up).then_some(high),
+            Op::CrossBelow => (prev == Some(true) && down).then_some(low),
+            Op::Cross => match prev {
+                Some(false) => up.then_some(high),
+                Some(true) => down.then_some(low),
+                None => None,
+            },
+        }
     }
 
     fn metric_label(&self) -> String {
@@ -232,6 +263,10 @@ pub struct Rule {
     /// Last observed state (see [`Condition::state`]); persisted so a restart never re-fires.
     #[serde(default)]
     pub state: Option<bool>,
+    /// Open time of the newest bar already checked for touches of the level; bars after it
+    /// (or after `created`) are still unexamined.
+    #[serde(default)]
+    pub checked: Option<i64>,
     /// Chart timeframe active when the alert was created on a chart (`None` for older rules
     /// and alerts typed on the command line).
     #[serde(default)]
@@ -253,7 +288,13 @@ impl Rule {
         }
         let state = self.cond.state(m)?;
         let prev = self.state.replace(state);
-        if !self.cond.triggers(prev, state) {
+        let since = self.checked.unwrap_or(self.created);
+        let live = self.cond.triggers(prev, state);
+        let missed = if live { None } else { self.cond.missed(prev, m, since) };
+        if let Some(b) = m.bars.last() {
+            self.checked = Some(since.max(b.ts));
+        }
+        if !live && missed.is_none() {
             return None;
         }
         if self.repeat && self.last_fired.is_some_and(|t| now - t < REPEAT_COOLDOWN_SECS) {
@@ -264,7 +305,7 @@ impl Rule {
         if !self.repeat {
             self.enabled = false;
         }
-        Some(self.cond.value(m).unwrap_or(f64::NAN))
+        Some(missed.or_else(|| self.cond.value(m)).unwrap_or(f64::NAN))
     }
 }
 
@@ -353,6 +394,7 @@ impl AlertBook {
             last_fired: None,
             fired: 0,
             state: None,
+            checked: None,
             tf: None,
             note: String::new(),
         });
@@ -382,6 +424,7 @@ impl AlertBook {
                 r.cond = cond;
                 r.note = note;
                 r.state = None;
+                r.checked = Some(now);
             }
             RuleOp::Enable(id, on) => {
                 let Some(r) = self.rule_mut(id) else { return false };
@@ -391,6 +434,7 @@ impl AlertBook {
                 r.enabled = on;
                 // Re-enabled rules start fresh: a level rule fires if it already holds.
                 r.state = None;
+                r.checked = Some(now);
             }
             RuleOp::Repeat(id, on) => {
                 let Some(r) = self.rule_mut(id) else { return false };
@@ -426,6 +470,11 @@ impl AlertBook {
             }
         }
         out
+    }
+
+    /// Whether an enabled rule on `symbol` wants intraday bars (see [`Condition::needs_bars`]).
+    pub fn needs_bars(&self, symbol: &str) -> bool {
+        self.rules.iter().any(|r| r.enabled && r.symbol == symbol && r.cond.needs_bars())
     }
 
     pub fn watches(&self, symbol: &str) -> bool {
@@ -653,6 +702,36 @@ mod tests {
     }
 
     #[test]
+    fn level_touched_while_unwatched_fires_from_bars() {
+        let mut b = AlertBook::default();
+        let c = cond(Metric::Price, Op::CrossAbove, Target::Level(101.75));
+        b.add("SOXL US Equity", c, false, 1000);
+        // Last seen below the level, then the app was closed while the price spiked and fell back.
+        assert!(b.evaluate("SOXL US Equity", &px(99.0), 1100).0.is_empty());
+        let bar = |ts, high, low| Bar::new(ts, low, high, low, low, 1.0);
+        let m = Market {
+            last: Some(98.65),
+            bars: vec![bar(900, 120.0, 90.0), bar(2000, 104.0, 98.0), bar(3800, 99.0, 98.0)],
+            ..px(98.65)
+        };
+        let (fired, changed) = b.evaluate("SOXL US Equity", &m, 5000);
+        // The bar before the rule existed is ignored; the 104 spike is not.
+        assert_eq!(fired.len(), 1);
+        assert!(changed);
+        assert!(!b.rules[0].enabled, "one-shot moves to the passive list");
+        assert!(b.evaluate("SOXL US Equity", &m, 5001).0.is_empty());
+    }
+
+    #[test]
+    fn bars_before_creation_do_not_fire() {
+        let mut b = AlertBook::default();
+        b.add("SOXL US Equity", cond(Metric::Price, Op::CrossAbove, Target::Level(101.75)), false, 1000);
+        let m = Market { bars: vec![Bar::new(500, 99.0, 110.0, 98.0, 99.0, 1.0)], ..px(99.0) };
+        assert!(b.evaluate("SOXL US Equity", &m, 1100).0.is_empty());
+        assert!(b.rules[0].enabled);
+    }
+
+    #[test]
     fn parses_rules() {
         let s = spec("AAPL > 250").unwrap();
         assert_eq!(s.symbol.as_deref(), Some("AAPL US Equity"));
@@ -748,6 +827,7 @@ mod tests {
             last_fired: None,
             fired: 0,
             state: None,
+            checked: None,
             tf: None,
             note: String::new(),
         };
@@ -816,7 +896,7 @@ mod tests {
     #[test]
     fn rsi_and_day_change() {
         let rising: Vec<f64> = (0..40).map(|i| 100.0 + i as f64).collect();
-        let m = Market { last: Some(140.0), prev_close: Some(138.0), closes: rising, ext: Ext::Unknown };
+        let m = Market { last: Some(140.0), prev_close: Some(138.0), closes: rising, ext: Ext::Unknown, bars: vec![] };
         let rsi = cond(Metric::Rsi(14), Op::Above, Target::Level(70.0));
         assert!(rsi.value(&m).unwrap() > 70.0);
         assert_eq!(rsi.state(&m), Some(true));

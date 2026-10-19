@@ -33,6 +33,9 @@ pub const ALERT_POLL_SECS: u64 = 15;
 
 /// Daily closes behind indicator alerts are refetched this often.
 const ALERT_CLOSES_TTL: Duration = Duration::from_secs(600);
+/// Intraday bars behind price-level rules are refetched this often, and this many are read.
+const ALERT_BARS_TTL: Duration = Duration::from_secs(120);
+const ALERT_BARS: usize = 800;
 
 pub enum Request {
     /// Load the brokerage portfolio through SnapTrade (`None` = the simulated sample).
@@ -408,6 +411,7 @@ struct PriceAlerts {
     path: Option<PathBuf>,
     markets: HashMap<String, Market>,
     closes_at: HashMap<String, std::time::Instant>,
+    bars_at: HashMap<String, std::time::Instant>,
 }
 
 impl PriceAlerts {
@@ -589,6 +593,25 @@ async fn poll_alerts(s: &Shared) {
         return;
     }
     let symbols: Vec<String> = watched.iter().map(|(k, ..)| k.clone()).collect();
+    // Bars first: a rule evaluated against a quote alone would move its checkpoint past a
+    // level touched while the app was closed.
+    for symbol in &symbols {
+        let wanted = {
+            let a = s.alerts.lock().expect("alerts lock");
+            a.book.needs_bars(symbol) && a.bars_at.get(symbol).is_none_or(|t| t.elapsed() > ALERT_BARS_TTL)
+        };
+        if !wanted {
+            continue;
+        }
+        match s.provider.real_history(symbol, Timeframe::M30, ALERT_BARS).await {
+            Ok(bars) if !bars.is_empty() => {
+                s.alerts.lock().expect("alerts lock").bars_at.insert(symbol.clone(), std::time::Instant::now());
+                alert_update(s, symbol, |m| m.bars = bars);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::debug!("alert bars {symbol}: {e:#}"),
+        }
+    }
     match s.provider.real_quotes(&symbols).await {
         Ok(q) => alert_quotes(s, &q),
         Err(e) => tracing::debug!("alert quotes: {e:#}"),
