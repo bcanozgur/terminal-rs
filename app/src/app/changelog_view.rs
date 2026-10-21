@@ -11,6 +11,10 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
         "2026-10-22",
         "Fixes, data quality and search",
         &[
+            "ECO is global: EUR, GBP, JPY, CNY, CAD, AUD, NZD and CHF events (importance, forecast, previous) next \
+             to the US releases, with a country column and chips (ECO US EU GB JP CN, ECO ALL for all). Note that \
+             ECO ALL now means all countries; importance is ECO HIGH / MED / LOW. Only the current week (and \
+             next or last on weekends) has world data; the pane says so for other weeks.",
             "Search button on the TR Funds, ETF and Economic Calendar pane headers: filters the fund list, every \
              holding of the open fund (not only the top 10), its buys and sells, reverse search hits and overlap \
              rows.",

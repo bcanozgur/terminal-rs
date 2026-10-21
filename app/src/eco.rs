@@ -47,6 +47,8 @@ pub async fn fetch(req: EcoRequest) -> EcoResponse {
                     source: eco::DateSource::Unavailable,
                     latest: Vec::new(),
                     notes: vec!["HTTP client unavailable".into()],
+                    global: Vec::new(),
+                    global_covered: false,
                 },
             };
             EcoResponse::Week(Box::new(week))

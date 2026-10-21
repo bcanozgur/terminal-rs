@@ -149,6 +149,9 @@ pub enum PaneSettings {
         min_importance: u8,
         #[serde(default)]
         series: Option<String>,
+        /// Country codes shown (empty = all).
+        #[serde(default)]
+        countries: Vec<String>,
     },
     /// ETF contents: `mode` is `list`, `detail` (`a` = fund), `reverse` (`a` = stock) or
     /// `overlap` (`a` and `b` = funds).

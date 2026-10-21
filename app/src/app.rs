@@ -432,9 +432,10 @@ impl PaneKind {
                  click a row for that company's history."
             }
             PaneKind::Eco(_) => {
-                "Economic calendar (ECO): this week's US releases (CPI, payrolls, retail sales, FOMC…) with \
-                 consensus, actual, prior and change. Actual vs consensus is the surprise markets react to. \
-                 Click a row for its history (ECOF). Sources: FRED, ForexFactory."
+                "Economic calendar (ECO): this week's releases worldwide (US from FRED: CPI, payrolls, FOMC…; \
+                 EUR, GBP, JPY, CNY and others from ForexFactory) with consensus, actual, prior and \
+                 importance. Filter countries with the chips or ECO US EU GB JP CN, ECO ALL for all. Click a \
+                 US row for its history (ECOF)."
             }
             PaneKind::Etf(_) => {
                 "US ETFs (ETF): pick a fund for its largest holdings as a donut chart and list, plus sector weights. \
@@ -583,7 +584,11 @@ impl PaneKind {
                 open_only: p.open_only,
             },
             PaneKind::Edgar(e) => e.settings(),
-            PaneKind::Eco(e) => PaneSettings::Eco { min_importance: e.min_importance, series: e.series_code.clone() },
+            PaneKind::Eco(e) => PaneSettings::Eco {
+                min_importance: e.min_importance,
+                series: e.series_code.clone(),
+                countries: e.countries.iter().cloned().collect(),
+            },
             PaneKind::Etf(e) => {
                 let (mode, a, b) = e.settings();
                 PaneSettings::Etf { mode: mode.into(), a, b }
@@ -685,8 +690,8 @@ impl PaneKind {
             PaneSettings::Smart { symbol, tab } => {
                 PaneKind::Smart(Box::new(smart_view::SmartPane::from_settings(&symbol, &tab)))
             }
-            PaneSettings::Eco { min_importance, series } => {
-                PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series)))
+            PaneSettings::Eco { min_importance, series, countries } => {
+                PaneKind::Eco(Box::new(eco_view::EcoPane::new(min_importance, series).with_countries(&countries)))
             }
         }
     }
