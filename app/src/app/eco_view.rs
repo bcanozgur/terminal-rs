@@ -1,11 +1,12 @@
-//! Economic calendar pane: `ECO` week view of US releases and the `ECOF` release history.
+//! Economic calendar pane: `ECO` week view (US FRED releases plus other countries' events from
+//! ForexFactory) and the `ECOF` release history.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, NaiveDate};
 use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
-use tr_data::eco::{self, DateSource, EcoRow, EcoSeries, EcoWeek, RowState};
+use tr_data::eco::{self, DateSource, EcoRow, EcoSeries, EcoWeek, GlobalRow, RowState};
 
 use super::{PaneKind, TerminalApp};
 use crate::eco::{EcoRequest, EcoResponse};
@@ -28,8 +29,10 @@ pub struct EcoPane {
     series_requested: bool,
     /// Years of history shown in the series view (0 = all).
     pub years: u32,
+    /// Countries shown (`eco::COUNTRIES` codes); empty = all.
+    pub countries: BTreeSet<String>,
     /// Releases already announced by a toast.
-    alerted: HashSet<(&'static str, NaiveDate)>,
+    alerted: HashSet<String>,
 }
 
 impl EcoPane {
@@ -44,8 +47,19 @@ impl EcoPane {
             series: None,
             series_requested: false,
             years: 10,
+            countries: BTreeSet::new(),
             alerted: HashSet::new(),
         }
+    }
+
+    pub fn with_countries(mut self, countries: &[String]) -> Self {
+        self.countries = countries.iter().filter_map(|c| eco::parse_country(c)).map(str::to_string).collect();
+        self
+    }
+
+    /// Whether events of `country` are shown.
+    fn shows(&self, country: &str) -> bool {
+        self.countries.is_empty() || self.countries.contains(country)
     }
 
     /// The Monday of the shown week (weeks start on the US Eastern date).
@@ -132,7 +146,7 @@ fn calendar(ui: &mut Ui, pane: &mut EcoPane, q: &str) {
         }
         let sunday = monday + chrono::Days::new(6);
         ui.label(
-            RichText::new(format!("US · week of {} – {}", monday.format("%b %d"), sunday.format("%b %d, %Y")))
+            RichText::new(format!("Week of {} – {}", monday.format("%b %d"), sunday.format("%b %d, %Y")))
                 .font(ui_font(12.5))
                 .color(text()),
         );
@@ -150,20 +164,44 @@ fn calendar(ui: &mut Ui, pane: &mut EcoPane, q: &str) {
             pane.loading = true;
         }
     });
+    let week = pane.data.as_deref().filter(|w| w.monday == monday);
+    country_chips(ui, &mut pane.countries, week);
     ui.add_space(2.0);
-    let Some(week) = pane.data.as_deref().filter(|w| w.monday == monday) else {
-        ui.label(RichText::new("Loading US releases (FRED)…").font(ui_font(12.0)).color(muted()));
+    let Some(week) = week else {
+        ui.label(RichText::new("Loading releases (FRED, ForexFactory)…").font(ui_font(12.0)).color(muted()));
         return;
     };
     let now = now_ts();
-    let rows: Vec<&EcoRow> = week
-        .rows
-        .iter()
-        .filter(|r| r.event().importance >= pane.min_importance)
-        .filter(|r| {
-            q.is_empty() || r.event().name.to_ascii_lowercase().contains(q) || r.code.to_ascii_lowercase().contains(q)
-        })
-        .collect();
+    let us = pane.shows("US");
+    let rows: Vec<Item> = merge(
+        week.rows
+            .iter()
+            .filter(|_| us)
+            .filter(|r| r.event().importance >= pane.min_importance)
+            .filter(|r| {
+                q.is_empty()
+                    || r.event().name.to_ascii_lowercase().contains(q)
+                    || r.code.to_ascii_lowercase().contains(q)
+            }),
+        week.global
+            .iter()
+            .filter(|g| pane.shows(&g.country))
+            // Holidays count as the lowest importance, so only "High"/"Med" hide them.
+            .filter(|g| g.importance().max(1) >= pane.min_importance)
+            .filter(|g| {
+                q.is_empty() || g.title.to_ascii_lowercase().contains(q) || g.country.to_ascii_lowercase().contains(q)
+            }),
+    );
+    if !week.global_covered {
+        ui.label(
+            RichText::new(
+                "No world events for this week: ForexFactory publishes only this week (and next or last week on \
+                 weekends). Showing US releases from FRED.",
+            )
+            .font(ui_font(11.0))
+            .color(amber()),
+        );
+    }
     let mut open = None;
     let footer_h = dp(56.0);
     // Below this width the right-aligned number columns run into the event names, so a
@@ -179,28 +217,33 @@ fn calendar(ui: &mut Ui, pane: &mut EcoPane, q: &str) {
             if rows.is_empty() {
                 let msg = match week.source {
                     DateSource::Unavailable => "No scheduled release dates (see the note below).",
-                    _ => "No releases at this importance this week.",
+                    _ => "No releases for these countries and this importance this week.",
                 };
                 ui.label(RichText::new(msg).font(ui_font(12.0)).color(muted()));
             }
             let mut day = None;
-            for r in rows {
-                if day != Some(r.date) {
-                    day = Some(r.date);
+            for item in rows {
+                if day != Some(item.date()) {
+                    day = Some(item.date());
                     ui.add_space(dp(3.0));
-                    let label = r.date.format("%A %b %d").to_string();
-                    let today = r.date == today_et();
+                    let label = item.date().format("%A %b %d").to_string();
+                    let today = item.date() == today_et();
                     ui.label(
                         RichText::new(if today { format!("{label} · today") } else { label })
                             .font(ui_font(11.5))
                             .color(if today { amber() } else { muted() }),
                     );
                 }
-                if row(ui, &cols, r, now) {
-                    open = Some(r.code);
+                match item {
+                    Item::Us(r) => {
+                        if row(ui, &cols, r, now) {
+                            open = Some(r.code);
+                        }
+                    }
+                    Item::Global(g) => global_row(ui, &cols, g, now),
                 }
             }
-            if !week.latest.is_empty() {
+            if !week.latest.is_empty() && us {
                 ui.add_space(dp(8.0));
                 ui.label(RichText::new("Latest published values").font(ui_font(12.0)).color(text()));
                 for l in week
@@ -236,6 +279,7 @@ struct Columns {
     w: f32,
     et: f32,
     local: f32,
+    ctry: f32,
     event: f32,
     period: f32,
     cons: f32,
@@ -254,7 +298,7 @@ impl Columns {
         let actual = prior - num;
         let cons = actual - num;
         let period = cons - num - dp(6.0);
-        Self { w, et: dp(6.0), local: dp(52.0), event: dp(100.0), period, cons, actual, prior, change, imp }
+        Self { w, et: dp(6.0), local: dp(52.0), ctry: dp(100.0), event: dp(134.0), period, cons, actual, prior, change, imp }
     }
 }
 
@@ -269,7 +313,8 @@ fn header(ui: &mut Ui, c: &Columns) {
     };
     t(c.et, Align2::LEFT_CENTER, "ET");
     t(c.local, Align2::LEFT_CENTER, "LOCAL");
-    t(c.event, Align2::LEFT_CENTER, "US EVENT");
+    t(c.ctry, Align2::LEFT_CENTER, "CTRY");
+    t(c.event, Align2::LEFT_CENTER, "EVENT");
     t(c.period, Align2::RIGHT_CENTER, "PERIOD");
     t(c.cons, Align2::RIGHT_CENTER, "CONS");
     t(c.actual, Align2::RIGHT_CENTER, "ACTUAL");
@@ -293,6 +338,7 @@ fn row(ui: &mut Ui, c: &Columns, r: &EcoRow, now: i64) -> bool {
     let f = mono(11.5);
     p.text(pos2(x(c.et), y), Align2::LEFT_CENTER, format!("{:02}:{:02}", r.et.0, r.et.1), f.clone(), muted());
     p.text(pos2(x(c.local), y), Align2::LEFT_CENTER, local_time(r.ts), f.clone(), muted());
+    p.text(pos2(x(c.ctry), y), Align2::LEFT_CENTER, "US", f.clone(), muted());
     let name_w = (c.period - c.event - dp(44.0)).max(dp(40.0));
     let name = p.layout_no_wrap(e.name.to_string(), ui_font(12.5), text());
     let clip = Rect::from_min_max(pos2(x(c.event), rect.top()), pos2(x(c.event) + name_w, rect.bottom()));
@@ -363,6 +409,184 @@ fn row(ui: &mut Ui, c: &Columns, r: &EcoRow, now: i64) -> bool {
     resp.on_hover_text(tip).clicked()
 }
 
+/// A row of the merged calendar: a US release from FRED or another country's event.
+enum Item<'a> {
+    Us(&'a EcoRow),
+    Global(&'a GlobalRow),
+}
+
+impl Item<'_> {
+    fn ts(&self) -> i64 {
+        match self {
+            Item::Us(r) => r.ts,
+            Item::Global(g) => g.ts,
+        }
+    }
+
+    fn date(&self) -> NaiveDate {
+        match self {
+            Item::Us(r) => r.date,
+            Item::Global(g) => g.date,
+        }
+    }
+
+    fn importance(&self) -> u8 {
+        match self {
+            Item::Us(r) => r.event().importance,
+            Item::Global(g) => g.importance(),
+        }
+    }
+}
+
+/// Both row kinds in one list, by time and then importance.
+fn merge<'a>(us: impl Iterator<Item = &'a EcoRow>, global: impl Iterator<Item = &'a GlobalRow>) -> Vec<Item<'a>> {
+    let mut v: Vec<Item> = us.map(Item::Us).chain(global.map(Item::Global)).collect();
+    v.sort_by(|a, b| a.ts().cmp(&b.ts()).then(b.importance().cmp(&a.importance())));
+    v
+}
+
+/// Country filter chips: "All" plus one per country with a source (or with rows).
+fn country_chips(ui: &mut Ui, countries: &mut BTreeSet<String>, week: Option<&EcoWeek>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Countries").font(ui_font(11.5)).color(muted()));
+        if ui.selectable_label(countries.is_empty(), "All").on_hover_text("ECO ALL").clicked() {
+            countries.clear();
+        }
+        for k in eco::COUNTRIES {
+            let has_rows = week.is_some_and(|w| w.global.iter().any(|g| g.country == k.code));
+            if !k.ff && !has_rows {
+                continue;
+            }
+            let on = countries.contains(k.code);
+            let tip = format!("{} ({}) · ECO {}", k.name, k.currency, k.code);
+            if ui.selectable_label(on, k.code).on_hover_text(tip).clicked() {
+                if on {
+                    countries.remove(k.code);
+                } else {
+                    countries.insert(k.code.to_string());
+                }
+            }
+        }
+    });
+}
+
+/// One non-FRED event. Not clickable: there is no history behind it.
+fn global_row(ui: &mut Ui, c: &Columns, g: &GlobalRow, now: i64) {
+    let (rect, resp) = ui.allocate_exact_size(vec2(c.w, dp(20.0)), Sense::hover());
+    let soon = g.ts > now && g.ts - now <= 24 * 3600 && !g.all_day;
+    if soon {
+        ui.painter().rect_filled(rect, 2.0, theme::amber_wash());
+    }
+    widgets::hover_wash(ui, rect, &resp, false);
+    let p = ui.painter();
+    let y = rect.center().y;
+    let x = |dx: f32| rect.left() + dx;
+    let f = mono(11.5);
+    if g.all_day {
+        p.text(pos2(x(c.et), y), Align2::LEFT_CENTER, "all day", f.clone(), muted());
+    } else {
+        p.text(pos2(x(c.et), y), Align2::LEFT_CENTER, format!("{:02}:{:02}", g.et.0, g.et.1), f.clone(), muted());
+        p.text(pos2(x(c.local), y), Align2::LEFT_CENTER, local_time(g.ts), f.clone(), muted());
+    }
+    let ctry_col = if g.country == "US" { muted() } else { text() };
+    p.text(pos2(x(c.ctry), y), Align2::LEFT_CENTER, &g.country, f.clone(), ctry_col);
+    let name_w = (c.period - c.event - dp(44.0)).max(dp(40.0));
+    let name = p.layout_no_wrap(g.title.clone(), ui_font(12.5), if g.all_day { muted() } else { text() });
+    let clip = Rect::from_min_max(pos2(x(c.event), rect.top()), pos2(x(c.event) + name_w, rect.bottom()));
+    p.with_clip_rect(clip).galley(pos2(x(c.event), y - name.size().y / 2.0), name, text());
+    if let Some(cons) = &g.forecast {
+        p.text(pos2(x(c.cons), y), Align2::RIGHT_CENTER, cons, f.clone(), text());
+    }
+    if let Some(pr) = &g.previous {
+        p.text(pos2(x(c.prior), y), Align2::RIGHT_CENTER, pr, f.clone(), text());
+    }
+    if let Some(a) = &g.actual {
+        // Against the forecast, else the previous figure.
+        let diff = [g.forecast.as_deref(), g.previous.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(|r| Some(eco::figure(a)? - eco::figure(r)?));
+        let col = match diff {
+            Some(d) if d > 1e-9 => theme::up(),
+            Some(d) if d < -1e-9 => theme::down(),
+            _ => amber(),
+        };
+        p.text(pos2(x(c.actual), y), Align2::RIGHT_CENTER, a, mono(12.0), col);
+    } else if soon {
+        let left = g.ts - now;
+        let s = if left < 3600 { format!("in {}m", (left / 60).max(1)) } else { format!("in {}h", left / 3600) };
+        p.text(pos2(x(c.actual), y), Align2::RIGHT_CENTER, s, f.clone(), amber());
+    }
+    importance_bars(p, pos2(x(c.imp), rect.bottom() - dp(5.0)), g.importance());
+    let country = eco::COUNTRIES.iter().find(|k| k.code == g.country).map_or(g.country.as_str(), |k| k.name);
+    let line = |l: &str, v: &Option<String>| v.as_deref().map_or(String::new(), |v| format!("\n{l} {v}"));
+    let when = if g.all_day {
+        format!("{} (all day)", g.date.format("%a %b %d"))
+    } else {
+        format!("{} {:02}:{:02} ET · {} local", g.date.format("%a %b %d"), g.et.0, g.et.1, local_time(g.ts))
+    };
+    resp.on_hover_text(format!(
+        "{} · {country}\n{when}{}{}{}\nSource: ForexFactory",
+        g.title,
+        line("Forecast", &g.forecast),
+        line("Previous", &g.previous),
+        line("Actual", &g.actual),
+    ));
+}
+
+/// A week change typed in `ECO`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WeekOp {
+    /// Weeks from the one shown.
+    Rel(i32),
+    /// Weeks from the current one.
+    Abs(i32),
+}
+
+/// What an `ECO ...` command asks for; unmentioned parts stay as they are.
+#[derive(Debug, Default, PartialEq)]
+struct EcoOptions {
+    week: Option<WeekOp>,
+    importance: Option<u8>,
+    /// `Some(empty)` = every country.
+    countries: Option<Vec<&'static str>>,
+}
+
+/// Parse the words after `ECO`: weeks (`NEXT`, `PREV`, `THIS`, `+2`), importance (`HIGH`,
+/// `MED`, `LOW`) and countries (`US EU GB`, or `ALL` for every country). Err = the first
+/// word not understood.
+fn parse_options(arg: &str) -> Result<EcoOptions, String> {
+    let mut o = EcoOptions::default();
+    for w in arg.split_whitespace() {
+        let u = w.to_ascii_uppercase();
+        match u.as_str() {
+            "THIS" | "NOW" | "TODAY" => o.week = Some(WeekOp::Abs(0)),
+            "NEXT" | "N" | "FWD" => o.week = Some(WeekOp::Rel(1)),
+            "PREV" | "P" | "BACK" | "LAST" => o.week = Some(WeekOp::Rel(-1)),
+            "HIGH" | "3" => o.importance = Some(3),
+            "MED" | "MEDIUM" | "2" => o.importance = Some(2),
+            "LOW" | "1" => o.importance = Some(1),
+            "ALL" | "WORLD" | "GLOBAL" => o.countries = Some(Vec::new()),
+            _ => {
+                if let Some(c) = eco::parse_country(&u) {
+                    o.countries.get_or_insert_with(Vec::new).push(c);
+                } else if let Ok(n) = u.parse::<i32>() {
+                    o.week = Some(WeekOp::Abs(n));
+                } else {
+                    return Err(w.to_string());
+                }
+            }
+        }
+    }
+    Ok(o)
+}
+
+impl EcoOptions {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// A latest-value row (no release date known).
 fn latest_row(ui: &mut Ui, c: &Columns, r: &EcoRow) -> bool {
     let e = r.event();
@@ -405,7 +629,10 @@ fn footer(ui: &mut Ui, week: &EcoWeek) {
     };
     note(&source);
     note(
-        "Consensus: ForexFactory's free weekly calendar (current week only); ACTUAL is green/red against it when comparable, otherwise against PRIOR. Actual and prior are as first published that day (ALFRED). ISM is proprietary and not on FRED.",
+        "US rows: FRED releases; ACTUAL is green/red against the consensus when comparable, otherwise against PRIOR, and is as first published that day (ALFRED). ISM is proprietary and not on FRED.",
+    );
+    note(
+        "Other countries (and US events FRED lacks): ForexFactory's free weekly calendar (CONS = forecast; that feed has no actuals), this week and, when published, next and last week. Turkey is not covered yet.",
     );
     for n in &week.notes {
         ui.label(RichText::new(n).font(ui_font(11.0)).color(theme::down()));
@@ -572,32 +799,36 @@ impl TerminalApp {
         }
     }
 
-    /// `ECO`, `ECO NEXT|PREV|THIS`, `ECO +2`, `ECO HIGH|MED|ALL`.
+    /// `ECO`, `ECO NEXT|PREV|THIS`, `ECO +2`, `ECO HIGH|MED|LOW`, `ECO US EU GB…|ALL`; words
+    /// combine (`ECO EU GB HIGH NEXT`).
     pub(super) fn eco_command(&mut self, arg: &str) {
-        let arg = arg.trim().to_ascii_uppercase();
-        match arg.as_str() {
-            "" | "THIS" | "NOW" | "TODAY" => self.with_eco(|e| {
-                e.show_series(None);
-                e.set_week(0);
-            }),
-            "NEXT" | "N" | "FWD" => self.with_eco(|e| {
-                e.show_series(None);
-                e.set_week(e.week + 1);
-            }),
-            "PREV" | "P" | "BACK" | "LAST" => self.with_eco(|e| {
-                e.show_series(None);
-                e.set_week(e.week - 1);
-            }),
-            "HIGH" | "3" => self.with_eco(|e| e.min_importance = 3),
-            "MED" | "MEDIUM" | "2" => self.with_eco(|e| e.min_importance = 2),
-            "ALL" | "1" => self.with_eco(|e| e.min_importance = 1),
-            other => match other.parse::<i32>() {
-                Ok(w) => self.with_eco(|e| {
+        match parse_options(arg) {
+            Ok(o) => self.with_eco(|e| {
+                if o.is_empty() {
                     e.show_series(None);
-                    e.set_week(w);
-                }),
-                Err(_) => self.status = format!("ECO: unknown option {other} (NEXT, PREV, +N, HIGH, MED, ALL)"),
-            },
+                    e.set_week(0);
+                }
+                if let Some(w) = o.week {
+                    e.show_series(None);
+                    e.set_week(match w {
+                        WeekOp::Rel(d) => e.week + d,
+                        WeekOp::Abs(w) => w,
+                    });
+                }
+                if let Some(i) = o.importance {
+                    e.min_importance = i;
+                }
+                if let Some(c) = o.countries {
+                    e.show_series(None);
+                    e.countries = c.into_iter().map(str::to_string).collect();
+                }
+            }),
+            Err(bad) => {
+                self.status = format!(
+                    "ECO: unknown option {bad} (NEXT, PREV, +N, HIGH, MED, LOW, ALL or countries: {})",
+                    eco::COUNTRIES.iter().filter(|k| k.ff).map(|k| k.code).collect::<Vec<_>>().join(" ")
+                );
+            }
         }
     }
 
@@ -638,17 +869,26 @@ impl TerminalApp {
                 }
             }
             let Some(w) = &e.data else { continue };
-            for r in &w.rows {
-                let left = r.ts - now;
-                if r.state == RowState::Upcoming
-                    && r.event().importance >= 3
-                    && (0..=300).contains(&left)
-                    && e.alerted.insert((r.code, r.date))
-                {
-                    self.toasts.push((
-                        format!("In {} min: {} at {:02}:{:02} ET", (left + 59) / 60, r.event().name, r.et.0, r.et.1),
-                        Instant::now(),
-                    ));
+            let mut due: Vec<(String, String, i64)> = Vec::new();
+            if e.shows("US") {
+                for r in &w.rows {
+                    let left = r.ts - now;
+                    if r.state == RowState::Upcoming && r.event().importance >= 3 && (0..=300).contains(&left) {
+                        let msg = format!("{} at {:02}:{:02} ET", r.event().name, r.et.0, r.et.1);
+                        due.push((format!("{}@{}", r.code, r.date), msg, left));
+                    }
+                }
+            }
+            for g in &w.global {
+                let left = g.ts - now;
+                if g.impact == eco::Impact::High && !g.all_day && e.shows(&g.country) && (0..=300).contains(&left) {
+                    let msg = format!("{} {} at {:02}:{:02} ET", g.country, g.title, g.et.0, g.et.1);
+                    due.push((format!("{}:{}@{}", g.country, g.title, g.ts), msg, left));
+                }
+            }
+            for (key, msg, left) in due {
+                if e.alerted.insert(key) {
+                    self.toasts.push((format!("In {} min: {msg}", (left + 59) / 60), Instant::now()));
                 }
             }
         }
@@ -727,5 +967,39 @@ impl TerminalApp {
                 None => d.remove::<(String, Color32)>(id.with("msg")),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eco_options_parse() {
+        assert_eq!(parse_options(""), Ok(EcoOptions::default()));
+        assert!(parse_options("").unwrap().is_empty());
+        let o = parse_options("us eu").unwrap();
+        assert_eq!(o.countries, Some(vec!["US", "EU"]));
+        assert_eq!(parse_options("uk jpy cn").unwrap().countries, Some(vec!["GB", "JP", "CN"]));
+        // ALL = every country; importance is HIGH/MED/LOW.
+        assert_eq!(parse_options("ALL").unwrap().countries, Some(vec![]));
+        assert_eq!(parse_options("ALL").unwrap().importance, None);
+        assert_eq!(parse_options("low").unwrap().importance, Some(1));
+        let o = parse_options("EU GB high next").unwrap();
+        assert_eq!((o.importance, o.week), (Some(3), Some(WeekOp::Rel(1))));
+        assert_eq!(parse_options("prev").unwrap().week, Some(WeekOp::Rel(-1)));
+        assert_eq!(parse_options("+2").unwrap().week, Some(WeekOp::Abs(2)));
+        assert_eq!(parse_options("EU nonsense"), Err("nonsense".into()));
+        // Turkey is a known country code even before it has a source.
+        assert_eq!(parse_options("TR").unwrap().countries, Some(vec!["TR"]));
+    }
+
+    #[test]
+    fn country_filter_and_persistence() {
+        let mut p = EcoPane::new(1, None);
+        assert!(p.shows("US") && p.shows("JP"));
+        p = p.with_countries(&["EU".into(), "uk".into(), "zz".into()]);
+        assert!(p.shows("EU") && p.shows("GB") && !p.shows("US"));
+        assert_eq!(p.countries.len(), 2);
     }
 }

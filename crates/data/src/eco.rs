@@ -7,8 +7,11 @@
 //!   real-time period (what ALFRED calls a vintage); without one, ALFRED's keyless `alfredgraph.csv` with `vintage_date` = the release
 //!   day, so each row shows what was published that day, not today's revised numbers.
 //! - History: `fred/series/observations` with a key, FRED's keyless `fredgraph.csv` without.
-//! - Consensus: ForexFactory's free weekly calendar export (`ff_calendar_thisweek.json`, no
-//!   key), so forecasts are shown for the current week only.
+//! - Consensus and the world calendar: ForexFactory's free weekly calendar export
+//!   (`ff_calendar_thisweek.json`, no key; `nextweek` and `lastweek` when published). US rows
+//!   take their forecast from it; every other country's events are listed as [`GlobalRow`]s.
+//!   The export is rate limited and answers with HTML when throttled, so bodies are validated
+//!   before they are cached.
 //!
 //! Everything fetched is cached in SQLite; settled releases are cached for good.
 
@@ -28,7 +31,10 @@ const CALENDAR: &str = "https://fred.stlouisfed.org/releases/calendar";
 const ALFRED_CSV: &str = "https://alfred.stlouisfed.org/graph/alfredgraph.csv";
 const FRED_CSV: &str = "https://fred.stlouisfed.org/graph/fredgraph.csv";
 /// ForexFactory's public calendar export for the current week (forecasts included).
-const FF_WEEK: &str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
+const FF_THIS: &str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
+/// Published on weekends only (404 otherwise); `lastweek` likewise.
+const FF_NEXT: &str = "https://nfs.faireconomy.media/ff_calendar_nextweek.json";
+const FF_LAST: &str = "https://nfs.faireconomy.media/ff_calendar_lastweek.json";
 /// Environment variable holding a FRED API key (overrides the stored key).
 pub const ENV_KEY: &str = "FRED_API_KEY";
 /// Where to get a free key.
@@ -446,6 +452,10 @@ pub struct EcoWeek {
     /// Latest values per event, filled when release dates are unavailable.
     pub latest: Vec<Latest>,
     pub notes: Vec<String>,
+    /// Other countries' events (and US ones FRED does not cover), sorted by time.
+    pub global: Vec<GlobalRow>,
+    /// The ForexFactory export covers this week; `false` = no world data for it.
+    pub global_covered: bool,
 }
 
 /// History of one event for the `ECOF` view.
@@ -527,11 +537,31 @@ pub struct FfEvent {
     /// RFC 3339 with the US Eastern offset.
     pub date: String,
     #[serde(default)]
+    pub impact: String,
+    #[serde(default)]
     pub forecast: String,
+    #[serde(default)]
+    pub previous: String,
+    /// Not in the public export today; used when it appears.
+    #[serde(default)]
+    pub actual: Option<String>,
 }
 
-/// Parse ForexFactory's weekly calendar export.
+/// Whether a body looks like the export (a JSON array). Throttled requests get an HTML page,
+/// sometimes with a 200.
+fn looks_like_ff(body: &str) -> bool {
+    body.trim_start().starts_with('[')
+}
+
+/// Parse ForexFactory's weekly calendar export. Throttled requests get an HTML page instead
+/// of JSON; that is reported as such.
 pub fn parse_ff(json: &str) -> Result<Vec<FfEvent>> {
+    if !looks_like_ff(json) {
+        bail!(
+            "ForexFactory returned {} instead of the calendar (rate limited?)",
+            if json.trim_start().starts_with('<') { "a web page" } else { "an unexpected response" }
+        );
+    }
     serde_json::from_str(json).context("ForexFactory calendar")
 }
 
@@ -573,6 +603,167 @@ pub fn apply_consensus(rows: &mut [EcoRow], ff: &[FfEvent]) {
             r.consensus = Some(f.forecast.trim().to_string());
         }
     }
+}
+
+// ---- world calendar -----------------------------------------------------------------------
+
+/// A country in the calendar. `ff` = covered by the ForexFactory export. `TR` has no source
+/// yet (planned: TCMB / TUIK) and gets a filter chip only once rows with its code exist.
+#[derive(Debug, PartialEq)]
+pub struct Country {
+    pub code: &'static str,
+    pub currency: &'static str,
+    pub name: &'static str,
+    pub ff: bool,
+    /// Other names accepted by `ECO <country>`.
+    pub aliases: &'static [&'static str],
+}
+
+pub const COUNTRIES: &[Country] = &[
+    Country { code: "US", currency: "USD", name: "United States", ff: true, aliases: &["USA"] },
+    Country { code: "EU", currency: "EUR", name: "Euro area", ff: true, aliases: &["EZ", "EMU"] },
+    Country { code: "GB", currency: "GBP", name: "United Kingdom", ff: true, aliases: &["UK"] },
+    Country { code: "JP", currency: "JPY", name: "Japan", ff: true, aliases: &[] },
+    Country { code: "CN", currency: "CNY", name: "China", ff: true, aliases: &[] },
+    Country { code: "CA", currency: "CAD", name: "Canada", ff: true, aliases: &[] },
+    Country { code: "AU", currency: "AUD", name: "Australia", ff: true, aliases: &[] },
+    Country { code: "NZ", currency: "NZD", name: "New Zealand", ff: true, aliases: &[] },
+    Country { code: "CH", currency: "CHF", name: "Switzerland", ff: true, aliases: &[] },
+    // Extension point: a Turkish source (TCMB / TUIK) emits `GlobalRow`s with this code.
+    Country { code: "TR", currency: "TRY", name: "Turkey", ff: false, aliases: &["TUR"] },
+];
+
+/// Events that belong to no single country (ForexFactory's `All`: IMF meetings, G20, ...).
+pub const GLOBAL_CODE: &str = "GL";
+
+/// The country code for a ForexFactory currency (`EUR` -> `EU`); unknown currencies keep
+/// their own code so nothing is dropped.
+pub fn country_of_currency(cur: &str) -> String {
+    let c = cur.trim().to_ascii_uppercase();
+    if c == "ALL" {
+        return GLOBAL_CODE.into();
+    }
+    COUNTRIES.iter().find(|k| k.currency == c).map_or(c, |k| k.code.to_string())
+}
+
+/// Resolve a user-typed country (`US`, `usd`, `UK`, `euro area`) to its code.
+pub fn parse_country(s: &str) -> Option<&'static str> {
+    let n = s.trim().to_ascii_uppercase();
+    COUNTRIES
+        .iter()
+        .find(|k| k.code == n || k.currency == n || k.aliases.contains(&n.as_str()) || k.name.to_ascii_uppercase() == n)
+        .map(|k| k.code)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Impact {
+    High,
+    Medium,
+    Low,
+    Holiday,
+}
+
+impl Impact {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "high" => Self::High,
+            "medium" => Self::Medium,
+            "holiday" => Self::Holiday,
+            _ => Self::Low,
+        }
+    }
+
+    /// Importance bars: 3 high, 2 medium, 1 low, 0 holiday.
+    pub fn importance(self) -> u8 {
+        match self {
+            Self::High => 3,
+            Self::Medium => 2,
+            Self::Low => 1,
+            Self::Holiday => 0,
+        }
+    }
+}
+
+/// One non-FRED event (any country) from the ForexFactory export. Values are the strings as
+/// published (`0.3%`, `-775M`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlobalRow {
+    /// A [`COUNTRIES`] code, or [`GLOBAL_CODE`].
+    pub country: String,
+    pub title: String,
+    /// Date in US Eastern.
+    pub date: NaiveDate,
+    /// Release time, US Eastern.
+    pub et: (u32, u32),
+    /// Release time, Unix seconds.
+    pub ts: i64,
+    pub impact: Impact,
+    /// Holidays carry no time.
+    pub all_day: bool,
+    pub forecast: Option<String>,
+    pub previous: Option<String>,
+    pub actual: Option<String>,
+}
+
+impl GlobalRow {
+    pub fn importance(&self) -> u8 {
+        self.impact.importance()
+    }
+}
+
+/// The part of the export a Monday-based week uses: events from the Sunday before at 18:00 ET
+/// (Asia's Monday morning) up to the next Sunday 18:00 ET.
+pub fn week_window(monday: NaiveDate) -> (i64, i64) {
+    let sunday = monday + chrono::Days::new(6);
+    (et_to_utc(monday - chrono::Days::new(1), (18, 0)), et_to_utc(sunday, (18, 0)))
+}
+
+fn non_empty(s: &str) -> Option<String> {
+    let s = s.trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// The export's events in `monday`'s week as [`GlobalRow`]s, sorted by time. US events that
+/// one of `us_rows` (the FRED rows) already covers are left out; US events FRED does not
+/// cover stay.
+pub fn global_rows(ff: &[FfEvent], monday: NaiveDate, us_rows: &[EcoRow]) -> Vec<GlobalRow> {
+    use chrono::Timelike;
+    let (from, to) = week_window(monday);
+    let mut out: Vec<GlobalRow> = ff
+        .iter()
+        .filter_map(|f| {
+            let t = chrono::DateTime::parse_from_rfc3339(&f.date).ok()?;
+            let (ts, date) = (t.timestamp(), t.date_naive());
+            if !(from..to).contains(&ts) {
+                return None;
+            }
+            let country = country_of_currency(&f.country);
+            if country == "US" && us_rows.iter().any(|r| r.date == date && ff_matches(r.code, &f.title)) {
+                return None;
+            }
+            let impact = Impact::parse(&f.impact);
+            Some(GlobalRow {
+                country,
+                title: f.title.trim().to_string(),
+                date,
+                et: (t.hour(), t.minute()),
+                ts,
+                impact,
+                all_day: impact == Impact::Holiday,
+                forecast: non_empty(&f.forecast),
+                previous: non_empty(&f.previous),
+                actual: f.actual.as_deref().and_then(non_empty),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.ts.cmp(&b.ts).then(b.importance().cmp(&a.importance())).then(a.title.cmp(&b.title)));
+    out.dedup_by(|a, b| a.ts == b.ts && a.country == b.country && a.title == b.title);
+    out
+}
+
+/// A published figure as a number (`0.3%` -> 0.3, `-775M` -> -775); `None` for ranges and text.
+pub fn figure(s: &str) -> Option<f64> {
+    s.trim().trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%').parse().ok()
 }
 
 /// A consensus figure in the event's own unit, when the two can be compared (`0.4%` for a
@@ -740,6 +931,9 @@ pub struct Eco {
     cache: Option<EcoCache>,
     /// Hosts that recently failed to connect or answer, with the time they may be tried again.
     down: Mutex<HashMap<String, i64>>,
+    /// Cache labels whose last answer was unusable (HTML, 404), with the time they may be
+    /// asked again: the ForexFactory export is rate limited.
+    backoff: Mutex<HashMap<String, i64>>,
 }
 
 const HOUR: i64 = 3600;
@@ -762,18 +956,36 @@ impl Eco {
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(20))
             .build()?;
-        Ok(Self { client, cache, down: Mutex::new(HashMap::new()) })
+        Ok(Self { client, cache, down: Mutex::new(HashMap::new()), backoff: Mutex::new(HashMap::new()) })
     }
 
     /// GET `url` as text, served from the cache when younger than `max_age` seconds. A stale
     /// copy is used when the network fails. `label` replaces the URL in errors and cache keys
     /// (the URL may carry the API key).
     async fn text(&self, url: &str, label: &str, now: i64, max_age: Option<i64>) -> Result<String> {
-        if let Some(body) = self.cache.as_ref().and_then(|c| c.get(label, now, max_age)) {
+        self.text_checked(url, label, now, max_age, None).await
+    }
+
+    /// [`Self::text`] that only accepts bodies passing `valid`, and after an unusable answer
+    /// leaves the URL alone for the given number of seconds (serving the last good copy).
+    async fn text_checked(
+        &self,
+        url: &str,
+        label: &str,
+        now: i64,
+        max_age: Option<i64>,
+        check: Option<(fn(&str) -> bool, i64)>,
+    ) -> Result<String> {
+        let ok = |b: &String| check.is_none_or(|(v, _)| v(b));
+        if let Some(body) = self.cache.as_ref().and_then(|c| c.get(label, now, max_age)).filter(ok) {
             return Ok(body);
         }
+        let backed_off = self.backoff.lock().ok().and_then(|b| b.get(label).copied()).is_some_and(|t| t > now);
         let host = reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
         let fetched = async {
+            if backed_off {
+                bail!("{label}: asked recently, not asking again yet");
+            }
             if self.down.lock().ok().and_then(|d| d.get(&host).copied()).is_some_and(|t| t > now) {
                 bail!("{host} is unreachable");
             }
@@ -790,6 +1002,16 @@ impl Eco {
             };
             let status = resp.status();
             let body = resp.text().await.map_err(|e| anyhow!("{label}: {:?}", e.without_url()))?;
+            let unusable = !status.is_success() || !ok(&body);
+            if unusable
+                && let Some((_, secs)) = check
+                && let Ok(mut b) = self.backoff.lock()
+            {
+                b.insert(label.to_string(), chrono::Utc::now().timestamp() + secs);
+            }
+            if status.is_success() && !ok(&body) {
+                bail!("{label}: unexpected response (rate limited?)");
+            }
             if !status.is_success() {
                 // FRED API errors carry a JSON message worth showing.
                 if let Err(e) = parse_api_dates(&body) {
@@ -807,7 +1029,7 @@ impl Eco {
                 }
                 Ok(body)
             }
-            Err(e) => self.cache.as_ref().and_then(|c| c.get(label, now, None)).ok_or(e),
+            Err(e) => self.cache.as_ref().and_then(|c| c.get(label, now, None)).filter(ok).ok_or(e),
         }
     }
 
@@ -915,13 +1137,16 @@ impl Eco {
         let mut rows = schedule(monday, &dates);
         let jobs: Vec<_> = rows.iter_mut().map(|r| self.fill(key, r, now)).collect();
         futures::stream::iter(jobs).buffer_unordered(CONCURRENCY).collect::<Vec<()>>().await;
-        // The export covers the current week only.
-        let today = chrono::DateTime::from_timestamp(now, 0).map_or(NaiveDate::MIN, |t| t.date_naive());
-        if (monday..=sunday).contains(&today) {
-            match self.text(FF_WEEK, "forexfactory thisweek", now, Some(HOUR)).await.and_then(|b| parse_ff(&b)) {
-                Ok(ff) => apply_consensus(&mut rows, &ff),
-                Err(e) => notes.push(format!("consensus: {e:#}")),
+        // The export covers the current week, plus the next and last when it publishes them.
+        let (mut global, mut global_covered) = (Vec::new(), false);
+        match self.ff(monday, now).await {
+            Ok(Some(ff)) => {
+                apply_consensus(&mut rows, &ff);
+                global = global_rows(&ff, monday, &rows);
+                global_covered = !global.is_empty() || ff.iter().any(|f| f.country == "USD");
             }
+            Ok(None) => {}
+            Err(e) => notes.push(format!("world calendar: {e:#}")),
         }
         let latest = if source == DateSource::Unavailable { self.latest(key, now).await } else { Vec::new() };
         if let Ok(d) = self.down.lock() {
@@ -931,7 +1156,29 @@ impl Eco {
                 notes.push(format!("{h} is not answering from this network; values from it are unavailable"));
             }
         }
-        EcoWeek { monday, rows, source, latest, notes }
+        EcoWeek { monday, rows, source, latest, notes, global, global_covered }
+    }
+
+    /// The ForexFactory export that covers the week of `monday`: this, next or last week's
+    /// (cached, and not asked again soon after a throttled or missing answer). `None` when no
+    /// export can cover it.
+    async fn ff(&self, monday: NaiveDate, now: i64) -> Result<Option<Vec<FfEvent>>> {
+        // The export's weeks run on US Eastern dates.
+        let utc = chrono::DateTime::from_timestamp(now, 0).unwrap_or_default();
+        let today = (utc - chrono::Duration::hours(if us_dst(utc.date_naive()) { 4 } else { 5 })).date_naive();
+        let (url, label, ttl) = match (monday - self::monday(today)).num_days() {
+            0 => (FF_THIS, "forexfactory thisweek", HOUR),
+            7 => (FF_NEXT, "forexfactory nextweek", 6 * HOUR),
+            -7 => (FF_LAST, "forexfactory lastweek", 6 * HOUR),
+            _ => return Ok(None),
+        };
+        // A missing or throttled export is not asked again for ten minutes.
+        match self.text_checked(url, label, now, Some(ttl), Some((looks_like_ff, 600))).await {
+            Ok(b) => parse_ff(&b).map(Some),
+            // nextweek / lastweek simply do not exist most of the time (404).
+            Err(_) if url != FF_THIS => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Fill a row's values once its release time has passed.
@@ -1125,6 +1372,119 @@ mod tests {
         assert_eq!(next[0].code, "FOMC");
         assert_eq!(next[0].date, d(2026, 10, 28));
         assert_eq!(next[0].ts, d(2026, 10, 28).and_hms_opt(18, 0, 0).unwrap().and_utc().timestamp());
+    }
+
+    const FF_SAMPLE: &str = include_str!("../tests/fixtures/ff_calendar_thisweek.json");
+
+    #[test]
+    fn parses_ff_export_and_rejects_html() {
+        let ff = parse_ff(FF_SAMPLE).unwrap();
+        assert_eq!(ff.len(), 43);
+        assert_eq!(ff.last().and_then(|f| f.actual.as_deref()), Some("0.2%"));
+        assert_eq!(ff[0].actual, None);
+        // Throttled / missing exports are HTML, sometimes with a 200.
+        let e = parse_ff("<html><body>Too many requests</body></html>").unwrap_err();
+        assert!(format!("{e:#}").contains("web page"), "{e:#}");
+        assert!(parse_ff("").is_err());
+        assert!(parse_ff("{\"error\":1}").is_err());
+        assert!(looks_like_ff(" \n[]") && !looks_like_ff("<html>"));
+    }
+
+    #[test]
+    fn countries_resolve() {
+        assert_eq!(country_of_currency("EUR"), "EU");
+        assert_eq!(country_of_currency("GBP"), "GB");
+        assert_eq!(country_of_currency("All"), GLOBAL_CODE);
+        assert_eq!(country_of_currency("XYZ"), "XYZ");
+        assert_eq!(parse_country("uk"), Some("GB"));
+        assert_eq!(parse_country("usd"), Some("US"));
+        assert_eq!(parse_country("EU"), Some("EU"));
+        assert_eq!(parse_country("Turkey"), Some("TR"));
+        assert_eq!(parse_country("ALL"), None);
+        assert!(COUNTRIES.iter().filter(|k| !k.ff).all(|k| k.code == "TR"));
+        assert_eq!(Impact::parse("High").importance(), 3);
+        assert_eq!(Impact::parse("Medium").importance(), 2);
+        assert_eq!(Impact::parse("Low").importance(), 1);
+        assert_eq!(Impact::parse("Holiday").importance(), 0);
+        assert_eq!(Impact::parse("").importance(), 1);
+    }
+
+    #[test]
+    fn global_rows_cover_the_week_and_skip_us_rows_fred_has() {
+        let ff = parse_ff(FF_SAMPLE).unwrap();
+        let dates = [
+            ReleaseDate { release_id: 27, date: d(2026, 10, 20), et: None },
+            ReleaseDate { release_id: 180, date: d(2026, 10, 22), et: None },
+            ReleaseDate { release_id: 91, date: d(2026, 10, 23), et: None },
+        ];
+        let mut us = schedule(d(2026, 10, 19), &dates);
+        apply_consensus(&mut us, &ff);
+        let g = global_rows(&ff, d(2026, 10, 19), &us);
+        assert!(g.windows(2).all(|w| w[0].ts <= w[1].ts));
+        let has = |c: &str, t: &str| g.iter().any(|r| r.country == c && r.title == t);
+        // FRED covers these: no duplicates.
+        assert!(!has("US", "Housing Starts"));
+        assert!(!has("US", "Unemployment Claims"));
+        assert!(!has("US", "Revised UoM Consumer Sentiment"));
+        // FRED does not: kept.
+        assert!(has("US", "Flash Manufacturing PMI"));
+        assert!(has("US", "Building Permits"));
+        // Other countries.
+        assert!(has("CA", "CPI m/m") && has("GB", "CPI y/y") && has("NZ", "CPI q/q"));
+        assert!(has("EU", "German Flash Services PMI") && has("JP", "National Core CPI y/y"));
+        assert!(has("CN", "GDP q/y") && has("AU", "Flash Services PMI"));
+        // Before Sunday 18:00 ET of the week: left to the previous week.
+        assert!(!g.iter().any(|r| r.title == "IMF Meetings"));
+        let gb = g.iter().find(|r| r.country == "GB" && r.title == "CPI y/y").unwrap();
+        assert_eq!((gb.date, gb.et, gb.impact, gb.importance()), (d(2026, 10, 21), (2, 0), Impact::High, 3));
+        assert_eq!(gb.forecast.as_deref(), Some("3.4%"));
+        assert_eq!(gb.previous.as_deref(), Some("3.1%"));
+        assert_eq!(gb.actual, None);
+        assert_eq!(gb.ts, et_to_utc(d(2026, 10, 21), (2, 0)));
+        // Empty figures are None; holidays have no time of day.
+        let api = g.iter().find(|r| r.title == "API Weekly Statistical Bulletin").unwrap();
+        assert_eq!((&api.forecast, &api.previous), (&None, &None));
+        let hol = g.iter().find(|r| r.country == "EU" && r.impact == Impact::Holiday).unwrap();
+        assert!(hol.all_day && hol.importance() == 0);
+        // The Sunday-evening Asian prints belong to this week, not the one before.
+        assert!(has("CN", "Unemployment Rate"));
+        let before = global_rows(&ff, d(2026, 10, 12), &us);
+        assert!(before.iter().all(|r| r.ts < et_to_utc(d(2026, 10, 18), (18, 0))));
+        // An optional actual comes through.
+        let chf = g.iter().find(|r| r.country == "CH" && r.title == "CPI m/m").unwrap();
+        assert_eq!(chf.actual.as_deref(), Some("0.2%"));
+        // With no FRED rows (no key), the US events stay as FF-only rows.
+        let all = global_rows(&ff, d(2026, 10, 19), &[]);
+        assert!(all.iter().any(|r| r.country == "US" && r.title == "Housing Starts"));
+        // A week outside the export has nothing.
+        assert!(global_rows(&ff, d(2026, 11, 2), &[]).is_empty());
+    }
+
+    #[test]
+    fn global_rows_drop_exact_duplicates_and_bad_dates() {
+        let ev = |title: &str, date: &str| FfEvent {
+            title: title.into(),
+            country: "EUR".into(),
+            date: date.into(),
+            impact: "High".into(),
+            forecast: " 1.0% ".into(),
+            previous: String::new(),
+            actual: Some("  ".into()),
+        };
+        let ff = [ev("X", "2026-10-21T03:00:00-04:00"), ev("X", "2026-10-21T03:00:00-04:00"), ev("Y", "not a date")];
+        let g = global_rows(&ff, d(2026, 10, 19), &[]);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].forecast.as_deref(), Some("1.0%"));
+        assert_eq!((g[0].previous.as_deref(), g[0].actual.as_deref()), (None, None));
+    }
+
+    #[test]
+    fn figures_compare() {
+        assert_eq!(figure("0.3%"), Some(0.3));
+        assert_eq!(figure("-775M"), Some(-775.0));
+        assert_eq!(figure("1.30M"), Some(1.3));
+        assert_eq!(figure("2.1|3"), None);
+        assert_eq!(figure(""), None);
     }
 
     #[test]

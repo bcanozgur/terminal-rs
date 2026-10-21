@@ -224,21 +224,35 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   toggles them (also in the chart's right-click menu). Watchlist symbols reporting today raise a
   toast. Dates and estimates come from Nasdaq's public, unofficial calendar API, cached in
   `earnings.sqlite3`; if it is unreachable the pane says so and shows cached data.
-- **Economic calendar (`ECO`, `ECOF`)** — a Bloomberg-style week view of market-moving US
-  releases: CPI and core CPI, PPI, PCE and core PCE, nonfarm payrolls and the unemployment rate,
+- **Economic calendar (`ECO`, `ECOF`)** — a Bloomberg-style week view of the world's
+  market-moving releases. US releases come from FRED (details below); every other country's
+  events (EUR, GBP, JPY, CNY, CAD, AUD, NZD, CHF) come from ForexFactory's free weekly export
+  (`nfs.faireconomy.media`, no key): title, country code, time in US Eastern and local, 1–3
+  importance bars (high / medium / low; bank holidays show as all-day rows), forecast and previous
+  (the feed carries no actuals, so those rows have none). US events FRED does not cover (PMIs,
+  permits, inventories…) are listed from the same feed; those it does cover appear once, as the
+  FRED row with its consensus. `ECO US EU GB JP CN` (any mix of country codes, currencies or
+  `UK`) filters by country, `ECO ALL` shows every country, and the pane's chips toggle them
+  (the choice is saved with the layout); words combine (`ECO EU GB HIGH NEXT`, with `HIGH|MED|LOW`
+  for importance). The export covers only the current week, plus next or last week when it
+  publishes them (weekends); other weeks say so and show US rows only. The export is rate limited
+  and answers with an HTML page when throttled, so it is cached for an hour in `eco.sqlite3`,
+  an unusable answer is never cached and is not asked again for ten minutes (the last good
+  copy is shown meanwhile). The toast five minutes before a release also fires for
+  high-importance events of the countries shown. Turkey (`TR`) is not in the feed; it is a
+  known country code reserved for a later TCMB / TÜİK source. The US part: CPI and core CPI, PPI, PCE and core PCE, nonfarm payrolls and the unemployment rate,
   initial jobless claims, GDP, retail sales, industrial production, housing starts, UMich
   sentiment, JOLTS and FOMC decisions. Rows show the release time in US Eastern and your local
   time, the period, actual, prior and change (as first published that day, from ALFRED vintages),
   and 1–3 importance bars; released numbers are highlighted against the prior and releases due
-  within 24 hours are shaded. `ECO NEXT` / `ECO PREV` (or the pane's arrows) move by week,
-  `ECO HIGH|MED|ALL` filters by importance, and a toast fires five minutes before a
-  high-importance release while the pane is open. Click a row, or type `ECOF CPI` (`ECOF NFP`,
+  within 24 hours are shaded. `ECO NEXT` / `ECO PREV` (or the pane's arrows) move by week and
+  `ECO HIGH|MED|LOW` filters by importance (`ECO ALL` means all countries). Click a row, or type `ECOF CPI` (`ECOF NFP`,
   `ECOF CORE PCE`, …), for the release's history as a chart and table. All sources are free:
   release dates come from the FRED API with a free key (`FRED_API_KEY` or Settings › Panels; stored
   owner-only in the app data folder) or, without one, FRED's public release-calendar pages;
   FOMC dates are the Fed's published 2026–27 schedule; values come from keyless FRED/ALFRED CSV
-  downloads, cached in `eco.sqlite3`. There is no consensus/forecast column, since survey
-  expectations are not available for free, and ISM is proprietary and not on FRED.
+  downloads, cached in `eco.sqlite3`. Consensus is ForexFactory's forecast (see above), for the
+  weeks that feed covers; ISM is proprietary and not on FRED.
 - **US ETFs (`ETF`)** — a list of popular ETFs (or any ticker: `ETF SPY`) opening to the fund's
   ten largest holdings as a donut chart plus list ("Other" for the rest) and its sector weights.
   `AAPL ETFS` (or the pane's "Held by" tab) lists which indexed ETFs hold a stock, and
