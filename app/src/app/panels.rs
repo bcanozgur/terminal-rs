@@ -153,6 +153,7 @@ impl TerminalApp {
             PaneKind::TrFunds(e) => actions.extend(super::trfunds_view::trfunds(ui, e, q)),
             PaneKind::Most(e) => actions.extend(super::most_view::most(ui, e)),
             PaneKind::Top(e) => actions.extend(super::top_view::top(ui, e, &watch)),
+            PaneKind::Cryp(e) => actions.extend(super::cryp_view::cryp(ui, e)),
             PaneKind::Fut(e) => actions.extend(super::fut_view::fut(ui, e)),
             PaneKind::Smart(e) => actions.extend(super::smart_view::smart(ui, e)),
             PaneKind::Watchlist

@@ -170,6 +170,8 @@ pub enum PaneSettings {
         #[serde(default)]
         a: String,
     },
+    /// Crypto market overview (`CRYP`); nothing to persist.
+    Cryp,
     /// Market movers: `list` is `gainers`, `losers` or `active`.
     /// Top news: `tab` is `all`, `world`, `tr`, `crypto` or `cb`.
     Top {

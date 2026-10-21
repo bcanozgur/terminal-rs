@@ -762,6 +762,7 @@ impl TerminalApp {
                 (Icon::Grid, "TR Funds", "TRF", Function::TrFunds(String::new())),
                 (Icon::Grid, "Market Movers", "MOST", Function::Most(String::new())),
                 (Icon::List, "Top News", "TOP", Function::Top(String::new())),
+                (Icon::Grid, "Crypto Overview", "CRYP", Function::Cryp),
                 (Icon::Curve, "Futures & Volatility", "FUT", Function::Fut(String::new())),
                 (Icon::List, "Smart Money", "SMART", Function::Smart(String::new())),
                 (Icon::Gauge, "Portfolio Risk", "RISK", Function::Risk(String::new())),

@@ -364,6 +364,8 @@ pub enum Function {
     Most(String),
     /// Market news from several feeds (`TOP`, `TOP TR`, `TOP WORLD`, `TOP CRYPTO`, `TOP CB`).
     Top(String),
+    /// Crypto market overview (`CRYP`).
+    Cryp,
     /// Order audit log and market holidays (`AUDIT`, `HOL`).
     Audit(String),
     /// Kill switch (`KILL`, `KILL CANCEL`, `KILL OFF`).
@@ -500,6 +502,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
         "MOST" | "MOVERS" => Function::Most(joined()),
         "TOP" | "TOPNEWS" => Function::Top(joined()),
+        "CRYP" => Function::Cryp,
         "AUDIT" => Function::Audit(joined()),
         "HOL" | "HOLIDAYS" => Function::Audit("hol".into()),
         "KILL" | "KILLSWITCH" => Function::Kill(joined()),
@@ -721,6 +724,7 @@ fn describe(f: &Function) -> String {
             tr_data::topnews::Tab::All => "Top news: market headlines from world, Türkiye, crypto and central-bank feeds".into(),
             t => format!("Top news: {}", t.label()),
         },
+        Function::Cryp => "Crypto overview: market cap, sentiment, derivatives, movers, USDT/TRY premium".into(),
         Function::Most(a) => match a.split_whitespace().next().map(str::to_ascii_lowercase).as_deref() {
             Some("losers") => "Market movers: US day losers".into(),
             Some("active" | "actives" | "volume") => "Market movers: US most active by volume".into(),
@@ -1017,6 +1021,12 @@ mod tests {
         assert_eq!(parse("TOP"), Some(Command::Function(Function::Top(String::new()))));
         assert_eq!(parse("top tr"), Some(Command::Function(Function::Top("tr".into()))));
         assert!(hint("TOP CB").contains("Central Banks"));
+    }
+
+    #[test]
+    fn cryp_command() {
+        assert_eq!(parse("CRYP"), Some(Command::Function(Function::Cryp)));
+        assert!(hint("cryp").contains("Crypto"));
     }
 
     #[test]

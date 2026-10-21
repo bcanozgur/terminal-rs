@@ -23,6 +23,7 @@ mod layouts;
 mod markets_view;
 mod mktcal;
 mod most;
+mod cryp;
 mod palette;
 mod prefs;
 mod quote_tag;

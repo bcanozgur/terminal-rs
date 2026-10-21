@@ -17,6 +17,7 @@ pub mod article;
 pub mod bist;
 pub mod cache;
 pub mod crypto;
+pub mod cryptomkt;
 pub mod earnings;
 pub mod eco;
 pub mod edgar;
