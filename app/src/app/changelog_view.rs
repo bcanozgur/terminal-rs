@@ -18,6 +18,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
              to the US releases, with a country column and chips (ECO US EU GB JP CN, ECO ALL for all). Note that \
              ECO ALL now means all countries; importance is ECO HIGH / MED / LOW. Only the current week (and \
              next or last on weekends) has world data; the pane says so for other weeks.",
+            "KAP: Borsa Istanbul public disclosures from kap.org.tr, newest first. Filter to your watchlists and \
+             positions, a category (dividend, buyback, capital, financial report...) or one company (THYAO KAP); \
+             read a disclosure inside the pane and get a toast for new ones of your companies.",
             "Search button on the TR Funds, ETF and Economic Calendar pane headers: filters the fund list, every \
              holding of the open fund (not only the top 10), its buys and sells, reverse search hits and overlap \
              rows.",

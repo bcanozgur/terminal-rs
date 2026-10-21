@@ -765,6 +765,7 @@ impl TerminalApp {
                 (Icon::Grid, "Crypto Overview", "CRYP", Function::Cryp),
                 (Icon::Curve, "Futures & Volatility", "FUT", Function::Fut(String::new())),
                 (Icon::List, "Smart Money", "SMART", Function::Smart(String::new())),
+                (Icon::List, "KAP Disclosures", "KAP", Function::Kap(String::new())),
                 (Icon::Gauge, "Portfolio Risk", "RISK", Function::Risk(String::new())),
                 (Icon::List, "Audit Log", "AUDIT", Function::Audit(String::new())),
             ];
@@ -1076,7 +1077,10 @@ impl TerminalApp {
                 },
                 None => match msg.strip_prefix(crate::alerts::TOAST_PREFIX) {
                     Some(m) => ("Price Alert", m, theme::cyan()),
-                    None => ("Congress Alert", msg.as_str(), amber()),
+                    None => match msg.strip_prefix(super::kap_view::TOAST_PREFIX) {
+                        Some(m) => ("KAP", m, amber()),
+                        None => ("Congress Alert", msg.as_str(), amber()),
+                    },
                 },
             };
             p.rect_filled(Rect::from_min_size(r.min + vec2(1.0, 6.0), vec2(3.0, r.height() - 12.0)), 1.5, color);

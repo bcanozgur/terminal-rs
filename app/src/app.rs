@@ -18,6 +18,7 @@ mod fa_view;
 mod fut_view;
 mod hotkeys_view;
 mod input;
+mod kap_view;
 mod most_view;
 mod cryp_view;
 mod options_view;
@@ -117,6 +118,8 @@ pub enum PaneKind {
     Fut(Box<fut_view::FutPane>),
     /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
     Smart(Box<smart_view::SmartPane>),
+    /// KAP disclosures (`KAP`, `THYAO KAP`): Borsa Istanbul companies' public disclosure feed.
+    Kap(Box<kap_view::KapPane>),
     /// Portfolio risk (`RISK`, `CORR`): VaR, beta, drawdown, risk contribution, correlation heatmap.
     Risk(Box<risk_view::RiskPane>),
     /// Audit log of order attempts and safety changes, and market holidays (`AUDIT`, `HOL`).
@@ -327,6 +330,7 @@ impl PaneKind {
             PaneKind::Cryp(e) => e.title(),
             PaneKind::Fut(e) => e.title(),
             PaneKind::Smart(e) => e.title(),
+            PaneKind::Kap(e) => e.title(),
             PaneKind::Risk(e) => e.title(),
             PaneKind::Audit(e) => e.title(),
         }
@@ -361,6 +365,7 @@ impl PaneKind {
             PaneKind::Cryp(e) => e.code(),
             PaneKind::Fut(e) => e.code(),
             PaneKind::Smart(e) => e.code(),
+            PaneKind::Kap(e) => e.code(),
             PaneKind::Risk(e) => e.code(),
             PaneKind::Audit(e) => e.code(),
         }
@@ -490,6 +495,17 @@ impl PaneKind {
                  Refreshes every 2 minutes while visible; a feed that fails is named and its last copy kept. TOP TR, \
                  TOP WORLD, TOP CRYPTO and TOP CB pick a tab."
             }
+            PaneKind::Kap(_) => {
+                "KAP disclosures (KAP, THYAO KAP): the public disclosure feed of Borsa Istanbul companies from \
+                 kap.org.tr, newest first, refreshed every 2 minutes while visible. All shows every listed company's \
+                 material-event, financial-report and other disclosures of the last days; 'Watchlists + positions' keeps \
+                 your companies (amber tickers); the category list narrows to dividends, buybacks, capital changes, \
+                 financial reports and so on. Click a ticker for that company's last 60 days (or type one in the box; \
+                 a linked pane follows the link group's symbol), click a subject to read the disclosure here, the arrow \
+                 opens it on kap.org.tr. Ctrl/Cmd+F filters by text. While a KAP pane is visible, a new disclosure of a \
+                 watchlist or position company shows a toast. Times are Istanbul time. Financial reports are not read \
+                 in the pane (open them on KAP)."
+            }
             PaneKind::TrFunds(_) => {
                 "Turkish funds (TRF): every investment fund on KAP with a search box; click a code for the fund card \
                  (fees, size, manager), asset allocation and top-10 stock allocation as donut charts, and the buys and \
@@ -526,6 +542,7 @@ impl PaneKind {
             PaneKind::Options(o) => Some(&o.symbol),
             PaneKind::Edgar(e) => Some(&e.symbol),
             PaneKind::Smart(e) => Some(&e.symbol),
+            PaneKind::Kap(e) => e.symbol(),
             PaneKind::Earnings(e) => e.symbol.as_deref(),
             _ => None,
         }
@@ -547,6 +564,7 @@ impl PaneKind {
             PaneKind::Eco(_) => "Filter by event or code…",
             PaneKind::Etf(_) => "Find an ETF, or a holding by ticker or name…",
             PaneKind::TrFunds(_) => "Find a fund, or a stock in it…",
+            PaneKind::Kap(_) => "Filter by ticker, company or subject…",
             _ => return None,
         })
     }
@@ -561,6 +579,7 @@ impl PaneKind {
                 | PaneKind::Options(_)
                 | PaneKind::Edgar(_)
                 | PaneKind::Smart(_)
+                | PaneKind::Kap(_)
         ) || matches!(self, PaneKind::Earnings(e) if e.symbol.is_some())
     }
 
@@ -631,6 +650,7 @@ impl PaneKind {
                 PaneSettings::Fut { tab: tab.into(), root, period: period.into(), world }
             }
             PaneKind::Smart(e) => e.settings(),
+            PaneKind::Kap(e) => e.settings(),
             PaneKind::Risk(e) => {
                 let (tab, benchmark, window) = e.settings();
                 PaneSettings::Risk { tab: tab.into(), benchmark, window }
@@ -716,6 +736,9 @@ impl PaneKind {
             PaneSettings::Cryp => PaneKind::Cryp(Box::default()),
             PaneSettings::Fut { tab, root, period, world } => {
                 PaneKind::Fut(Box::new(fut_view::FutPane::from_settings(&tab, &root, &period, world)))
+            }
+            PaneSettings::Kap { scope, category, company } => {
+                PaneKind::Kap(Box::new(kap_view::KapPane::from_settings(&scope, &category, &company)))
             }
             PaneSettings::Smart { symbol, tab } => {
                 PaneKind::Smart(Box::new(smart_view::SmartPane::from_settings(&symbol, &tab)))

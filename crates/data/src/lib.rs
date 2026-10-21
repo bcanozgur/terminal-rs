@@ -24,6 +24,7 @@ pub mod edgar;
 pub mod etf;
 pub mod freshness;
 pub mod fut;
+pub mod kap;
 pub mod markets;
 pub mod most;
 pub mod qstats;

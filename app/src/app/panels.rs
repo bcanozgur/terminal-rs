@@ -156,6 +156,7 @@ impl TerminalApp {
             PaneKind::Cryp(e) => actions.extend(super::cryp_view::cryp(ui, e)),
             PaneKind::Fut(e) => actions.extend(super::fut_view::fut(ui, e)),
             PaneKind::Smart(e) => actions.extend(super::smart_view::smart(ui, e)),
+            PaneKind::Kap(_) => actions.extend(super::kap_view::kap_pane(self, ui, i, q)),
             PaneKind::Watchlist
             | PaneKind::List(_)
             | PaneKind::Settings

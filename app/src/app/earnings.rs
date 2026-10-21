@@ -22,7 +22,7 @@ impl TerminalApp {
         self.mine_tickers()
     }
 
-    fn mine_tickers(&self) -> HashSet<String> {
+    pub(super) fn mine_tickers(&self) -> HashSet<String> {
         let mut out: HashSet<String> = HashSet::new();
         let keys = self.watchlist.iter().chain(self.groups.iter().flat_map(|g| g.keys.iter()));
         out.extend(keys.map(|k| tr_data::security(k).ticker.to_ascii_uppercase()));

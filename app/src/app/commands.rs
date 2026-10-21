@@ -96,6 +96,7 @@ impl TerminalApp {
                 self.status = format!("{ticker}: ETFs that hold it");
             }
             Command::SymbolFunction(s, Function::Smart(arg)) => self.smart_command(&arg, Some(s)),
+            Command::SymbolFunction(s, Function::Kap(arg)) => self.kap_command(&arg, Some(s)),
             Command::SymbolFunction(s, Function::TrFunds(_)) => {
                 let ticker = tr_data::security(&s).ticker;
                 self.trf_held(&ticker);
@@ -269,6 +270,7 @@ impl TerminalApp {
             Function::Cryp => self.cryp_command(),
             Function::Fut(arg) => self.fut_command(&arg),
             Function::Smart(arg) => self.smart_command(&arg, None),
+            Function::Kap(arg) => self.kap_command(&arg, None),
             Function::Risk(arg) => self.risk_command(&arg),
             Function::Audit(arg) => self.audit_command(&arg),
             Function::Kill(arg) => self.kill_command(&arg),

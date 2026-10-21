@@ -122,6 +122,15 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
         "smart money insider form 4 13f institutions short interest finra sec",
         None,
     ),
+    (
+        "KAP",
+        "KAP: Borsa Istanbul public disclosures (özel durum, finansal rapor, temettü)",
+        "kap bildirim disclosure ozel durum finansal rapor temettu bist borsa istanbul",
+        None,
+    ),
+    ("KAP MINE", "KAP: disclosures of my watchlists and positions", "kap bildirim watchlist portfolio mine", None),
+    ("KAP THYAO", "KAP disclosures of one company: THYAO", "kap bildirim thyao company sirket", None),
+    ("KAP DIVIDEND", "KAP: dividend (kar payi) disclosures", "kap temettu kar payi dividend bildirim", None),
     ("SMART SHORT", "Smart money: short interest (FINRA)", "smart short interest days to cover finra", None),
     (
         "SMART 13F",

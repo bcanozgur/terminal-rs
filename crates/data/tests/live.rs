@@ -371,3 +371,32 @@ async fn crypto_overview_sections() {
         assert!(d.iter().any(|x| x.coin == "BTC" && x.mark > 0.0));
     }
 }
+
+/// KAP's disclosure list, one company's list, the member search and a disclosure's text.
+#[tokio::test]
+#[ignore = "network"]
+async fn kap_disclosures() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    use tr_data::kap;
+    // Three days always include a trading day; the exchange's bulletins are filtered out.
+    let latest = kap::latest(3).await.unwrap();
+    println!("{} disclosures; newest {:?}", latest.len(), latest.first().map(|d| (&d.codes, &d.title)));
+    assert!(latest.len() >= 20);
+    assert!(latest.windows(2).all(|w| w[0].index > w[1].index));
+    assert!(latest.iter().all(|d| d.time > 0 && !d.title.is_empty()));
+    assert!(latest.iter().any(|d| !d.codes.is_empty()));
+
+    let thy = kap::company("THYAO", 60).await.unwrap();
+    println!("THYAO: {} disclosures in 60 days", thy.len());
+    assert!(!thy.is_empty());
+    assert!(thy.iter().any(|d| d.codes == ["THYAO"]));
+    assert!(thy.iter().all(|d| d.mentions("THYAO") || d.codes.is_empty()));
+
+    let first = thy.iter().find(|d| d.class == "ODA" && d.codes == ["THYAO"]).unwrap();
+    let det = kap::detail(first.index).await.unwrap();
+    println!("#{}: {} chars, {} attachments", first.index, det.text.len(), det.attachments.len());
+    assert!(det.text.contains(&first.title), "{}", det.text);
+    assert!(!det.text.contains("display"));
+
+    assert!(kap::company("ZZZZZZZZ", 7).await.is_err());
+}

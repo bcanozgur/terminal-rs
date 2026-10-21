@@ -22,6 +22,7 @@ mod layout;
 mod layouts;
 mod markets_view;
 mod mktcal;
+mod kap;
 mod most;
 mod cryp;
 mod palette;
