@@ -29,6 +29,7 @@ pub mod qstats;
 pub mod rss;
 pub mod sample;
 pub mod smartmoney;
+pub mod synthetic;
 pub mod treasury;
 pub mod trfunds;
 pub mod yahoo;
@@ -535,6 +536,13 @@ pub fn security(symbol: &str) -> Security {
 /// The currency a market key is quoted in (USD when unknown).
 pub fn native_currency(symbol: &str) -> &'static str {
     let sec = security(symbol);
+    // Formulas: named ones know their currency, expressions are assumed to be in USD.
+    if sec.is_formula() {
+        return "USD";
+    }
+    if let Some(n) = tr_core::formula::named(&sec.ticker).filter(|_| sec.class == AssetClass::Index) {
+        return n.ccy;
+    }
     match sec.class {
         AssetClass::Fx | AssetClass::Govt => "USD",
         _ => yahoo::currency_of(&yahoo::yahoo_symbol(&sec)),
@@ -596,8 +604,13 @@ pub async fn convert_bars(
         .collect())
 }
 
-/// Build the provider described in the crate docs from environment variables.
+/// Build the provider described in the crate docs from environment variables, with formula
+/// securities (`XU100/USDTRY`, see [`synthetic`]) computed on top of it.
 pub fn from_env() -> Provider {
+    Arc::new(synthetic::Synthetic::new(base_from_env()))
+}
+
+fn base_from_env() -> Provider {
     // reqwest and the websocket client both use rustls; pin one crypto provider.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());

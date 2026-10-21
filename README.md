@@ -51,6 +51,17 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   1M plus quick ranges (1D … ALL); volume; SMA, EMA, VWAP, Bollinger overlays; RSI and MACD
   sub-panes; `CMP <SYM>` compare; log scale; crosshair with OHLC legend; smooth pan and zoom over
   a million bars. Live crypto bars from the Binance websocket (Coinbase fallback).
+- **Formula charts** — type an expression as the security: `XU100/USDTRY` (BIST 100 in USD),
+  `GC1*USDTRY/31.1035` (gram gold in TRY), `BTCUSD*USDTRY`, `SPX/XU100`, `(AAPL+MSFT)/2`, `CL1-CO1`
+  (`+ - * /`, numbers, parentheses, any catalog ticker; spaces are fine, `=` prefix optional). Built-in
+  names: `GRAMALTIN`, `CEYREK`, `XU100USD`, `BTCTRY`. Each leg's history is fetched normally and joined
+  on bar time (daily and longer bars on the calendar date, so `.IS` and US bars line up); open, high,
+  low and close are the expression over the legs' same fields (an approximation for ratios and
+  spreads), volume is empty, and a bar with a zero denominator is skipped. A missing leg is named in
+  the pane's error. Live updates recompute the newest bar from the legs' live feeds (a leg without one
+  is polled every 15 s); quotes derive from the legs' quotes. Works with indicators, drawings, `CMP`
+  and saved layouts. A lone `A/B` is a ratio only when both sides are catalog tickers (`BTC/USD` stays
+  the pair, `BRK/B` the share class); tickers cannot carry a yellow key.
 - **Drawings** — trendline (Alt+T), horizontal (Alt+H), vertical (Alt+V), fib retracement (Alt+F),
   rectangle (Alt+B), ray (Alt+Y), parallel channel (Alt+C, three clicks), text note (Alt+N),
   measure (Alt+D: price change, %, bars and time span) and long / short position (Alt+U / Alt+J:

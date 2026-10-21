@@ -3,6 +3,7 @@
 
 pub mod bar;
 pub mod catalog;
+pub mod formula;
 pub mod indicators;
 pub mod indicators_ext;
 pub mod options;
