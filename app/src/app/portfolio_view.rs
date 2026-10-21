@@ -641,7 +641,14 @@ fn summary(
     out: &mut Vec<PortAction>,
 ) {
     let t = pf.totals(pane.account.as_deref(), price_of);
-    let (day, day_base) = pf.daily_pnl(pane.account.as_deref(), price_of, prev_of);
+    // Outside regular hours the day includes the extended move: before the open it starts from
+    // the last regular close (not the session before), after the close it adds to the session.
+    let day_now = |p: &Position| ext_of(p).map(|e| e.price).or_else(|| price_of(p));
+    let day_prev = |p: &Position| match ext_of(p) {
+        Some(e) if e.session == Session::Pre => price_of(p).or(p.price),
+        _ => prev_of(p),
+    };
+    let (day, day_base) = pf.daily_pnl(pane.account.as_deref(), day_now, day_prev);
     let day_txt = if day_base.abs() > 1e-9 {
         format!("{} ({})", signed_money(day, &currency(pf, pane)), pct(day / day_base.abs() * 100.0))
     } else {
