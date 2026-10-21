@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:metadata="http://search.cnbc.com/rss/2.0/modules/siteContentMetadata" version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.cnbc.com/id/100003114/device/rss/rss.html"/>
+    <language>en-us</language>
+    <ttl>60</ttl>
+    <title>US Top News and Analysis</title>
+    <feed_asset>
+      <id>100003114</id>
+      <type>franchise</type>
+      <subtype>section</subtype>
+      <seo>https://www.cnbc.com/us-top-news-and-analysis/</seo>
+    </feed_asset>
+    <lastBuildDate>Wed, 21 Oct 2026 21:15 GMT</lastBuildDate>
+    <pubDate>Wed, 21 Oct 2026 21:15 GMT</pubDate>
+    <link>https://www.cnbc.com/us-top-news-and-analysis/</link>
+    <description><![CDATA[CNBC is the world leader in business news and real-time financial market coverage. Find fast, actionable information.]]></description>
+    <item>
+      <link>https://www.cnbc.com/2026/10/21/tesla-tsla-q3-2026-earnings-report.html</link>
+      <guid isPermaLink="false">108438100</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108438100</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Tesla beats on earnings and sales even as auto revenue declines</title>
+      <description><![CDATA[Tesla reported better-than-expected third-quarter results.]]></description>
+      <pubDate>Wed, 21 Oct 2026 21:15:57 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/10/21/coreweaves-market-confidence-erodes-as-bond-yields-spike-stock-sinks.html</link>
+      <guid isPermaLink="false">108438644</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108438644</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>CoreWeave’s market confidence erodes as bond yields spike and stock sinks</title>
+      <description><![CDATA[CoreWeave shares are down 29% in October, and the spreads in its credit default swaps are widening.]]></description>
+      <pubDate>Wed, 21 Oct 2026 21:12:29 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/10/21/ibm-q3-earnings-report-2026.html</link>
+      <guid isPermaLink="false">108443000</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108443000</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>IBM beats on top and bottom lines as CEO Krishna touts &apos;Super Intelligence&apos; traction</title>
+      <description><![CDATA[CEO Arvind Krishna indicated that IBM is helping clients in artificial intelligence.]]></description>
+      <pubDate>Wed, 21 Oct 2026 21:21:40 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/10/21/trump-starlink-ukraine-elon-musk.html</link>
+      <guid isPermaLink="false">108443482</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108443482</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Trump denies ordering Starlink slowdown in Ukraine, says he doesn&apos;t know who did</title>
+      <description><![CDATA[Asked if Elon Musk ordered the slowdown, Trump said, "I don't know who did it, but I was not involved."]]></description>
+      <pubDate>Wed, 21 Oct 2026 21:29:14 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/10/21/rick-rieder-investment-grade-bonds.html</link>
+      <guid isPermaLink="false">108442426</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108442426</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>BlackRock&apos;s Rick Rieder sees &apos;historic&apos; opportunity in high-quality bonds</title>
+      <description><![CDATA[Rick Rieder, BlackRock's CIO of global fixed income, lays out his expectations for the fourth quarter and where he sees the best opportunities.]]></description>
+      <pubDate>Wed, 21 Oct 2026 19:54:16 GMT</pubDate>
+    </item>
+</channel>
+</rss>

@@ -168,6 +168,11 @@ pub enum PaneSettings {
         a: String,
     },
     /// Market movers: `list` is `gainers`, `losers` or `active`.
+    /// Top news: `tab` is `all`, `world`, `tr`, `crypto` or `cb`.
+    Top {
+        #[serde(default)]
+        tab: String,
+    },
     Most {
         #[serde(default)]
         list: String,

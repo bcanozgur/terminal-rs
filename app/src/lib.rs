@@ -32,6 +32,7 @@ mod smart;
 mod studies;
 mod theme;
 mod themes;
+mod top;
 mod trfunds;
 mod widgets;
 mod wlcols;

@@ -285,6 +285,14 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   for its chart, right-click for more, filter by symbol or name. `MOST LOSERS` / `MOST ACTIVE` pick a
   tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
   A failed refresh shows the error and keeps the last lists, marked as old.
+- **Top news (`TOP`)** — market headlines from public RSS feeds, newest first, with tabs: World (CNBC,
+  MarketWatch), Türkiye (Bloomberg HT, AA Ekonomi), Crypto (CoinDesk, The Block), Central Banks (Fed,
+  ECB press releases) and All (everything merged, de-duplicated by link and title). `TOP TR|WORLD|CRYPTO|CB`
+  pick a tab. Rows show the age (`5m`), source and headline; headlines that name a ticker from your
+  watchlists turn amber with a ticker chip that opens its chart. Click a headline to read it in the
+  pane (Back returns; Open in Browser when a page is pay-walled), filter box on top. Feeds are fetched
+  concurrently on the worker every 2 minutes while visible; a feed that fails is named in red and its
+  last copy stays. The tab is saved in layouts.
 
 - **Futures and volatility (`FUT`, `VIX`, `HEAT`)** — three tabs, all from free sources:
   - *Futures curve* (`FUT`, `FUT CL`): pick a root (ES NQ YM RTY CL NG GC SI HG ZB ZN ZC ZS ZW 6E KC).

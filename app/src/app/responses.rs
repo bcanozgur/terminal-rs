@@ -204,6 +204,7 @@ impl TerminalApp {
                 Response::Eco { pane, resp } => self.on_eco(pane, resp),
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
+                Response::Top(resp) => self.on_top(resp),
                 Response::Most(resp) => self.on_most(resp),
                 Response::Wl(resp) => self.on_wl(resp),
                 Response::Fut(resp) => self.on_fut(resp),

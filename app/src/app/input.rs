@@ -304,6 +304,7 @@ impl TerminalApp {
         self.eco_periodic(&visible);
         self.etf_periodic(&visible);
         self.trf_periodic(&visible);
+        self.top_periodic(&visible);
         self.most_periodic(&visible);
         self.fut_periodic(&visible);
         self.smart_periodic(&visible);

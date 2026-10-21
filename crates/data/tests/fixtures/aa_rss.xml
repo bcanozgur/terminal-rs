@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel xmlns:atom="http://www.w3.org/2005/Atom">
+    <title>Anadolu Ajansı Güncel Haberler</title>
+    <link>https://www.aa.com.tr/</link>
+    <description>Türkiye'den ve Dünya'dan Güncel Haberler</description>
+    <language>tr</language>
+    <image>
+      <url>https://www.aa.com.tr/images/meta-photo.png</url>
+      <title>Anadolu Ajansı Güncel Haberler</title>
+      <link>https://www.aa.com.tr/</link>
+    </image>
+    <item>
+      <guid isPermaLink="false">4096555</guid>
+      <link>https://www.aa.com.tr/tr/ekonomi/metanin-geliri-ucuncu-ceyrekte-artti/4096555</link>
+      <title>Meta'nın geliri üçüncü çeyrekte arttı</title>
+      <description>Facebook, Instagram ve WhatsApp'ın sahibi Meta'nın geliri yılın üçüncü çeyreğinde yüzde 26 artış kaydetti.</description>
+      <pubDate>Thu, 22 Oct 2026 00:42:54 +0300</pubDate>
+      <image>https://cdnuploads.aa.com.tr/uploads/Contents/2026/10/22/thumbs_b_c_bc4fc393e9b680f4bb92a36ccaab9c2f.jpg</image>
+    </item>
+    <item>
+      <guid isPermaLink="false">4096547</guid>
+      <link>https://www.aa.com.tr/tr/ekonomi/ibmin-geliri-ucuncu-ceyrekte-yuzde-5-artti/4096547</link>
+      <title>IBM'in geliri üçüncü çeyrekte yüzde 5 arttı</title>
+      <description>ABD merkezli teknoloji şirketi IBM'in geliri, bu yılın üçüncü çeyreğinde yıllık bazda yüzde 5 artarak 17,1 milyar dolara yükseldi.</description>
+      <pubDate>Thu, 22 Oct 2026 00:23:36 +0300</pubDate>
+      <image>https://cdnuploads.aa.com.tr/uploads/Contents/2026/10/22/thumbs_b_c_b043fe931e349bd4f80f4d4dc29162af.jpg</image>
+    </item>
+    <item>
+      <guid isPermaLink="false">4096540</guid>
+      <link>https://www.aa.com.tr/tr/ekonomi/teslanin-kari-ucuncu-ceyrekte-azaldi/4096540</link>
+      <title>Tesla'nın karı üçüncü çeyrekte azaldı</title>
+      <description>Amerikan elektrikli otomobil üreticisi Tesla'nın net karı, 2026'nın üçüncü çeyreğinde geçen yılın aynı dönemine kıyasla yüzde 43 azalış kaydetti.</description>
+      <pubDate>Thu, 22 Oct 2026 00:07:42 +0300</pubDate>
+      <image>https://cdnuploads.aa.com.tr/uploads/Contents/2026/10/22/thumbs_b_c_7f2a9f0ac354baa8bdb02fed34b93fa0.jpg</image>
+    </item>
+    <item>
+      <guid isPermaLink="false">4096316</guid>
+      <link>https://www.aa.com.tr/tr/ekonomi/bakan-bayraktar-turkiye-ile-japonyanin-isbirligini-daha-ileri-tasiyacagini-belirtti/4096316</link>
+      <title>Bakan Bayraktar, Türkiye ile Japonya'nın işbirliğini daha ileri taşıyacağını belirtti</title>
+      <description>Enerji ve Tabii Kaynaklar Bakanı Alparslan Bayraktar, küresel enerji krizi karşısında Türkiye ile Japonya'nın ikili ve bölgesel işbirliklerini güçlendirerek zorlukların üstesinden birlikte gelebileceğini söyledi.</description>
+      <pubDate>Wed, 21 Oct 2026 20:19:02 +0300</pubDate>
+      <image>https://cdnuploads.aa.com.tr/uploads/Contents/2026/10/21/thumbs_b_c_caf96ddb9227dbc3da75c8b48f072f00.jpg</image>
+    </item>
+    <item>
+      <guid isPermaLink="false">4096399</guid>
+      <link>https://www.aa.com.tr/tr/ekonomi/jp-morgan-turkiyedeki-bankacilik-faaliyetlerini-buyutmeyi-planliyor/4096399</link>
+      <title>JP Morgan Türkiye'deki bankacılık faaliyetlerini büyütmeyi planlıyor</title>
+      <description>JPMorgan İstanbul Şubesi'nin yakın zamanda Türkiye'deki bankacılık faaliyetlerini büyütme kararı aldığı ve bu yöndeki çalışmaların ilgili yasal otoritelerle koordineli şekilde sürdürüldüğü bildirildi.</description>
+      <pubDate>Wed, 21 Oct 2026 21:52:53 +0300</pubDate>
+      <image>https://cdnuploads.aa.com.tr/uploads/Contents/2026/10/21/thumbs_b_c_1289187ebd4e7886aa294cb399eeea03.jpg</image>
+    </item>
+</channel>
+</rss>

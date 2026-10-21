@@ -33,6 +33,12 @@ impl TerminalApp {
         let ui = &mut child;
         let q = self.search_bar(ui, i);
         let q = q.as_str();
+        let watch: Vec<super::top_view::Watched> = if matches!(self.panes[i].kind, PaneKind::Top(_)) {
+            let keys = self.watchlist.iter().chain(self.groups.iter().flat_map(|g| &g.keys));
+            keys.filter_map(|k| super::top_view::Watched::from_key(k)).collect()
+        } else {
+            Vec::new()
+        };
         match &mut self.panes[i].kind {
             PaneKind::Feed { filter } => actions.extend(congress_view::feed(ui, &self.latest, filter, &freshness, q)),
             PaneKind::Ticker { symbol, trades, loading } => {
@@ -146,6 +152,7 @@ impl TerminalApp {
             PaneKind::Audit(_) => actions.extend(self.audit_pane(ui, i)),
             PaneKind::TrFunds(e) => actions.extend(super::trfunds_view::trfunds(ui, e, q)),
             PaneKind::Most(e) => actions.extend(super::most_view::most(ui, e)),
+            PaneKind::Top(e) => actions.extend(super::top_view::top(ui, e, &watch)),
             PaneKind::Fut(e) => actions.extend(super::fut_view::fut(ui, e)),
             PaneKind::Smart(e) => actions.extend(super::smart_view::smart(ui, e)),
             PaneKind::Watchlist

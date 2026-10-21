@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title><![CDATA[Bloomberg HT - Tüm Haberler]]></title>
+    <link>https://www.bloomberght.com/haberler</link>
+    <description><![CDATA[Bloomberg HT son dakika ekonomi, piyasa ve finans haberleri.]]></description>
+    <language>tr</language>
+    <copyright>Copyright 2026 Bloomberg HT</copyright>
+    <category><![CDATA[Tüm Haberler]]></category>
+    <generator>Bloomberg HT</generator>
+    <docs>https://www.rssboard.org/rss-specification</docs>
+    <lastBuildDate>Wed, 21 Oct 2026 21:27:38 GMT</lastBuildDate>
+    <pubDate>Wed, 21 Oct 2026 21:27:38 GMT</pubDate>
+    <ttl>5</ttl>
+    <atom:link href="https://www.bloomberght.com/rss/tum-haberler.xml" rel="self" type="application/rss+xml"/>
+    <image>
+      <title>Bloomberg HT</title>
+      <link>https://www.bloomberght.com</link>
+      <url>https://www.bloomberght.com/images/common/manifest/180x180.png</url>
+      <width>144</width>
+      <height>144</height>
+    </image>
+    <item>
+      <title><![CDATA[Tesla'nın üçüncü çeyrek net kârı yüzde 43 azaldı]]></title>
+      <description><![CDATA[ABD'li elektrikli otomobil üreticisi Tesla'nın üçüncü çeyrekte net kârı yıllık bazda yüzde 43 azalarak 787 milyon dolara gerilerken, geliri 28 milyar dolarda sabit kaldı.]]></description>
+      <link>https://www.bloomberght.com/tesla-nin-ucuncu-ceyrek-net-kri-yuzde-43-azaldi-3792151</link>
+      <guid isPermaLink="true">https://www.bloomberght.com/tesla-nin-ucuncu-ceyrek-net-kri-yuzde-43-azaldi-3792151</guid>
+      <pubDate>Wed, 21 Oct 2026 21:22:16 GMT</pubDate>
+      <category><![CDATA[Haberler]]></category>
+      <media:content url="https://geoim.bloomberght.com/l/2026/10/22/ver1792617760/3792151/jpg/1280x720" type="image/jpeg" medium="image"/>
+      <media:thumbnail url="https://geoim.bloomberght.com/l/2026/10/22/ver1792617760/3792151/jpg/320x180"/>
+      <enclosure url="https://geoim.bloomberght.com/l/2026/10/22/ver1792617760/3792151/jpg/1280x720" type="image/jpeg"/>
+    </item>
+    <item>
+      <title><![CDATA[Resmi Gazete'de bugün (22.10.2026)]]></title>
+      <description><![CDATA[Resmi Gazete'de yayımlanan yönetmelikler, tebliğler ve kararlar...]]></description>
+      <link>https://www.bloomberght.com/resmi-gazete-de-bugun-22102026-3792150</link>
+      <guid isPermaLink="true">https://www.bloomberght.com/resmi-gazete-de-bugun-22102026-3792150</guid>
+      <pubDate>Wed, 21 Oct 2026 21:13:21 GMT</pubDate>
+      <category><![CDATA[Haberler]]></category>
+      <media:content url="https://geoim.bloomberght.com/l/2026/10/22/ver1792617350/3792150/jpg/1280x720" type="image/jpeg" medium="image"/>
+      <media:thumbnail url="https://geoim.bloomberght.com/l/2026/10/22/ver1792617350/3792150/jpg/320x180"/>
+      <enclosure url="https://geoim.bloomberght.com/l/2026/10/22/ver1792617350/3792150/jpg/1280x720" type="image/jpeg"/>
+    </item>
+    <item>
+      <title><![CDATA[Türkiye'de PHP güvenlik açığına karşı harekete geçildi]]></title>
+      <description><![CDATA[Cumhurbaşkanlığı Siber Güvenlik Başkanlığı, internet siteleri ve kurumsal uygulamalarda kullanılan PHP altyapısındaki kritik güvenlik açıkları nedeniyle ülke genelinde önleyici çalışmalar başlattı.]]></description>
+      <link>https://www.bloomberght.com/turkiye-de-php-guvenlik-acigina-karsi-harekete-gecildi-3792149</link>
+      <guid isPermaLink="true">https://www.bloomberght.com/turkiye-de-php-guvenlik-acigina-karsi-harekete-gecildi-3792149</guid>
+      <pubDate>Wed, 21 Oct 2026 21:07:11 GMT</pubDate>
+      <category><![CDATA[Haberler]]></category>
+      <media:content url="https://geoim.bloomberght.com/l/2026/10/22/ver1792616894/3792149/jpg/1280x720" type="image/jpeg" medium="image"/>
+      <media:thumbnail url="https://geoim.bloomberght.com/l/2026/10/22/ver1792616894/3792149/jpg/320x180"/>
+      <enclosure url="https://geoim.bloomberght.com/l/2026/10/22/ver1792616894/3792149/jpg/1280x720" type="image/jpeg"/>
+    </item>
+    <item>
+      <title><![CDATA[Trump: Rusya-Ukrayna savaşında çözüme hiç olmadığı kadar yakınız]]></title>
+      <description><![CDATA[ABD Başkanı Donald Trump, Rusya-Ukrayna Savaşı'nı sona erdirmek amacıyla Rusya Devlet Başkanı Vladimir Putin ile görüşmelerin sürdüğünü belirterek, anlaşmaya daha önce hiç olmadığı kadar yakın olduklarını söyledi.]]></description>
+      <link>https://www.bloomberght.com/trump-rusya-ukrayna-savasinda-cozume-hic-olmadigi-kadar-yakiniz-3792148</link>
+      <guid isPermaLink="true">https://www.bloomberght.com/trump-rusya-ukrayna-savasinda-cozume-hic-olmadigi-kadar-yakiniz-3792148</guid>
+      <pubDate>Wed, 21 Oct 2026 20:14:43 GMT</pubDate>
+      <category><![CDATA[Haberler]]></category>
+      <media:content url="https://geoim.bloomberght.com/l/2026/10/21/ver1792613708/3792148/jpg/1280x720" type="image/jpeg" medium="image"/>
+      <media:thumbnail url="https://geoim.bloomberght.com/l/2026/10/21/ver1792613708/3792148/jpg/320x180"/>
+      <enclosure url="https://geoim.bloomberght.com/l/2026/10/21/ver1792613708/3792148/jpg/1280x720" type="image/jpeg"/>
+    </item>
+    <item>
+      <title><![CDATA[Tasfiye edilecek fonlarda bekleyen talimatlara ilişkin önerge kabul edildi]]></title>
+      <description><![CDATA[Tasfiyesine Karar Verilen Bazı Yatırım Fonları Hakkında Kanun Teklifi'nde üçüncü değişiklik önergesi kabul edildi.]]></description>
+      <link>https://www.bloomberght.com/tasfiye-edilecek-fonlarda-bekleyen-talimatlara-iliskin-onerge-kabul-edildi-3792147</link>
+      <guid isPermaLink="true">https://www.bloomberght.com/tasfiye-edilecek-fonlarda-bekleyen-talimatlara-iliskin-onerge-kabul-edildi-3792147</guid>
+      <pubDate>Wed, 21 Oct 2026 20:07:07 GMT</pubDate>
+      <category><![CDATA[Haberler]]></category>
+      <media:content url="https://geoim.bloomberght.com/l/2026/10/21/ver1792613254/3792147/jpg/1280x720" type="image/jpeg" medium="image"/>
+      <media:thumbnail url="https://geoim.bloomberght.com/l/2026/10/21/ver1792613254/3792147/jpg/320x180"/>
+      <enclosure url="https://geoim.bloomberght.com/l/2026/10/21/ver1792613254/3792147/jpg/1280x720" type="image/jpeg"/>
+    </item>
+</channel>
+</rss>

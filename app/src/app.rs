@@ -30,6 +30,7 @@ mod settings_view;
 mod smart_view;
 mod theming;
 mod trading;
+mod top_view;
 mod trfunds_view;
 mod wlcols_view;
 mod workspace;
@@ -107,6 +108,8 @@ pub enum PaneKind {
     TrFunds(Box<trfunds_view::TrfPane>),
     /// US market movers (`MOST`): day gainers, losers and most active from Yahoo screeners.
     Most(Box<most_view::MostPane>),
+    /// Market news from several RSS feeds (`TOP`).
+    Top(Box<top_view::TopPane>),
     /// Futures curve, VIX term structure and sector heatmap (`FUT`, `VIX`, `HEAT`).
     Fut(Box<fut_view::FutPane>),
     /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
@@ -317,6 +320,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
             PaneKind::Most(e) => e.title(),
+            PaneKind::Top(e) => e.title(),
             PaneKind::Fut(e) => e.title(),
             PaneKind::Smart(e) => e.title(),
             PaneKind::Risk(e) => e.title(),
@@ -349,6 +353,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
             PaneKind::Most(e) => e.code(),
+            PaneKind::Top(e) => e.code(),
             PaneKind::Fut(e) => e.code(),
             PaneKind::Smart(e) => e.code(),
             PaneKind::Risk(e) => e.code(),
@@ -462,6 +467,14 @@ impl PaneKind {
                  'Index curated managers' to download them. Short interest: FINRA's twice-monthly short interest \
                  and days to cover, plus daily short SALE volume (a different measure, labelled as such). 13F data is \
                  6 weeks to 4½ months old. Sources: SEC EDGAR, FINRA. Follows the active symbol (Sync) or type a ticker."
+            }
+            PaneKind::Top(_) => {
+                "Top news (TOP): market headlines from public RSS feeds, newest first. World (CNBC, MarketWatch), Türkiye \
+                 (Bloomberg HT, AA), Crypto (CoinDesk, The Block) and Central Banks (Fed, ECB) tabs, or All merged and \
+                 de-duplicated. Headlines naming a ticker in your watchlists are amber with a ticker chip that opens its \
+                 chart. Click a headline to read it here (Back returns); pay-walled pages fall back to Open in Browser. \
+                 Refreshes every 2 minutes while visible; a feed that fails is named and its last copy kept. TOP TR, \
+                 TOP WORLD, TOP CRYPTO and TOP CB pick a tab."
             }
             PaneKind::TrFunds(_) => {
                 "Turkish funds (TRF): every investment fund on KAP with a search box; click a code for the fund card \
@@ -593,6 +606,7 @@ impl PaneKind {
                 PaneSettings::TrFunds { mode: mode.into(), a }
             }
             PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
+            PaneKind::Top(e) => PaneSettings::Top { tab: e.settings().into() },
             PaneKind::Fut(e) => {
                 let (tab, root, period, world) = e.settings();
                 PaneSettings::Fut { tab: tab.into(), root, period: period.into(), world }
@@ -679,6 +693,7 @@ impl PaneKind {
             PaneSettings::Audit { tab } => PaneKind::Audit(Box::new(safety_view::AuditPane::new(&tab))),
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
+            PaneSettings::Top { tab } => PaneKind::Top(Box::new(top_view::TopPane::new(&tab))),
             PaneSettings::Fut { tab, root, period, world } => {
                 PaneKind::Fut(Box::new(fut_view::FutPane::from_settings(&tab, &root, &period, world)))
             }

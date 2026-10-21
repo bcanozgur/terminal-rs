@@ -28,6 +28,7 @@ pub mod most;
 pub mod qstats;
 pub mod rss;
 pub mod sample;
+pub mod topnews;
 pub mod smartmoney;
 pub mod treasury;
 pub mod trfunds;

@@ -177,6 +177,8 @@ pub enum Request {
     Etf(crate::etf::EtfReq),
     /// Turkish fund list, one fund or an index run (`TRF`).
     TrFunds(crate::trfunds::TrfReq),
+    /// Market news feeds and article text for the TOP pane.
+    Top(crate::top::TopReq),
     /// US market movers: the three Yahoo screener lists (`MOST`).
     Most(crate::most::MostReq),
     /// Statistics for the watchlist's extra columns.
@@ -375,6 +377,7 @@ pub enum Response {
     },
     Etf(crate::etf::EtfResp),
     TrFunds(crate::trfunds::TrfResp),
+    Top(crate::top::TopResp),
     Most(crate::most::MostResp),
     Wl(crate::wlcols::WlResp),
     Fut(crate::fut::FutResp),
@@ -1041,6 +1044,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Eco { pane, req } => s.send(Response::Eco { pane, resp: crate::eco::fetch(req).await }),
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
+        Request::Top(r) => crate::top::handle(r, &|r| s.send(Response::Top(r))).await,
         Request::Most(r) => crate::most::handle(r, &|r| s.send(Response::Most(r))).await,
         Request::Wl(r) => crate::wlcols::handle(r, &s.provider, &|r| s.send(Response::Wl(r))).await,
         Request::Fut(r) => crate::fut::handle(r, &|r| s.send(Response::Fut(r))).await,

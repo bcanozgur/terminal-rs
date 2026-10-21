@@ -11,6 +11,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
         "2026-10-22",
         "Fixes, data quality and search",
         &[
+            "TOP: market news from CNBC, MarketWatch, Bloomberg HT, AA, CoinDesk, The Block, the Fed and the ECB in \
+             World, Türkiye, Crypto and Central Banks tabs plus a merged All tab; watchlist tickers are highlighted \
+             with a chip, and a click reads the story in the pane.",
             "Search button on the TR Funds, ETF and Economic Calendar pane headers: filters the fund list, every \
              holding of the open fund (not only the top 10), its buys and sells, reverse search hits and overlap \
              rows.",

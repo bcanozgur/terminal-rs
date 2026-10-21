@@ -23,7 +23,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 26] = [
+pub const PANELS: [(&str, &str); 27] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -41,6 +41,7 @@ pub const PANELS: [(&str, &str); 26] = [
     ("ETFs", "ETF"),
     ("TR Funds", "TRF"),
     ("Market Movers", "MOST"),
+    ("Top News", "TOP"),
     ("Futures & Volatility", "FUT"),
     ("Smart Money", "SMART"),
     ("Congress Feed", "CONG"),
@@ -644,7 +645,7 @@ impl TerminalApp {
             "BIST30" | "BIST" => PaneKind::List(
                 self.groups.iter().find(|g| g.name.starts_with("BIST 30")).map(|g| g.name.clone()).unwrap_or_default(),
             ),
-            "NEWS" | "N" | "CN" | "TOP" => PaneKind::News(Box::new(NewsPane::new(current))),
+            "NEWS" | "N" | "CN" => PaneKind::News(Box::new(NewsPane::new(current))),
             "BOOK" | "OB" | "DEPTH" | "DOM" => {
                 // Default to a market with a public book.
                 let sym = given
@@ -693,6 +694,9 @@ impl TerminalApp {
                 if words.len() > 1 { "detail" } else { "list" },
                 words.get(1).copied().unwrap_or(""),
             ))),
+            "TOP" | "TOPNEWS" => {
+                PaneKind::Top(Box::new(super::top_view::TopPane::new(words.get(1).copied().unwrap_or(""))))
+            }
             "MOST" | "MOVERS" => {
                 PaneKind::Most(Box::new(super::most_view::MostPane::new(words.get(1).copied().unwrap_or(""))))
             }

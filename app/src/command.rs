@@ -362,6 +362,8 @@ pub enum Function {
     TrFunds(String),
     /// US market movers (`MOST`, `MOST LOSERS`, `MOST ACTIVE`).
     Most(String),
+    /// Market news from several feeds (`TOP`, `TOP TR`, `TOP WORLD`, `TOP CRYPTO`, `TOP CB`).
+    Top(String),
     /// Order audit log and market holidays (`AUDIT`, `HOL`).
     Audit(String),
     /// Kill switch (`KILL`, `KILL CANCEL`, `KILL OFF`).
@@ -460,7 +462,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             None | Some("OFF" | "NONE" | "0") => None,
             Some(c) => Some(crate::layouts::Link::ALL.into_iter().find(|l| l.label().eq_ignore_ascii_case(c))?),
         }),
-        "N" | "CN" | "NEWS" | "TOP" => Function::News,
+        "N" | "CN" | "NEWS" => Function::News,
         "OB" | "BOOK" | "DEPTH" | "DOM" => Function::OrderBook(num(rest.first())),
         "OMON" | "OMST" | "OPT" | "OPTIONS" | "CHAIN" => Function::Options,
         "SIDEBAR" | "SB" => Function::Sidebar(words().join(" ")),
@@ -497,6 +499,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ETF" | "ETFS" => Function::Etf(joined()),
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
         "MOST" | "MOVERS" => Function::Most(joined()),
+        "TOP" | "TOPNEWS" => Function::Top(joined()),
         "AUDIT" => Function::Audit(joined()),
         "HOL" | "HOLIDAYS" => Function::Audit("hol".into()),
         "KILL" | "KILLSWITCH" => Function::Kill(joined()),
@@ -713,6 +716,10 @@ fn describe(f: &Function) -> String {
             "OFF" | "RELEASE" | "STOP" => "Kill switch OFF: allow new orders again".into(),
             "CANCEL" | "ALL" => "Kill switch ON and cancel all open orders".into(),
             _ => "Kill switch ON: block every new order".into(),
+        },
+        Function::Top(a) => match tr_data::topnews::Tab::parse(a) {
+            tr_data::topnews::Tab::All => "Top news: market headlines from world, Türkiye, crypto and central-bank feeds".into(),
+            t => format!("Top news: {}", t.label()),
         },
         Function::Most(a) => match a.split_whitespace().next().map(str::to_ascii_lowercase).as_deref() {
             Some("losers") => "Market movers: US day losers".into(),
@@ -1003,6 +1010,13 @@ mod tests {
         assert!(matches!(parse("HEAT"), Some(Command::Function(Function::Fut(a))) if a.trim() == "HEAT"));
         assert!(hint("FUT CL").contains("CL"));
         assert!(hint("VIX").contains("VIX"));
+    }
+
+    #[test]
+    fn top_commands() {
+        assert_eq!(parse("TOP"), Some(Command::Function(Function::Top(String::new()))));
+        assert_eq!(parse("top tr"), Some(Command::Function(Function::Top("tr".into()))));
+        assert!(hint("TOP CB").contains("Central Banks"));
     }
 
     #[test]
