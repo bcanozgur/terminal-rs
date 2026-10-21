@@ -589,6 +589,8 @@ struct RawFact {
     filed: String,
     #[serde(default)]
     accn: String,
+    #[serde(default)]
+    form: String,
 }
 
 #[derive(Deserialize)]
@@ -615,6 +617,9 @@ struct Obs {
     /// Tag priority (lower wins), then latest filing wins.
     prio: usize,
     filed: NaiveDate,
+    /// Reported in an annual report (10-K), or the form is unknown. Twelve-month periods
+    /// that only appear in 10-Qs are trailing figures (Amazon's), not fiscal years.
+    in_10k: bool,
 }
 
 fn days(a: NaiveDate, b: NaiveDate) -> i64 {
@@ -634,17 +639,92 @@ fn observations(gaap: &HashMap<String, Concept>, m: Metric) -> Vec<Obs> {
             if (m.kind() == Kind::Instant) != start.is_none() {
                 continue;
             }
-            let o = Obs { start, end, val: f.val, prio, filed };
+            let in_10k = f.form.is_empty() || f.form.starts_with("10-K");
+            let o = Obs { start, end, val: f.val, prio, filed, in_10k };
             best.entry((start, end))
                 .and_modify(|b| {
+                    let in_10k = b.in_10k || o.in_10k;
                     if (o.prio, std::cmp::Reverse(o.filed)) < (b.prio, std::cmp::Reverse(b.filed)) {
                         *b = o;
                     }
+                    b.in_10k = in_10k;
                 })
                 .or_insert(o);
         }
     }
-    best.into_values().collect()
+    let mut out: Vec<Obs> = best.into_values().collect();
+    if m.kind() == Kind::PerShare {
+        let facts: Vec<&RawFact> =
+            m.tags().iter().filter_map(|t| gaap.get(*t).and_then(|c| c.units.get(unit))).flatten().collect();
+        let points = facts
+            .iter()
+            .filter_map(|f| Some((f.start.as_deref().and_then(date), date(&f.end)?, date(&f.filed)?, f.val)));
+        let events = splits(points);
+        for o in &mut out {
+            o.val = split_adjust(o.val, o.filed, &events);
+        }
+    }
+    out
+}
+
+/// Stock splits seen in restated per-share facts, as (last filing still on the old share
+/// basis, factor). Filers restate only the periods a new filing shows, so a year last filed
+/// before a split keeps its old EPS (NVIDIA's FY2022 stays at 3.85 after the 2024 10:1
+/// split) and the series jumps. A split shows up as the same period refiled at an integer
+/// ratio (2..=50, or its inverse for a reverse split) on at least two periods.
+/// `points` are (start, end, filed, value) of every filed per-share fact.
+pub(crate) fn splits(
+    points: impl Iterator<Item = (Option<NaiveDate>, NaiveDate, NaiveDate, f64)>,
+) -> Vec<(NaiveDate, f64)> {
+    // (start, end) → (filed, value) of every filing of that period.
+    type Filings = Vec<(NaiveDate, f64)>;
+    let mut by_period: BTreeMap<(Option<NaiveDate>, NaiveDate), Filings> = BTreeMap::new();
+    for (start, end, filed, val) in points {
+        by_period.entry((start, end)).or_default().push((filed, val));
+    }
+    // (factor, last filing on the old basis, first filing on the new basis)
+    let mut seen: Vec<(f64, NaiveDate, NaiveDate)> = Vec::new();
+    for filings in by_period.values_mut() {
+        filings.sort_by_key(|f| f.0);
+        for w in filings.windows(2) {
+            let ((pre, a), (post, b)) = (w[0], w[1]);
+            if let Some(n) = split_factor(a, b) {
+                seen.push((n, pre, post));
+            }
+        }
+    }
+    // One split is restated across several filings: merge overlapping windows per factor.
+    seen.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+    let mut out: Vec<(f64, NaiveDate, NaiveDate, usize)> = Vec::new();
+    for (n, pre, post) in seen {
+        match out.last_mut() {
+            Some(e) if e.0 == n && pre < e.2 && e.1 < post => {
+                e.1 = e.1.max(pre);
+                e.2 = e.2.min(post);
+                e.3 += 1;
+            }
+            _ => out.push((n, pre, post, 1)),
+        }
+    }
+    out.into_iter().filter(|e| e.3 >= 2).map(|e| (e.1, e.0)).collect()
+}
+
+/// A per-share value filed on `filed`, on today's share basis.
+pub(crate) fn split_adjust(val: f64, filed: NaiveDate, splits: &[(NaiveDate, f64)]) -> f64 {
+    splits.iter().filter(|(last_pre, _)| filed <= *last_pre).fold(val, |v, (_, factor)| v / factor)
+}
+
+/// `a / b` when it is a whole split ratio within cent rounding of the newer figure.
+fn split_factor(a: f64, b: f64) -> Option<f64> {
+    if a == 0.0 || b == 0.0 || a.signum() != b.signum() {
+        return None;
+    }
+    let whole = |big: f64, small: f64| {
+        let n = (big / small).round();
+        ((2.0..=50.0).contains(&n) && (big - n * small).abs() <= n * 0.005 + 0.01 * big.abs()).then_some(n)
+    };
+    let (a, b) = (a.abs(), b.abs());
+    if a > b { whole(a, b) } else { whole(b, a).map(|n| 1.0 / n) }
 }
 
 fn is_year(o: &Obs) -> bool {
@@ -657,7 +737,7 @@ fn is_quarter_len(d: i64) -> bool {
 
 /// Annual values by period end.
 fn annual_values(obs: &[Obs]) -> BTreeMap<NaiveDate, f64> {
-    obs.iter().filter(|o| is_year(o)).map(|o| (o.end, o.val)).collect()
+    obs.iter().filter(|o| is_year(o) && o.in_10k).map(|o| (o.end, o.val)).collect()
 }
 
 /// Quarterly values by period end: reported three-month figures, plus quarters derived as
@@ -823,9 +903,11 @@ pub fn parse_companyfacts(json: &str) -> Result<Financials> {
             Kind::Instant => {
                 instants.insert(m, obs.iter().map(|o| (o.end, o.val)).collect());
             }
-            k => {
+            _ => {
                 annual.insert(m, annual_values(&obs));
-                quarterly.insert(m, quarterly_values(&obs, k == Kind::Flow));
+                // EPS is not strictly additive, but a fiscal year less its first nine months is
+                // how Q4 EPS is commonly derived (no 10-Q covers Q4); without it every Q4 is blank.
+                quarterly.insert(m, quarterly_values(&obs, true));
             }
         }
     }
@@ -1088,6 +1170,57 @@ mod tests {
     }
 
     #[test]
+    fn eps_before_a_split_is_put_on_todays_share_basis() {
+        // NVIDIA's diluted EPS as filed: 4:1 split in Jul 2021, 10:1 in Jun 2024. FY2022 was
+        // last filed before the 2024 split and never restated.
+        let f = |s: &str, e: &str, v: f64, filed: &str| {
+            format!(
+                r#"{{"start":"{s}","end":"{e}","val":{v},"fy":2020,"fp":"FY","form":"10-K","filed":"{filed}","accn":"x"}}"#
+            )
+        };
+        let rows = [
+            f("2019-01-28", "2020-01-26", 4.52, "2020-02-20"),
+            f("2019-01-28", "2020-01-26", 1.13, "2022-03-18"),
+            f("2020-01-27", "2021-01-31", 6.9, "2021-02-26"),
+            f("2020-01-27", "2021-01-31", 1.73, "2023-02-24"),
+            f("2021-02-01", "2022-01-30", 3.85, "2024-02-21"),
+            f("2022-01-31", "2023-01-29", 1.74, "2024-02-21"),
+            f("2022-01-31", "2023-01-29", 0.17, "2025-02-26"),
+            f("2023-01-30", "2024-01-28", 11.93, "2024-02-21"),
+            f("2023-01-30", "2024-01-28", 1.19, "2025-02-26"),
+            f("2024-01-29", "2025-01-26", 2.94, "2025-02-26"),
+        ];
+        let rev = |s: &str, e: &str| {
+            format!(
+                r#"{{"start":"{s}","end":"{e}","val":1e9,"fy":2020,"fp":"FY","form":"10-K","filed":"2025-02-26","accn":"x"}}"#
+            )
+        };
+        let json = format!(
+            r#"{{"entityName":"N","facts":{{"us-gaap":{{"EarningsPerShareDiluted":{{"units":{{"USD/shares":[{}]}}}},"Revenues":{{"units":{{"USD":[{}]}}}}}}}}}}"#,
+            rows.join(","),
+            [
+                ("2019-01-28", "2020-01-26"),
+                ("2020-01-27", "2021-01-31"),
+                ("2021-02-01", "2022-01-30"),
+                ("2022-01-31", "2023-01-29"),
+                ("2023-01-30", "2024-01-28"),
+                ("2024-01-29", "2025-01-26")
+            ]
+            .iter()
+            .map(|(s, e)| rev(s, e))
+            .collect::<Vec<_>>()
+            .join(",")
+        );
+        let fin = parse_companyfacts(&json).unwrap();
+        let eps: Vec<f64> =
+            fin.annual.iter().map(|p| (p.get(Metric::EpsDiluted).unwrap() * 1000.0).round() / 1000.0).collect();
+        assert_eq!(eps, [0.113, 0.173, 0.385, 0.17, 1.19, 2.94]);
+        assert_eq!(split_factor(1.74, 0.17), Some(10.0));
+        assert_eq!(split_factor(1.0, 1.05), None, "a restatement is not a split");
+        assert_eq!(split_factor(0.5, 5.0), Some(0.1), "reverse split");
+    }
+
+    #[test]
     fn tickers_map_to_ciks() {
         let m = parse_tickers(&fixture("sec_company_tickers.json")).unwrap();
         assert_eq!(m.get("AAPL"), Some(&320193));
@@ -1173,8 +1306,8 @@ mod tests {
         assert_eq!(q4.label, "Q4 FY25");
         assert_eq!(q4.get(Metric::NetIncome), Some(112_010_000_000.0 - 84_544_000_000.0));
         assert_eq!(q4.get(Metric::TotalAssets), Some(359_241_000_000.0));
-        // EPS isn't additive, so Q4 EPS is not invented.
-        assert_eq!(q4.get(Metric::EpsDiluted), None);
+        // EPS isn't strictly additive: FY − 9M gives 1.84 against the 1.85 Apple reported.
+        assert!((q4.get(Metric::EpsDiluted).unwrap() - 1.85).abs() < 0.02);
         assert!(q("2026-06-27").get(Metric::EpsDiluted).is_some());
         assert!(f.quarterly.windows(2).all(|w| is_quarter_len(days(w[0].end, w[1].end))), "contiguous quarters");
         let i = f.quarterly.iter().position(|p| p.end == d("2026-06-27")).unwrap();

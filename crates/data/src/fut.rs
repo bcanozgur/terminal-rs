@@ -88,6 +88,75 @@ pub fn contract_symbol(root: &Root, month: u32, year: i32) -> Option<String> {
     Some(format!("{}{}{:02}.{}", root.code, month_code(month)?, year.rem_euclid(100), root.exchange))
 }
 
+fn is_weekday(d: NaiveDate) -> bool {
+    d.weekday().number_from_monday() <= 5
+}
+
+/// `n` weekdays before `d` (holidays are not modelled, so a rule can land a day late).
+fn weekdays_before(mut d: NaiveDate, n: u32) -> NaiveDate {
+    let mut left = n;
+    while left > 0 {
+        d = d.pred_opt().unwrap_or(d);
+        if is_weekday(d) {
+            left -= 1;
+        }
+    }
+    d
+}
+
+fn last_weekday_of(year: i32, month: u32) -> Option<NaiveDate> {
+    let first_next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)?
+    };
+    let mut d = first_next.pred_opt()?;
+    while !is_weekday(d) {
+        d = d.pred_opt()?;
+    }
+    Some(d)
+}
+
+/// The `nth` (1-based) `weekday` of a month.
+fn nth_weekday(year: i32, month: u32, weekday: chrono::Weekday, nth: u32) -> Option<NaiveDate> {
+    NaiveDate::from_weekday_of_month_opt(year, month, weekday, nth as u8)
+}
+
+/// Approximate last trading day of a contract by the exchange's rule for the product.
+/// Yahoo keeps quoting an expired contract for days with its final settlement, so the curve
+/// would otherwise start with a dead month (CLX26 stopped on 20 Oct 2026 but still showed
+/// as the front on the 21st).
+pub fn last_trade(code: &str, month: u32, year: i32) -> Option<NaiveDate> {
+    use chrono::Weekday::{Fri, Wed};
+    let (py, pm) = if month == 1 { (year - 1, 12) } else { (year, month - 1) };
+    Some(match code {
+        // Third Friday of the contract month.
+        "ES" | "NQ" | "YM" | "RTY" => nth_weekday(year, month, Fri, 3)?,
+        // Three business days before the 25th of the prior month (before the business day
+        // preceding the 25th when that is not one).
+        "CL" => {
+            let mut d = NaiveDate::from_ymd_opt(py, pm, 25)?;
+            while !is_weekday(d) {
+                d = d.pred_opt()?;
+            }
+            weekdays_before(d, 3)
+        }
+        // Three business days before the first day of the contract month.
+        "NG" => weekdays_before(NaiveDate::from_ymd_opt(year, month, 1)?, 3),
+        // Third last business day of the contract month.
+        "GC" | "SI" | "HG" => weekdays_before(last_weekday_of(year, month)?, 2),
+        // Seventh business day before the last business day of the contract month.
+        "ZB" | "ZN" => weekdays_before(last_weekday_of(year, month)?, 7),
+        // Business day before the 15th of the contract month.
+        "ZC" | "ZS" | "ZW" => weekdays_before(NaiveDate::from_ymd_opt(year, month, 15)?, 1),
+        // Two business days before the third Wednesday.
+        "6E" => weekdays_before(nth_weekday(year, month, Wed, 3)?, 2),
+        // One business day before first notice: eight before the last business day.
+        "KC" => weekdays_before(last_weekday_of(year, month)?, 8),
+        _ => return None,
+    })
+}
+
 /// Contract months to probe, starting with the current month: the next `n` months in the
 /// root's listing cycle as `(month, year)`.
 pub fn candidates(root: &Root, today: NaiveDate, n: usize) -> Vec<(u32, i32)> {
@@ -404,9 +473,12 @@ pub fn build_curve(root: &'static Root, probes: Vec<(u32, i32, Result<Series>)>,
     let mut missing = Vec::new();
     let mut failed = 0;
     let mut first_err = None;
+    let today = chrono::DateTime::from_timestamp(now, 0).map(|t| t.date_naive());
     for (month, year, res) in probes {
         let label = format!("{} {:02}", month_name(month), year.rem_euclid(100));
+        let expired = today.zip(last_trade(root.code, month, year)).is_some_and(|(t, last)| last < t);
         match res {
+            Ok(_) if expired => missing.push(label),
             Ok(s) if now - s.time <= STALE_SECS || s.time == 0 => points.push(Contract {
                 prev_close: s.prev_close(),
                 volume: s.volume,
@@ -907,6 +979,34 @@ mod tests {
         assert_eq!(c.missing, ["Oct 26", "Jan 27"]);
         assert_eq!(c.failed, 1);
         assert_eq!(c.points[0].prev_close, Some(97.0));
+    }
+
+    #[test]
+    fn last_trading_days() {
+        // Published CME / ICE dates.
+        assert_eq!(last_trade("CL", 11, 2026), Some(date(2026, 10, 20)));
+        assert_eq!(last_trade("CL", 12, 2026), Some(date(2026, 11, 20)));
+        assert_eq!(last_trade("NG", 11, 2026), Some(date(2026, 10, 28)));
+        assert_eq!(last_trade("ES", 12, 2026), Some(date(2026, 12, 18)));
+        assert_eq!(last_trade("GC", 10, 2026), Some(date(2026, 10, 28)));
+        assert_eq!(last_trade("ZN", 9, 2026), Some(date(2026, 9, 21)));
+        assert_eq!(last_trade("ZC", 12, 2026), Some(date(2026, 12, 14)));
+        assert_eq!(last_trade("6E", 12, 2026), Some(date(2026, 12, 14)));
+        assert_eq!(last_trade("XX", 12, 2026), None);
+    }
+
+    #[test]
+    fn expired_front_contract_is_dropped() {
+        // 21 Oct 2026: CLX26 stopped trading on the 20th but Yahoo still quotes it.
+        let now = 1_792_540_800 + 3600;
+        let cl = root("CL").unwrap();
+        let probes = vec![
+            (11, 2026, Ok(series("CLX26.NYM", now - 20 * 3600, 101.0))),
+            (12, 2026, Ok(series("CLZ26.NYM", now - 3600, 98.0))),
+        ];
+        let c = build_curve(cl, probes, now).unwrap();
+        assert_eq!(c.points[0].symbol, "CLZ26.NYM");
+        assert_eq!(c.missing, ["Nov 26"]);
     }
 
     #[test]

@@ -141,10 +141,10 @@ impl TerminalApp {
                 actions.extend(crate::earnings_view::pane(ui, e, &cx));
             }
             PaneKind::Eco(e) => super::eco_view::eco(ui, e, q),
-            PaneKind::Etf(e) => actions.extend(super::etf_view::etf(ui, e)),
+            PaneKind::Etf(e) => actions.extend(super::etf_view::etf(ui, e, q)),
             PaneKind::Risk(_) => actions.extend(self.risk_pane(ui, i)),
             PaneKind::Audit(_) => actions.extend(self.audit_pane(ui, i)),
-            PaneKind::TrFunds(e) => actions.extend(super::trfunds_view::trfunds(ui, e)),
+            PaneKind::TrFunds(e) => actions.extend(super::trfunds_view::trfunds(ui, e, q)),
             PaneKind::Most(e) => actions.extend(super::most_view::most(ui, e)),
             PaneKind::Fut(e) => actions.extend(super::fut_view::fut(ui, e)),
             PaneKind::Smart(e) => actions.extend(super::smart_view::smart(ui, e)),

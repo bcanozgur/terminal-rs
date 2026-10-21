@@ -12,12 +12,13 @@
 //!
 //! [`EarningsStore`] caches calendar days and per-ticker histories in SQLite.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, Timelike};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -266,6 +267,46 @@ pub fn release_dates(submissions: &Value) -> Vec<NaiveDate> {
     out
 }
 
+/// Session of each earnings release (8-K item 2.02) by filing date, from the time EDGAR
+/// accepted it: before 09:30 ET is before the open, from 16:00 ET after the close. Nasdaq's
+/// calendar drops the time of day once a day has passed, so for history this is the only
+/// source. A company that files its 8-K long after the press release can be misjudged.
+pub fn release_timings(submissions: &Value) -> HashMap<NaiveDate, Timing> {
+    let r = &submissions["filings"]["recent"];
+    let col = |k: &str| r.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let (forms, items, filed, accepted) = (col("form"), col("items"), col("filingDate"), col("acceptanceDateTime"));
+    let mut out = HashMap::new();
+    for (i, form) in forms.iter().enumerate() {
+        if form.as_str() != Some("8-K")
+            || !items.get(i).and_then(Value::as_str).is_some_and(|s| s.split(',').any(|x| x.trim() == "2.02"))
+        {
+            continue;
+        }
+        let Some(day) =
+            filed.get(i).and_then(Value::as_str).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        else {
+            continue;
+        };
+        let Some(utc) =
+            accepted.get(i).and_then(Value::as_str).and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        else {
+            continue;
+        };
+        let offset = if crate::eco::us_dst(day) { 4 } else { 5 };
+        let et = utc.naive_utc() - chrono::Duration::hours(offset);
+        let mins = et.time().hour() * 60 + et.time().minute();
+        let t = if et.date() < day || mins < 9 * 60 + 30 {
+            Timing::PreMarket
+        } else if et.date() > day || mins >= 16 * 60 {
+            Timing::AfterHours
+        } else {
+            continue;
+        };
+        out.entry(day).or_insert(t);
+    }
+    out
+}
+
 /// A quarter's diluted EPS from XBRL.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EpsQuarter {
@@ -296,9 +337,14 @@ pub fn quarterly_eps(facts: &Value) -> Vec<EpsQuarter> {
             Some(F { start: d(x, "start")?, end: d(x, "end")?, val: x.get("val")?.as_f64()?, filed: d(x, "filed")? })
         })
         .collect();
-    // The latest filing wins when a period was restated.
+    // The latest filing wins when a period was restated; periods last filed before a stock
+    // split are put on today's share basis.
+    let splits = crate::edgar::splits(all.iter().map(|f| (Some(f.start), f.end, f.filed, f.val)));
     let latest = |start: NaiveDate, end: NaiveDate| {
-        all.iter().filter(|f| f.start == start && f.end == end).max_by_key(|f| f.filed).map(|f| f.val)
+        all.iter()
+            .filter(|f| f.start == start && f.end == end)
+            .max_by_key(|f| f.filed)
+            .map(|f| crate::edgar::split_adjust(f.val, f.filed, &splits))
     };
     let mut out: Vec<EpsQuarter> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -584,7 +630,15 @@ pub async fn calendar_day(
         return Ok(rows);
     }
     match nasdaq.calendar(day).await {
-        Ok(rows) => {
+        Ok(mut rows) => {
+            // Nasdaq drops the session once a day has passed; keep what an earlier fetch had.
+            if let Some(old) = store.lock().unwrap().day(day, today, now, false) {
+                for r in rows.iter_mut().filter(|r| r.timing == Timing::Unknown) {
+                    if let Some(o) = old.iter().find(|o| o.symbol == r.symbol) {
+                        r.timing = o.timing;
+                    }
+                }
+            }
             let _ = store.lock().unwrap().put_day(day, &rows, now);
             Ok(rows)
         }
@@ -617,6 +671,7 @@ pub async fn ticker_history(
     let reported = reported.unwrap_or_default();
     let eps = facts.as_ref().map(quarterly_eps).unwrap_or_default();
     let releases = subs.as_ref().map(release_dates).unwrap_or_default();
+    let filed_at = subs.as_ref().map(release_timings).unwrap_or_default();
     // Nasdaq's per-ticker history has no time of day; the calendar row of the latest report does.
     let timing = match reported.first() {
         Some(r) => calendar_day(store, nasdaq, r.date, today, now)
@@ -626,11 +681,66 @@ pub async fn ticker_history(
             .map_or(Timing::Unknown, |c| c.timing),
         None => Timing::Unknown,
     };
-    let events = merge_history(&reported, &eps, &releases, timing, 12);
+    let mut events = merge_history(&reported, &eps, &releases, timing, 12);
+    fill_from_calendar(store, nasdaq, ticker, &mut events, today, now).await;
+    for e in events.iter_mut().filter(|e| e.timing == Timing::Unknown) {
+        if let Some(t) = filed_at.get(&e.date) {
+            e.timing = *t;
+        }
+    }
     let next = find_next(store, nasdaq, ticker, events.first().map(|e| e.date), today, now).await;
     let doc = TickerEarnings { events, next };
     let _ = store.lock().unwrap().put_history(ticker, &doc, now);
     Ok(doc)
+}
+
+/// Fill reported quarters that lack the consensus comparison from the calendar of their
+/// report day. Nasdaq's per-ticker surprise endpoint has answered "No record found" for every
+/// ticker since Oct 2026, while past calendar days still carry the actual, estimate and
+/// surprise (and are cached for good once fetched). An 8-K filed the day after an
+/// after-close report is matched against the day before as well.
+async fn fill_from_calendar(
+    store: &std::sync::Mutex<EarningsStore>,
+    nasdaq: &Nasdaq,
+    ticker: &str,
+    events: &mut [EarningsEvent],
+    today: NaiveDate,
+    now: i64,
+) {
+    let mut failed = 0;
+    for e in events.iter_mut().filter(|e| e.date < today) {
+        if e.eps_actual.is_some() && e.eps_estimate.is_some() && e.timing != Timing::Unknown {
+            continue;
+        }
+        let mut days = vec![e.date];
+        days.extend(e.date.pred_opt());
+        for d in days {
+            let rows = match calendar_day(store, nasdaq, d, today, now).await {
+                Ok(rows) => rows,
+                Err(_) => {
+                    failed += 1;
+                    continue;
+                }
+            };
+            if let Some(r) = rows.into_iter().find(|r| r.symbol.eq_ignore_ascii_case(ticker)) {
+                e.eps_actual = e.eps_actual.or(r.eps_actual);
+                e.eps_estimate = e.eps_estimate.or(r.eps_estimate);
+                e.surprise_pct = e.surprise_pct.or(r.surprise_pct);
+                if e.timing == Timing::Unknown {
+                    e.timing = r.timing;
+                }
+                if e.fiscal_quarter.is_empty() {
+                    e.fiscal_quarter = r.fiscal_quarter;
+                }
+                e.date = d;
+                break;
+            }
+        }
+        // The calendar API is down: leave the rest as EDGAR reported them.
+        if failed >= 2 {
+            break;
+        }
+    }
 }
 
 /// The announced next date if it appears in the calendar near the projected one, else the
@@ -726,12 +836,42 @@ mod tests {
         assert_eq!(r.timing, Timing::Unknown);
     }
 
+    #[tokio::test]
+    async fn calendar_fills_quarters_the_surprise_endpoint_lost() {
+        let json = r#"{"data":{"rows":[{"eps":"$1.91","surprise":"1.6","time":"time-after-hours","symbol":"AAPL","name":"Apple Inc.","marketCap":"$5,005,219,700,000","fiscalQuarterEnding":"Jun/2026","epsForecast":"$1.88","noOfEsts":"11"}]},"status":{"rCode":200}}"#;
+        let store = std::sync::Mutex::new(EarningsStore::open_in_memory().unwrap());
+        let now = day_end(d(2026, 10, 21));
+        store.lock().unwrap().put_day(d(2026, 7, 30), &parse_calendar(json, d(2026, 7, 30)).unwrap(), now).unwrap();
+        // Nothing listens there: only the cached day can answer.
+        let nasdaq = Nasdaq::with_base("http://127.0.0.1:9").unwrap();
+        let facts: Value = serde_json::from_str(FACTS).unwrap();
+        let subs: Value = serde_json::from_str(SUBS).unwrap();
+        let mut events = merge_history(&[], &quarterly_eps(&facts), &release_dates(&subs), Timing::Unknown, 12);
+        fill_from_calendar(&store, &nasdaq, "aapl", &mut events, d(2026, 10, 21), now).await;
+        let e = events.iter().find(|e| e.date == d(2026, 7, 30)).unwrap();
+        assert_eq!((e.eps_actual, e.eps_estimate, e.surprise_pct), (Some(1.91), Some(1.88), Some(1.6)));
+        assert_eq!(e.timing, Timing::AfterHours);
+        assert!(e.eps_gaap.is_some(), "EDGAR's GAAP EPS stays");
+    }
+
     #[test]
     fn surprise_fixture() {
         let r = parse_surprise(SURPRISE).unwrap();
         assert_eq!(r.len(), 4);
         assert_eq!(r[0].date, d(2026, 7, 30));
         assert_eq!((r[0].eps, r[0].estimate, r[0].surprise_pct), (Some(1.91), Some(1.88), Some(1.6)));
+    }
+
+    #[test]
+    fn release_session_from_edgar_acceptance_time() {
+        let subs: Value = serde_json::from_str(SUBS).unwrap();
+        // Apple's 8-K of 30 Jul 2026 was accepted at 00:30 UTC on the 31st: 20:30 EDT.
+        assert_eq!(release_timings(&subs).get(&d(2026, 7, 30)), Some(&Timing::AfterHours));
+        let pre: Value = serde_json::from_str(
+            r#"{"filings":{"recent":{"form":["8-K"],"items":["2.02,9.01"],"filingDate":["2026-01-15"],"acceptanceDateTime":["2026-01-15T11:05:00.000Z"]}}}"#,
+        )
+        .unwrap();
+        assert_eq!(release_timings(&pre).get(&d(2026, 1, 15)), Some(&Timing::PreMarket), "06:05 EST");
     }
 
     #[test]

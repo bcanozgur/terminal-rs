@@ -1284,6 +1284,9 @@ impl ChartState {
     /// Arm a one-shot alert at `price` (crossing up or down, by the side of the last price),
     /// remembering the chart's timeframe.
     fn alert_at(&mut self, price: f64) {
+        // The cursor's price has float noise (101.75463664); keep the instrument's precision.
+        let d = self.sec.decimals(price);
+        let price = format!("{price:.d$}").parse().unwrap_or(price);
         let op = crate::alerts::default_chart_op(price, self.bars.last().map(|b| b.close));
         let cond = Condition { metric: Metric::Price, op, target: Target::Level(price) };
         self.actions.push(Action::AddAlert(Spec {

@@ -96,12 +96,43 @@ pub fn black_scholes(call: bool, spot: f64, strike: f64, t: f64, r: f64, q: f64,
     Some((price, Greeks { delta, gamma, theta: theta_y / 365.0, vega, rho }))
 }
 
+/// The volatility at which [`black_scholes`] gives `price`, by bisection over 1%–500%. `None`
+/// when no volatility in that range gives it (a price under intrinsic value, or absurdly high).
+pub fn implied_vol(call: bool, spot: f64, strike: f64, t: f64, r: f64, q: f64, price: f64) -> Option<f64> {
+    let at = |v: f64| black_scholes(call, spot, strike, t, r, q, v).map(|(p, _)| p);
+    let (mut lo, mut hi) = (0.01, 5.0);
+    if !(price.is_finite() && price > 0.0) || at(lo)? > price || at(hi)? < price {
+        return None;
+    }
+    for _ in 0..60 {
+        let mid = (lo + hi) / 2.0;
+        if at(mid)? < price {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some((lo + hi) / 2.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
+    }
+
+    #[test]
+    fn implied_vol_inverts_the_price() {
+        for (call, k, v) in [(true, 100.0, 0.2), (false, 90.0, 0.35), (true, 120.0, 0.6)] {
+            let (p, _) = black_scholes(call, 100.0, k, 0.25, 0.04, 0.01, v).unwrap();
+            let iv = implied_vol(call, 100.0, k, 0.25, 0.04, 0.01, p).unwrap();
+            assert!(close(iv, v, 1e-6), "{iv} vs {v}");
+        }
+        // Below intrinsic value: no volatility explains it.
+        assert!(implied_vol(true, 100.0, 80.0, 0.25, 0.04, 0.0, 15.0).is_none());
+        assert!(implied_vol(true, 100.0, 100.0, 0.25, 0.04, 0.0, 0.0).is_none());
     }
 
     #[test]

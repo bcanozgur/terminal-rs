@@ -142,7 +142,14 @@ pub struct Fund {
     /// Unix seconds when the data was last fetched.
     #[serde(default)]
     pub updated: i64,
+    /// [`RESOLVER`] when the tickers were filled in; older copies are rebuilt.
+    #[serde(default)]
+    pub resolver: u32,
 }
+
+/// Version of the ticker resolution in [`resolve_tickers`]. Bump it when that changes, so cached
+/// funds are rebuilt from their filing instead of keeping the old tickers until the next one.
+pub const RESOLVER: u32 = 2;
 
 impl Fund {
     /// Only the largest holdings are known (Yahoo): reverse search and overlap are partial.
@@ -238,9 +245,15 @@ pub fn parse_nport(xml: &str) -> Result<NportDoc> {
             continue;
         }
         let Some(weight) = num(tag(body, "pctVal")).filter(|w| *w > 0.0) else { continue };
-        let name = unescape(tag(body, "name").or_else(|| tag(body, "title")).unwrap_or_default());
+        let mut name = unescape(tag(body, "name").or_else(|| tag(body, "title")).unwrap_or_default());
         if name.is_empty() {
             continue;
+        }
+        // Dual-class issuers share a name; the class is in the title (`ALPHABET INC-C`).
+        if class_letter(&name).is_none()
+            && let Some(c) = tag(body, "title").and_then(title_class)
+        {
+            name = format!("{name} Class {c}");
         }
         let cusip = tag(body, "cusip")
             .map(|c| c.trim().to_ascii_uppercase())
@@ -375,10 +388,54 @@ pub fn parse_yahoo(json: &str) -> Result<YahooFund> {
 
 // ---- name → ticker ------------------------------------------------------------------------
 
+/// Words of an issuer name: lower case, no punctuation, share-class words dropped unless
+/// `keep_class`, and no trailing state of incorporation.
+fn name_words(s: &str, keep_class: bool) -> Vec<String> {
+    // `Charles Schwab Corp/The`, `DANAHER CORP /DE/`, `VERTEX PHARMACEUTICALS INC / MA`, and
+    // `Marriott International Inc/MD Class A` where a class follows.
+    let s = match s.find('/') {
+        Some(p) if s[p + 1..].trim().len() <= 5 => &s[..p],
+        _ => s,
+    };
+    let s: Vec<&str> = s
+        .split_whitespace()
+        .map(|w| match w.find('/') {
+            Some(p) if w[p + 1..].trim_matches('/').len() <= 5 => &w[..p],
+            _ => w,
+        })
+        .collect();
+    let cleaned: String = s
+        .join(" ")
+        .to_lowercase()
+        .replace(['\'', '’', '.', ','], "")
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut words = cleaned.split_whitespace();
+    while let Some(w) = words.next() {
+        if matches!(w, "class" | "cl") {
+            if keep_class {
+                out.push("class".into());
+                out.extend(words.next().map(str::to_string));
+            } else {
+                words.next();
+            }
+        } else {
+            out.push(w.to_string());
+        }
+    }
+    // `US BANCORP DE`: a trailing state of incorporation.
+    if out.len() > 1 && matches!(out.last().map(String::as_str), Some("de" | "new")) {
+        out.pop();
+    }
+    out
+}
+
 /// Issuer name reduced to what two sources agree on: lower case, no punctuation, no corporate
 /// suffixes (`Inc`, `Corp`, `Holdings`…). `keep_class` keeps share-class words (`Class C`).
 pub fn norm_name(s: &str, keep_class: bool) -> String {
-    const DROP: [&str; 19] = [
+    const DROP: [&str; 21] = [
         "inc",
         "incorporated",
         "corp",
@@ -390,7 +447,9 @@ pub fn norm_name(s: &str, keep_class: bool) -> String {
         "ltd",
         "limited",
         "plc",
+        "public",
         "the",
+        "and",
         "holdings",
         "holding",
         "group",
@@ -399,42 +458,42 @@ pub fn norm_name(s: &str, keep_class: bool) -> String {
         "ag",
         "lp",
     ];
-    // `Charles Schwab Corp/The`, `DANAHER CORP /DE/`, `COSTCO WHOLESALE CORP /NEW`.
-    let s = match s.find('/') {
-        Some(p) if s[p + 1..].trim().len() <= 5 => &s[..p],
-        _ => s,
-    };
-    let cleaned: String = s
-        .to_lowercase()
-        .replace(['\'', '’', '.', ','], "")
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
-        .collect();
-    let mut out: Vec<&str> = Vec::new();
-    let mut words = cleaned.split_whitespace();
-    while let Some(w) = words.next() {
-        if matches!(w, "class" | "cl") {
-            if keep_class {
-                out.push("class");
-                out.extend(words.next());
-            } else {
-                words.next();
-            }
-        } else if !DROP.contains(&w) {
-            out.push(w);
-        }
-    }
-    // `US BANCORP DE`: a trailing state of incorporation.
-    if out.len() > 1 && matches!(out.last(), Some(&"de" | &"new")) {
-        out.pop();
-    }
+    let words = name_words(s, keep_class);
+    let out: Vec<&str> = words.iter().map(String::as_str).filter(|w| !DROP.contains(w)).collect();
     out.join(" ")
 }
 
-/// Normalised SEC registrant name → its tickers (primary listing first); names shared by two
-/// companies are left out.
+/// The ways a name is matched, tried in order: [`norm_name`]; the full name with its corporate
+/// suffixes (`TARGET CORP` vs `Target Group Inc.`); word order ignored with initials joined
+/// (`SCHWAB CHARLES CORP`, `HORTON D R INC`, `PRICE T ROWE GROUP`); spaces ignored
+/// (`O REILLY AUTOMOTIVE`, `ExxonMobil`, `AMAZON COM`).
+fn name_keys(name: &str) -> [String; 4] {
+    let norm = norm_name(name, false);
+    let strict = name_words(name, false).join(" ");
+    let mut loose: Vec<String> = Vec::new();
+    let mut initials = String::new();
+    for w in norm.split_whitespace() {
+        if w.chars().count() == 1 {
+            initials.push_str(w);
+            continue;
+        }
+        if !initials.is_empty() {
+            loose.push(std::mem::take(&mut initials));
+        }
+        loose.push(w.to_string());
+    }
+    if !initials.is_empty() {
+        loose.push(initials);
+    }
+    loose.sort();
+    let compact = norm.replace(' ', "");
+    [norm, strict, loose.join(" "), compact]
+}
+
+/// Normalised SEC registrant name → its tickers (primary listing first), under each of the
+/// [`name_keys`]; a key shared by two companies is left out.
 #[derive(Debug, Default)]
-pub struct NameMap(HashMap<String, Vec<String>>);
+pub struct NameMap(HashMap<(usize, String), Vec<String>>);
 
 impl NameMap {
     pub fn parse(json: &str) -> Result<Self> {
@@ -448,24 +507,30 @@ impl NameMap {
         // The file is ordered by company rank with a company's primary ticker first.
         let mut rows: Vec<(usize, Row)> = rows.into_iter().map(|(k, r)| (k.parse().unwrap_or(usize::MAX), r)).collect();
         rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.ticker.cmp(&b.1.ticker)));
-        let mut seen: HashMap<String, (u64, Vec<String>)> = HashMap::new();
-        let mut ambiguous: HashSet<String> = HashSet::new();
+        let mut seen: HashMap<(usize, String), (u64, Vec<String>)> = HashMap::new();
+        let mut ambiguous: HashSet<(usize, String)> = HashSet::new();
         for (_, r) in rows {
-            let key = norm_name(&r.title, false);
-            if key.is_empty() {
-                continue;
-            }
             let ticker = r.ticker.to_ascii_uppercase();
             if !is_common_ticker(&ticker) {
                 continue;
             }
-            match seen.get_mut(&key) {
-                Some((cik, _)) if *cik != r.cik_str => {
-                    ambiguous.insert(key);
+            for (kind, key) in name_keys(&r.title).into_iter().enumerate() {
+                if key.is_empty() {
+                    continue;
                 }
-                Some((_, t)) => t.push(ticker),
-                None => {
-                    seen.insert(key, (r.cik_str, vec![ticker]));
+                let key = (kind, key);
+                match seen.get_mut(&key) {
+                    Some((cik, _)) if *cik != r.cik_str => {
+                        ambiguous.insert(key);
+                    }
+                    Some((_, t)) => {
+                        if !t.contains(&ticker) {
+                            t.push(ticker.clone());
+                        }
+                    }
+                    None => {
+                        seen.insert(key, (r.cik_str, vec![ticker.clone()]));
+                    }
                 }
             }
         }
@@ -474,7 +539,12 @@ impl NameMap {
 
     /// The tickers of the company called `name` (several for dual-class issuers).
     pub fn lookup(&self, name: &str) -> &[String] {
-        self.0.get(&norm_name(name, false)).map_or(&[], Vec::as_slice)
+        name_keys(name)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, k)| !k.is_empty())
+            .find_map(|k| self.0.get(&k))
+            .map_or(&[], Vec::as_slice)
     }
 }
 
@@ -496,15 +566,30 @@ fn class_letter(name: &str) -> Option<char> {
     None
 }
 
+/// The share class at the end of an N-PORT title: `ALPHABET INC-C`, `FOX CORP - CLASS A`.
+fn title_class(title: &str) -> Option<char> {
+    if let Some(c) = class_letter(title) {
+        return Some(c.to_ascii_uppercase());
+    }
+    let (_, last) = title.trim().rsplit_once('-')?;
+    let mut chars = last.trim().chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => Some(c.to_ascii_uppercase()),
+        _ => None,
+    }
+}
+
 /// Fill in missing tickers: Yahoo's top ten (which know share classes) first, then SEC names.
-/// A dual-class issuer is resolved by the class in the name, or, when the fund holds every
-/// class under one name, by weight order (the larger position takes the primary ticker).
+/// A dual-class issuer is resolved by a ticker suffix matching the class in the name
+/// (`BRK-B`), otherwise by weight order among the issuer's listings (the larger position takes
+/// the primary ticker): Alphabet's A and C shares are GOOGL and GOOG, and the SEC also lists
+/// its notes (GOOGN, GOOGM) under the same company.
 fn resolve_tickers(holdings: &mut [Holding], yahoo: &[Holding], names: &NameMap) {
     let by_name: HashMap<String, &str> =
         yahoo.iter().filter_map(|y| Some((norm_name(&y.name, true), y.ticker.as_deref()?))).collect();
     let mut rank: HashMap<String, usize> = HashMap::new();
     let mut group: HashMap<String, usize> = HashMap::new();
-    for h in holdings.iter().filter(|h| h.ticker.is_none() && class_letter(&h.name).is_none()) {
+    for h in holdings.iter().filter(|h| h.ticker.is_none()) {
         *group.entry(norm_name(&h.name, false)).or_default() += 1;
     }
     // Holdings are sorted by weight, so the first of a group is its largest.
@@ -517,8 +602,9 @@ fn resolve_tickers(holdings: &mut [Holding], yahoo: &[Holding], names: &NameMap)
         h.ticker = match tickers {
             [] => None,
             [one] => Some(one.clone()),
-            many => match class_letter(&h.name) {
-                Some(c) => {
+            many => {
+                let class = class_letter(&h.name);
+                let suffixed = class.and_then(|c| {
                     let mut hit = many.iter().filter(|t| {
                         let t = t.to_ascii_lowercase();
                         t.ends_with(&format!("-{c}")) || t.ends_with(&format!(".{c}"))
@@ -527,15 +613,26 @@ fn resolve_tickers(holdings: &mut [Holding], yahoo: &[Holding], names: &NameMap)
                         (Some(t), None) => Some(t.clone()),
                         _ => None,
                     }
-                }
-                None => {
-                    let key = norm_name(&h.name, false);
-                    let n = rank.entry(key.clone()).or_default();
-                    let pick = if group.get(&key).copied() == Some(many.len()) { many.get(*n) } else { many.first() };
+                });
+                // `Molson Coors Class B` among `TAP`, `TAP-A`: the one listing without a class suffix.
+                let plain = || {
+                    let mut p = many.iter().filter(|t| !t.contains(['-', '.']));
+                    match (p.next(), p.next()) {
+                        (Some(t), None) if many.len() > 1 => Some(t.clone()),
+                        _ => None,
+                    }
+                };
+                let suffixed = suffixed.or_else(|| class.and(plain()));
+                let key = norm_name(&h.name, false);
+                // A lone class other than A (the primary listing as a rule: Comcast, Lennar) with no
+                // matching suffix can't be told apart: leave it rather than guess.
+                let lone_class = class.is_some_and(|c| c != 'a') && group.get(&key).copied() == Some(1);
+                suffixed.or_else(|| {
+                    let n = rank.entry(key).or_default();
                     *n += 1;
-                    pick.cloned()
-                }
-            },
+                    (!lone_class).then(|| many.get(*n - 1).or(many.first()).cloned()).flatten()
+                })
+            }
         };
     }
 }
@@ -572,6 +669,7 @@ pub fn build_fund(
             positions: doc.positions,
             sectors,
             updated: now,
+            resolver: RESOLVER,
         });
     }
     let Some(y) = yahoo.filter(|y| !y.holdings.is_empty()) else {
@@ -591,6 +689,7 @@ pub fn build_fund(
         holdings,
         sectors: y.sectors,
         updated: now,
+        resolver: RESOLVER,
     })
 }
 
@@ -786,7 +885,7 @@ pub async fn load(dir: &Path, ticker: &str, ua: &str, force: bool) -> Result<Fun
     }
     let now = chrono::Utc::now().timestamp();
     let cached = read_cached(dir, &ticker);
-    if let Some(f) = cached.as_ref().filter(|f| !force && !f.stale(now)) {
+    if let Some(f) = cached.as_ref().filter(|f| !force && !f.stale(now) && f.resolver == RESOLVER) {
         return Ok(f.clone());
     }
     match fetch_fund(dir, &ticker, ua, cached.as_ref(), now).await {
@@ -821,9 +920,9 @@ async fn fetch_fund(dir: &Path, ticker: &str, ua: &str, cached: Option<&Fund>, n
             parse_filings(&atom).into_iter().max_by(|a, b| a.filed.cmp(&b.filed).then(a.accession.cmp(&b.accession)));
         if let Some(filing) = newest {
             // Same filing as the cached copy: only Yahoo's sectors may have changed.
-            if let Some(c) =
-                cached.filter(|c| c.source == Source::Nport && c.accession.as_deref() == Some(&filing.accession))
-            {
+            if let Some(c) = cached.filter(|c| {
+                c.source == Source::Nport && c.accession.as_deref() == Some(&filing.accession) && c.resolver == RESOLVER
+            }) {
                 let mut f = c.clone();
                 if let Some(y) = &yahoo
                     && !y.sectors.is_empty()
@@ -906,6 +1005,19 @@ mod tests {
     const TICKERS: &str = r#"{"0":{"cik_str":320193,"ticker":"AAPL","title":"Apple Inc."},
 "1":{"cik_str":1652044,"ticker":"GOOGL","title":"Alphabet Inc."},
 "2":{"cik_str":1652044,"ticker":"GOOG","title":"Alphabet Inc."},
+"10":{"cik_str":1652044,"ticker":"GOOGN","title":"Alphabet Inc."},
+"11":{"cik_str":1018724,"ticker":"AMZN","title":"AMAZON COM INC"},
+"12":{"cik_str":27419,"ticker":"TGT","title":"TARGET CORP"},
+"13":{"cik_str":316709,"ticker":"SCHW","title":"SCHWAB CHARLES CORP"},
+"14":{"cik_str":898173,"ticker":"ORLY","title":"O REILLY AUTOMOTIVE INC"},
+"15":{"cik_str":875320,"ticker":"VRTX","title":"VERTEX PHARMACEUTICALS INC / MA"},
+"16":{"cik_str":24545,"ticker":"TAP","title":"MOLSON COORS BEVERAGE CO"},
+"17":{"cik_str":24545,"ticker":"TAP-A","title":"MOLSON COORS BEVERAGE CO"},
+"18":{"cik_str":882184,"ticker":"DHI","title":"HORTON D R INC /DE/"},
+"19":{"cik_str":2969,"ticker":"APD","title":"Air Products & Chemicals, Inc."},
+"20":{"cik_str":2115436,"ticker":"XOM","title":"ExxonMobil Holdings Corp"},
+"21":{"cik_str":1048286,"ticker":"MAR","title":"MARRIOTT INTERNATIONAL INC /MD/"},
+"99":{"cik_str":1586554,"ticker":"CBDY","title":"Target Group Inc."},
 "8":{"cik_str":72971,"ticker":"WFC","title":"WELLS FARGO & COMPANY/MN"},
 "9":{"cik_str":72971,"ticker":"WFC-PY","title":"WELLS FARGO & COMPANY/MN"},
 "6":{"cik_str":1067983,"ticker":"BRK-B","title":"BERKSHIRE HATHAWAY INC"},
@@ -936,6 +1048,7 @@ mod tests {
             positions: h.len(),
             sectors: vec![],
             updated: 0,
+            resolver: RESOLVER,
         }
     }
 
@@ -999,8 +1112,9 @@ mod tests {
         assert_eq!(m.lookup("Johnson & Johnson"), ["JNJ"]);
         // Two companies called Acme: no guess.
         assert!(m.lookup("Acme").is_empty());
-        // Same company with two share classes: both, primary first.
-        assert_eq!(m.lookup("Alphabet Inc Class A"), ["GOOGL", "GOOG"]);
+        // Same company with two share classes (and listed notes): all, primary first.
+        assert_eq!(m.lookup("Alphabet Inc Class A"), ["GOOGL", "GOOG", "GOOGN"]);
+        assert_eq!(m.lookup("Amazon.com Inc"), ["AMZN"]);
         assert_eq!(class_letter("Berkshire Hathaway Inc Class B"), Some('b'));
         assert_eq!(class_letter("Apple Inc"), None);
     }
@@ -1044,6 +1158,33 @@ mod tests {
         let mut c = vec![h("Alphabet Inc", 3.0)];
         resolve_tickers(&mut c, &[], &names);
         assert_eq!(c[0].ticker.as_deref(), Some("GOOGL"));
+        // The class from an N-PORT title, and an issuer whose listed notes outnumber its classes.
+        assert_eq!((title_class("ALPHABET INC-C"), title_class("FOX CORP - CLASS A")), (Some('C'), Some('A')));
+        assert_eq!(title_class("JOHNSON & JOHNSON"), None);
+        let mut d = vec![h("Alphabet Inc Class A", 3.2), h("Amazon.com Inc", 3.0), h("Alphabet Inc Class C", 2.6)];
+        resolve_tickers(&mut d, &[], &names);
+        let t: Vec<_> = d.iter().map(|x| x.ticker.as_deref()).collect();
+        assert_eq!(t, [Some("GOOGL"), Some("AMZN"), Some("GOOG")]);
+        // SEC conformed names: suffix-sensitive, reordered, spaced and abbreviated forms.
+        for (name, t) in [
+            ("Target Corp", "TGT"),
+            ("Charles Schwab Corp/The", "SCHW"),
+            ("O'Reilly Automotive Inc", "ORLY"),
+            ("Vertex Pharmaceuticals Inc", "VRTX"),
+            ("DR Horton Inc", "DHI"),
+            ("Air Products and Chemicals Inc", "APD"),
+            ("Exxon Mobil Corp", "XOM"),
+            ("Marriott International Inc/MD Class A", "MAR"),
+            ("Molson Coors Beverage Co Class B", "TAP"),
+        ] {
+            let mut x = vec![h(name, 1.0)];
+            resolve_tickers(&mut x, &[], &names);
+            assert_eq!(x[0].ticker.as_deref(), Some(t), "{name}");
+        }
+        // A lone named class with no suffix to match is left blank rather than guessed.
+        let mut e = vec![h("Alphabet Inc Class C", 2.6)];
+        resolve_tickers(&mut e, &[], &names);
+        assert_eq!(e[0].ticker, None);
     }
 
     #[test]

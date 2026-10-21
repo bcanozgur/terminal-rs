@@ -382,6 +382,12 @@ impl YahooProvider {
     }
 }
 
+/// An implied volatility Yahoo could not solve: ~0, or one of its search's starting points
+/// (100%, 50%, 25%, 12.5%, 6.25%, 3.125%…, exact powers of two) left on contracts without a usable quote.
+fn placeholder_iv(v: f64) -> bool {
+    v < 0.005 || (0..=12).any(|k| (v - 0.5f64.powi(k)).abs() < 1e-6)
+}
+
 /// Parse `/v7/finance/options/{symbol}`.
 pub fn parse_options(json: &str) -> Result<crate::OptionChain> {
     let v: serde_json::Value = serde_json::from_str(json).context("parsing Yahoo options")?;
@@ -408,8 +414,8 @@ pub fn parse_options(json: &str) -> Result<crate::OptionChain> {
                             ask: num(c, "ask"),
                             volume: c["volume"].as_u64(),
                             open_interest: c["openInterest"].as_u64(),
-                            // Yahoo reports ~0 as a placeholder for illiquid contracts.
-                            iv: num(c, "impliedVolatility").filter(|x| *x >= 0.005),
+                            iv: num(c, "impliedVolatility").filter(|x| !placeholder_iv(*x)),
+                            iv_solved: false,
                             in_the_money: c["inTheMoney"].as_bool().unwrap_or(false),
                         })
                     })
@@ -771,6 +777,16 @@ pub fn parse_search(json: &str) -> Result<Vec<SearchHit>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholder_ivs_are_dropped() {
+        for v in [1.0000000000000003e-05, 0.5, 0.25, 0.125, 0.0625, 0.03125, 1.0] {
+            assert!(placeholder_iv(v), "{v}");
+        }
+        for v in [0.29053443847656246, 0.2500211, 0.18042811767578126] {
+            assert!(!placeholder_iv(v), "{v}");
+        }
+    }
 
     #[test]
     fn extended_hours_sessions() {

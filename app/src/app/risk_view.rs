@@ -334,6 +334,8 @@ pub struct RiskPane {
     refresh: bool,
     ver: u64,
     cache: Option<(u64, Analysis)>,
+    /// Currency the loaded bars are expressed in (the account's).
+    currency: String,
 }
 
 impl RiskPane {
@@ -348,6 +350,7 @@ impl RiskPane {
             refresh: false,
             ver: 0,
             cache: None,
+            currency: "USD".into(),
         }
     }
 
@@ -441,7 +444,7 @@ impl TerminalApp {
         let mut actions = Vec::new();
         let ask = risk(ui, r, &hs, pf.is_some(), &ccy, &mut actions);
         if let Some((symbols, force)) = ask {
-            self.worker.send(Request::Risk(RiskReq::Load { pane: id, symbols, force }));
+            self.worker.send(Request::Risk(RiskReq::Load { pane: id, symbols, currency: ccy, force }));
         }
         actions
     }
@@ -474,6 +477,14 @@ pub fn risk(
     ccy: &str,
     actions: &mut Vec<Action>,
 ) -> Option<(Vec<String>, bool)> {
+    if p.currency != ccy {
+        // Every series is held in the account currency, so a different account reloads them.
+        p.currency = ccy.to_string();
+        p.bars.clear();
+        p.pending.clear();
+        p.cache = None;
+        p.ver += 1;
+    }
     let bkey = bench_key(&p.bench);
     let mut need: Vec<String> = hs.iter().filter(|h| h.skip_reason().is_none()).filter_map(|h| h.key.clone()).collect();
     need.push(bkey);
@@ -721,13 +732,25 @@ fn overview(ui: &mut Ui, a: &Analysis, ccy: &str) {
     if let Some(n) = &a.bench_note {
         ui.label(RichText::new(format!("Benchmark: {n}")).font(ui_font(11.5)).color(amber()));
     }
+    let foreign: Vec<String> = a
+        .corr_labels
+        .iter()
+        .zip(&a.corr_keys)
+        .filter_map(|(l, k)| {
+            let from = tr_data::native_currency(k);
+            (from != ccy).then(|| format!("{l} ({from})"))
+        })
+        .collect();
+    if !foreign.is_empty() {
+        dim(ui, format!("Converted to {ccy} at each day's FX rate: {}", foreign.join(", ")));
+    }
     ui.add_space(dp(4.0));
     curve_chart(ui, a);
     ui.add_space(dp(6.0));
     dim(
         ui,
         "Method: today's weights applied to daily returns (history of the same positions, not the account's real P&L); \
-         values are not converted between currencies. Local computation from Yahoo/Alpaca daily bars.",
+         prices quoted in another currency are converted to the account's at daily FX rates. Local computation from Yahoo/Alpaca daily bars.",
     );
     skipped_list(ui, a);
 }
@@ -1175,6 +1198,10 @@ mod tests {
         }
         let a = pane.analysis(&hs).unwrap();
         assert!(a.problem.is_none() && a.stats.is_some(), "{:?}", a.problem);
+        // Bars are held in the account currency: another currency asks for all of them again.
+        run(&ctx, |ui| ask = risk(ui, &mut pane, &hs, true, "TRY", &mut actions));
+        let (again, _) = ask.take().expect("history re-requested in the new currency");
+        assert_eq!(again, symbols);
         // Empty and not-yet-loaded states.
         let mut empty = RiskPane::new("corr", "", 504);
         run(&ctx, |ui| {

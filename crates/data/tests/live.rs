@@ -194,8 +194,14 @@ mod earnings {
             best = best.max(n.calendar(d).await.unwrap().len());
         }
         assert!(best > 0, "no earnings in the last two weeks");
+        // The per-ticker surprise endpoint answers "No record found" for every ticker since
+        // Oct 2026 (the history falls back to calendar days); it must still parse.
         let r = n.reported("AAPL").await.unwrap();
-        assert!(r.len() >= 3 && r[0].eps.is_some());
+        assert!(r.is_empty() || r[0].eps.is_some());
+        // A past report day carries the actual and the estimate the fallback relies on.
+        let day = n.calendar(chrono::NaiveDate::from_ymd_opt(2026, 7, 30).unwrap()).await.unwrap();
+        let aapl = day.iter().find(|c| c.symbol == "AAPL").expect("AAPL reported on 30 Jul 2026");
+        assert!(aapl.eps_actual.is_some() && aapl.eps_estimate.is_some());
         let _ = Timing::Unknown;
     }
 }

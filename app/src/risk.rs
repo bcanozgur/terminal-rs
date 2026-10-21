@@ -19,8 +19,9 @@ const FRESH_SECS: i64 = 4 * 86_400;
 const PARALLEL: usize = 4;
 
 pub enum RiskReq {
-    /// Daily history for each symbol; `force` skips the cache freshness check.
-    Load { pane: PaneId, symbols: Vec<String>, force: bool },
+    /// Daily history for each symbol in `currency` (the portfolio's); `force` skips the cache
+    /// freshness check.
+    Load { pane: PaneId, symbols: Vec<String>, currency: String, force: bool },
 }
 
 pub enum RiskResp {
@@ -62,16 +63,38 @@ async fn load_one(
     }
 }
 
+/// Re-express a series quoted in another currency (`XU100`, `THYAO.IS` in TRY) in the
+/// portfolio's, so returns, beta and correlation compare like with like.
+async fn in_currency(
+    provider: &dyn MarketData,
+    bars: Arc<Vec<Bar>>,
+    symbol: &str,
+    currency: &str,
+) -> Result<Arc<Vec<Bar>>, String> {
+    let from = tr_data::native_currency(symbol);
+    if from == currency {
+        return Ok(bars);
+    }
+    tr_data::convert_bars(provider, bars.to_vec(), from, currency, Timeframe::D1)
+        .await
+        .map(Arc::new)
+        .map_err(|e| format!("could not convert {from} to {currency}: {e:#}"))
+}
+
 pub async fn handle(
     req: RiskReq,
     provider: &Provider,
     cache: &Mutex<Option<BarCache>>,
     send: &(dyn Fn(RiskResp) + Sync),
 ) {
-    let RiskReq::Load { pane, symbols, force } = req;
+    let RiskReq::Load { pane, symbols, currency, force } = req;
+    let currency = &currency;
     futures::stream::iter(symbols)
         .for_each_concurrent(PARALLEL, |symbol| async move {
-            let bars = load_one(provider.as_ref(), cache, &symbol, force).await;
+            let bars = match load_one(provider.as_ref(), cache, &symbol, force).await {
+                Ok(b) => in_currency(provider.as_ref(), b, &symbol, currency).await,
+                e => e,
+            };
             send(RiskResp::Bars { pane, symbol, bars });
         })
         .await;

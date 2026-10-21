@@ -20,6 +20,8 @@ use crate::worker::Request;
 const TOP: usize = 10;
 /// Shared holdings listed in the overlap view.
 const OVERLAP_ROWS: usize = 60;
+/// Rows of the filtered holdings table.
+const MATCH_ROWS: usize = 200;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -276,16 +278,18 @@ fn dim(ui: &mut Ui, s: impl Into<String>) {
     ui.label(RichText::new(s.into()).font(ui_font(11.5)).color(muted()));
 }
 
-pub fn etf(ui: &mut Ui, p: &mut EtfPane) -> Vec<Action> {
+/// `q` is the pane's filter (lower case): it narrows the fund list, a fund's holdings (all of
+/// them, not only the top ten), reverse search hits and overlap rows.
+pub fn etf(ui: &mut Ui, p: &mut EtfPane, q: &str) -> Vec<Action> {
     let mut actions = Vec::new();
     let mut next: Option<View> = None;
     header(ui, p, &mut next);
     ui.add_space(dp(4.0));
     match p.view.clone() {
-        View::List => list(ui, p, &mut next),
-        View::Detail(t) => detail(ui, p, &t, &mut next, &mut actions),
-        View::Reverse(t) => reverse(ui, p, &t, &mut next, &mut actions),
-        View::Overlap(a, b) => overlap(ui, p, &a, &b, &mut next),
+        View::List => list(ui, p, q, &mut next),
+        View::Detail(t) => detail(ui, p, &t, q, &mut next, &mut actions),
+        View::Reverse(t) => reverse(ui, p, &t, q, &mut next, &mut actions),
+        View::Overlap(a, b) => overlap(ui, p, &a, &b, q, &mut next),
     }
     if let Some(v) = next {
         p.open(v);
@@ -369,7 +373,16 @@ fn status(p: &EtfPane, ticker: &str) -> (String, Color32) {
     }
 }
 
-fn list(ui: &mut Ui, p: &mut EtfPane, next: &mut Option<View>) {
+/// `s` contains `q` ignoring case (`q` is already lower case); a blank `q` matches.
+fn hit(s: &str, q: &str) -> bool {
+    q.is_empty() || s.to_lowercase().contains(q)
+}
+
+fn holding_hit(h: &etf::Holding, q: &str) -> bool {
+    hit(&h.name, q) || h.ticker.as_deref().is_some_and(|t| hit(t, q))
+}
+
+fn list(ui: &mut Ui, p: &mut EtfPane, pane_q: &str, next: &mut Option<View>) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut p.filter)
@@ -397,10 +410,8 @@ fn list(ui: &mut Ui, p: &mut EtfPane, next: &mut Option<View>) {
             .map(|(t, n, c)| (t.to_string(), n.to_string(), c.to_string()))
             .chain(extra.iter().map(|f| (f.ticker.clone(), f.name.clone(), "Other".to_string())))
             .filter(|(t, n, c)| {
-                (q.is_empty()
-                    || t.to_lowercase().contains(&q)
-                    || n.to_lowercase().contains(&q)
-                    || c.to_lowercase().contains(&q))
+                (hit(t, &q) || hit(n, &q) || hit(c, &q))
+                    && (hit(t, pane_q) || hit(n, pane_q) || hit(c, pane_q))
                     && (!p.indexed_only || p.funds.contains_key(t))
             })
             .collect();
@@ -442,7 +453,7 @@ fn back(ui: &mut Ui, next: &mut Option<View>) {
     }
 }
 
-fn detail(ui: &mut Ui, p: &mut EtfPane, t: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
+fn detail(ui: &mut Ui, p: &mut EtfPane, t: &str, q: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
     let fund = p.funds.get(t).cloned();
     ui.horizontal(|ui| {
         back(ui, next);
@@ -476,6 +487,10 @@ fn detail(ui: &mut Ui, p: &mut EtfPane, t: &str, next: &mut Option<View>, action
         });
         meta(ui, &f);
         ui.add_space(dp(8.0));
+        if !q.is_empty() {
+            matching_holdings(ui, &f, q, next, actions);
+            return;
+        }
         let (top, other) = f.top_and_other(TOP);
         let wide = ui.available_width() > dp(640.0);
         let mut hover = None;
@@ -709,7 +724,61 @@ fn holdings_table(
     });
 }
 
-fn reverse(ui: &mut Ui, p: &mut EtfPane, t: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
+/// Every holding matching the pane filter, ranked by weight across the whole portfolio.
+fn matching_holdings(ui: &mut Ui, f: &Fund, q: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
+    let rows: Vec<(usize, &etf::Holding)> = f.holdings.iter().enumerate().filter(|(_, h)| holding_hit(h, q)).collect();
+    let shown = rows.len().min(MATCH_ROWS);
+    ui.label(
+        RichText::new(format!("{} of {} holdings match \"{q}\"", rows.len(), f.holdings.len()))
+            .font(ui_font(13.0))
+            .color(text()),
+    );
+    if rows.is_empty() {
+        let why = if f.partial() { " Yahoo lists only this fund's top 10." } else { "" };
+        dim(ui, format!("No holding's name or ticker contains it.{why}"));
+        return;
+    }
+    let weight: f64 = rows.iter().map(|(_, h)| h.weight).sum();
+    dim(ui, format!("Together {} of net assets. # is the rank by weight in the fund.", pct(weight)));
+    egui::Grid::new(("etf-match", &f.ticker)).num_columns(5).striped(true).spacing([dp(12.0), dp(4.0)]).show(
+        ui,
+        |ui| {
+            for h in ["#", "Holding", "Ticker", "Weight", "Value"] {
+                ui.label(RichText::new(h).font(ui_font(11.0)).color(muted()));
+            }
+            ui.end_row();
+            for (i, h) in rows.iter().take(shown) {
+                ui.label(RichText::new((i + 1).to_string()).font(mono(11.5)).color(muted()));
+                ui.label(RichText::new(&h.name).font(ui_font(12.5)).color(text()));
+                match &h.ticker {
+                    Some(t) => {
+                        let r = link(ui, t, amber()).on_hover_text("Open the chart");
+                        if r.clicked() {
+                            actions.push(Action::Command(t.clone()));
+                        }
+                        r.context_menu(|ui| {
+                            if ui.button(format!("Which ETFs hold {t}")).clicked() {
+                                *next = Some(View::Reverse(t.clone()));
+                                ui.close();
+                            }
+                        });
+                    }
+                    None => {
+                        ui.label(RichText::new("–").font(mono(12.5)).color(muted())).on_hover_text("Ticker unknown");
+                    }
+                }
+                ui.label(RichText::new(pct(h.weight)).font(mono(12.5)).color(text()));
+                ui.label(RichText::new(h.value.map_or_else(|| "–".into(), fmt_money)).font(mono(12.0)).color(muted()));
+                ui.end_row();
+            }
+        },
+    );
+    if rows.len() > shown {
+        dim(ui, format!("… and {} more; narrow the filter to see them", rows.len() - shown));
+    }
+}
+
+fn reverse(ui: &mut Ui, p: &mut EtfPane, t: &str, q: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new("Which ETFs hold").font(ui_font(12.5)).color(text()));
         let r = ui.add(
@@ -749,6 +818,11 @@ fn reverse(ui: &mut Ui, p: &mut EtfPane, t: &str, next: &mut Option<View>, actio
     if hits.is_empty() {
         return;
     }
+    let hits: Vec<&etf::Held> = hits.iter().filter(|h| hit(&h.fund, q) || hit(&h.name, q)).collect();
+    if hits.is_empty() {
+        dim(ui, format!("None of these funds matches \"{q}\"."));
+        return;
+    }
     egui::ScrollArea::vertical().id_salt("etf-reverse").auto_shrink([false, false]).show(ui, |ui| {
         egui::Grid::new("etf-reverse-grid").num_columns(4).striped(true).spacing([dp(14.0), dp(4.0)]).show(ui, |ui| {
             for h in ["ETF", "Name", "Weight", "Value"] {
@@ -772,7 +846,7 @@ fn reverse(ui: &mut Ui, p: &mut EtfPane, t: &str, next: &mut Option<View>, actio
     });
 }
 
-fn overlap(ui: &mut Ui, p: &mut EtfPane, a: &str, b: &str, next: &mut Option<View>) {
+fn overlap(ui: &mut Ui, p: &mut EtfPane, a: &str, b: &str, q: &str, next: &mut Option<View>) {
     ui.horizontal_wrapped(|ui| {
         let mut enter = false;
         for (buf, hint) in [(&mut p.ov_a, "ETF A"), (&mut p.ov_b, "ETF B")] {
@@ -838,7 +912,8 @@ fn overlap(ui: &mut Ui, p: &mut EtfPane, a: &str, b: &str, next: &mut Option<Vie
                 ui.label(RichText::new(h).font(ui_font(11.0)).color(muted()));
             }
             ui.end_row();
-            for s in o.shared.iter().take(OVERLAP_ROWS) {
+            let rows = o.shared.iter().filter(|s| hit(&s.name, q) || s.ticker.as_deref().is_some_and(|t| hit(t, q)));
+            for s in rows.take(OVERLAP_ROWS) {
                 ui.label(RichText::new(&s.name).font(ui_font(12.5)).color(text()));
                 ui.label(RichText::new(s.ticker.as_deref().unwrap_or("–")).font(mono(12.5)).color(amber()));
                 ui.label(RichText::new(pct(s.a)).font(mono(12.5)).color(text()));
@@ -847,7 +922,7 @@ fn overlap(ui: &mut Ui, p: &mut EtfPane, a: &str, b: &str, next: &mut Option<Vie
                 ui.end_row();
             }
         });
-        if o.shared.len() > OVERLAP_ROWS {
+        if q.is_empty() && o.shared.len() > OVERLAP_ROWS {
             dim(ui, format!("… and {} smaller shared holdings", o.shared.len() - OVERLAP_ROWS));
         }
     });
@@ -856,6 +931,22 @@ fn overlap(ui: &mut Ui, p: &mut EtfPane, a: &str, b: &str, next: &mut Option<Vie
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_filter_matches_holding_names_and_tickers() {
+        let h = |name: &str, t: Option<&str>| etf::Holding {
+            name: name.into(),
+            ticker: t.map(Into::into),
+            cusip: None,
+            weight: 1.0,
+            value: None,
+        };
+        assert!(holding_hit(&h("NVIDIA Corp", Some("NVDA")), "nvd"));
+        assert!(holding_hit(&h("NVIDIA Corp", Some("NVDA")), "nvidia"));
+        assert!(holding_hit(&h("Berkshire Hathaway Inc Class B", Some("BRK-B")), "brk"));
+        assert!(!holding_hit(&h("Apple Inc", None), "msft"));
+        assert!(holding_hit(&h("Apple Inc", None), ""));
+    }
 
     #[test]
     fn switching_view_rereads_the_disk_cache() {

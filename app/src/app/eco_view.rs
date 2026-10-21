@@ -166,12 +166,14 @@ fn calendar(ui: &mut Ui, pane: &mut EcoPane, q: &str) {
         .collect();
     let mut open = None;
     let footer_h = dp(56.0);
-    egui::ScrollArea::vertical()
+    // Below this width the right-aligned number columns run into the event names, so a
+    // narrow pane scrolls sideways instead.
+    egui::ScrollArea::both()
         .id_salt("eco-rows")
         .max_height((ui.available_height() - footer_h).max(dp(80.0)))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let w = ui.available_width();
+            let w = ui.available_width().max(dp(560.0));
             let cols = Columns::new(w);
             header(ui, &cols);
             if rows.is_empty() {

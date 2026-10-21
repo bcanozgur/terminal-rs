@@ -157,6 +157,7 @@ pub fn simulated_chain(symbol: &str, spot: f64, expiration: Option<i64>, now: i6
                 volume: Some(oi / 5),
                 open_interest: Some(oi),
                 iv: Some(vol),
+                iv_solved: false,
                 in_the_money: if call { strike < spot } else { strike > spot },
             };
             if call { calls.push(c) } else { puts.push(c) }

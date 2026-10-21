@@ -159,11 +159,15 @@ impl Report {
     }
 }
 
-/// A report with the month it covers.
+/// A report with the period it covers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub year: i32,
+    /// The month, or the week for a fund that reports weekly (see `weekly`).
     pub month: u32,
+    /// KAP's period (`donem`) is a week number: some serbest funds file every week.
+    #[serde(default)]
+    pub weekly: bool,
     /// KAP disclosure number.
     pub index: u64,
     /// Publication date as KAP prints it (`05.10.2026 13:00:53`).
@@ -173,12 +177,16 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn label(&self) -> String {
+        // Copies saved before `weekly` existed still show week numbers above 12.
+        if self.weekly || self.month > 12 {
+            return format!("Week {} {}", self.month, self.year);
+        }
         NaiveDate::from_ymd_opt(self.year, self.month.clamp(1, 12), 1)
             .map_or_else(|| format!("{}-{:02}", self.year, self.month), |d| d.format("%b %Y").to_string())
     }
 
-    fn key(&self) -> i32 {
-        self.year * 12 + self.month as i32
+    fn key(&self) -> (i32, u32) {
+        (self.year, self.month)
     }
 }
 
@@ -564,6 +572,7 @@ pub struct ReportRef {
     pub year: i32,
     pub month: u32,
     pub published: String,
+    pub weekly: bool,
 }
 
 /// The reports in a `FILTERYFBF` response, newest month first, one per month (the last filed
@@ -584,11 +593,22 @@ pub fn parse_report_refs(json: &str) -> Result<Vec<ReportRef>> {
                 year: b.get("year")?.as_i64()? as i32,
                 month: b.get("donem")?.as_u64()? as u32,
                 published: b.get("publishDate").and_then(|p| p.as_str()).unwrap_or_default().to_string(),
+                weekly: false,
             })
         })
         .collect();
     refs.sort_by_key(|r| std::cmp::Reverse((r.year, r.month, r.index)));
     refs.dedup_by_key(|r| (r.year, r.month));
+    // A weekly filer: a period past 12, or the two newest reports published under 20 days apart.
+    let day = |r: &ReportRef| NaiveDate::parse_from_str(r.published.get(..10)?, "%d.%m.%Y").ok();
+    let close = match (refs.first().and_then(day), refs.get(1).and_then(day)) {
+        (Some(a), Some(b)) => (a - b).num_days().abs() < 20,
+        _ => false,
+    };
+    let weekly = close || refs.iter().any(|r| r.month > 12);
+    for r in &mut refs {
+        r.weekly = weekly;
+    }
     Ok(refs)
 }
 
@@ -659,22 +679,28 @@ pub fn parse_valor(text: &str) -> Option<String> {
 
 /// The attachment id of a disclosure from `attachment-detail`.
 pub fn parse_attachment(json: &str) -> Result<String> {
+    parse_attachments(json)?.into_iter().next().ok_or_else(|| anyhow!("the disclosure has no PDF attachment"))
+}
+
+/// Every PDF attachment's file id, in KAP's order. Some managers split a report over several
+/// files (the portfolio table in one, the buys and sells in another).
+pub fn parse_attachments(json: &str) -> Result<Vec<String>> {
     let v: serde_json::Value = serde_json::from_str(json).context("KAP attachment list")?;
-    v.pointer("/0/attachments")
+    Ok(v.pointer("/0/attachments")
         .and_then(|a| a.as_array())
-        .and_then(|a| {
-            a.iter()
-                .find(|x| x.get("fileExtension").and_then(|e| e.as_str()).is_none_or(|e| e.eq_ignore_ascii_case("pdf")))
-        })
-        .and_then(|x| x.get("objId").and_then(|o| o.as_str()))
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("the disclosure has no PDF attachment"))
+        .into_iter()
+        .flatten()
+        .filter(|x| x.get("fileExtension").and_then(|e| e.as_str()).is_none_or(|e| e.eq_ignore_ascii_case("pdf")))
+        .filter_map(|x| x.get("objId").and_then(|o| o.as_str()).map(str::to_string))
+        .collect())
 }
 
 // ---- PDF text -----------------------------------------------------------------------------
 
 struct Glyph {
     page: u32,
+    /// Position in the content stream.
+    seq: usize,
     x: f64,
     end: f64,
     y: f64,
@@ -717,6 +743,7 @@ impl pdf_extract::OutputDev for Collector {
         let x = trm.m31;
         self.glyphs.push(Glyph {
             page: self.page,
+            seq: self.glyphs.len(),
             x,
             end: x + width * size,
             y: self.height - trm.m32,
@@ -755,24 +782,64 @@ pub fn pdf_lines(pdf: &[u8]) -> Result<Vec<String>> {
         while j < g.len() && g[j].page == g[i].page && (g[j].y - g[i].y).abs() < tol {
             j += 1;
         }
+        // Runs of glyphs drawn left to right, in stream order. Where a font's widths are off, a
+        // cell's glyphs reach past the next cell's start and sorting single glyphs by position
+        // interleaves the two (`2,298,400.10.033%` for `2,298,400.00` and `1.33%`); whole runs
+        // sorted by where they start keep each cell intact.
         let mut row: Vec<&Glyph> = g[i..j].iter().collect();
-        row.sort_by(|a, b| a.x.total_cmp(&b.x));
+        row.sort_by_key(|gl| gl.seq);
+        let mut runs: Vec<Vec<&Glyph>> = Vec::new();
+        for gl in row {
+            match runs.last_mut() {
+                Some(run)
+                    if run.last().is_some_and(|p| gl.x >= p.x - 0.1 * gl.size && gl.x <= p.end + 1.5 * gl.size) =>
+                {
+                    run.push(gl)
+                }
+                _ => runs.push(vec![gl]),
+            }
+        }
+        runs.sort_by(|a, b| a[0].x.total_cmp(&b[0].x));
         let mut s = String::new();
         let mut end = f64::MIN;
-        for gl in row {
-            if end > f64::MIN && gl.x > end + 0.15 * gl.size {
-                s.push(' ');
-                if gl.x > end + 1.5 * gl.size {
+        for run in runs {
+            for (k, gl) in run.into_iter().enumerate() {
+                if end > f64::MIN && gl.x > end + 0.15 * gl.size {
                     s.push(' ');
+                    if gl.x > end + 1.5 * gl.size {
+                        s.push(' ');
+                    }
+                } else if k == 0 && end > f64::MIN {
+                    // A run starting inside the previous one: a separate cell.
+                    s.push_str("  ");
                 }
+                s.push_str(&gl.text);
+                end = gl.end;
             }
-            s.push_str(&gl.text);
-            end = gl.end;
         }
-        lines.push(s);
+        lines.push(fix_turkish(s));
         i = j;
     }
+    if lines.iter().all(|l| l.trim().is_empty()) {
+        bail!("the report PDF has no text layer (a scanned image), so it cannot be read");
+    }
     Ok(lines)
+}
+
+/// Some managers' fonts map the Turkish letters to their neighbours in Latin Extended-A
+/// (`BĠRĠNCĠ`, `KuruluĢ`, `A.ġ`); those code points do not occur in Turkish text.
+fn fix_turkish(s: String) -> String {
+    if !s.contains(['Ġ', 'ġ', 'Ģ']) {
+        return s;
+    }
+    s.chars()
+        .map(|c| match c {
+            'Ġ' => 'İ',
+            'Ģ' => 'ş',
+            'ġ' => 'Ş',
+            c => c,
+        })
+        .collect()
 }
 
 /// KAP serves attachments as a serialized Java byte array around the PDF: cut to `%PDF-`.
@@ -944,11 +1011,19 @@ fn stock_row(line: &str, comma_decimal: bool, total: Option<f64>) -> Option<(Pos
     if nums.len() < 3 {
         return None;
     }
+    // `TICKER name nominal value %` (Ata Portföy): taken when the percent agrees with value / total
+    // (weights are of the portfolio value, a little below the fund total).
+    let three = nums.len() == 3 && nums[2].ends_with('%') && {
+        match (parse_num(nums[1], comma_decimal), parse_num(nums[2], comma_decimal), total) {
+            (Some(v), Some(pct), Some(t)) if t > 0.0 => (v / t * 100.0 - pct).abs() <= 0.05 + 0.05 * pct.abs(),
+            _ => false,
+        }
+    };
     // Dated lot rows and `TICKER ISIN name nominal value %` rows end with the percent column.
-    if !(dated || isin_first) && nums.len() < 4 {
+    if !(dated || isin_first || three) && nums.len() < 4 {
         return None;
     }
-    let weight = if dated || isin_first || total.is_none() {
+    let weight = if dated || isin_first || three || total.is_none() {
         parse_num(nums.last()?, comma_decimal)?
     } else {
         parse_num(nums.get(1)?, comma_decimal)? / total? * 100.0
@@ -977,7 +1052,10 @@ pub fn parse_report(lines: &[String]) -> Result<Report> {
     let total_tok = (end.min(lines.len())..lines.len()).find_map(|i| {
         strip_label(&up[i])
             .starts_with("FON TOPLAM DEĞERİ")
-            .then(|| value_part(&lines[i]).split_whitespace().find(|t| is_num(t)).map(str::to_string))
+            // Past the list label, which reads as a number (`4- FON TOPLAM DEĞERİ TABLOSU`).
+            .then(|| {
+                value_part(strip_label(lines[i].trim())).split_whitespace().find(|t| is_num(t)).map(str::to_string)
+            })
             .flatten()
     });
     let header = |pred: &dyn Fn(&str) -> bool| (0..start).find(|&i| pred(&up[i])).map(|i| lines[i].as_str());
@@ -1291,15 +1369,41 @@ async fn download_attachment(index: u64) -> Result<Vec<u8>> {
 }
 
 async fn fetch_snapshot(r: &ReportRef) -> Result<Snapshot> {
-    let bytes = download_attachment(r.index).await?;
+    let detail = get_json(&format!("{BASE}/tr/api/notification/attachment-detail/{}", r.index)).await?;
+    let ids = parse_attachments(&detail)?;
+    if ids.is_empty() {
+        bail!("the disclosure has no PDF attachment");
+    }
+    let mut files = Vec::new();
+    for id in ids.iter().take(4) {
+        files.push(get(&format!("{BASE}/tr/api/file/download/{id}")).await?);
+    }
     let report = tokio::task::spawn_blocking(move || {
-        let pdf = strip_wrapper(&bytes);
-        let lines = std::panic::catch_unwind(|| pdf_lines(pdf)).map_err(|_| anyhow!("PDF reader crashed"))??;
-        parse_report(&lines)
+        // All files' lines together; an unreadable file is skipped while another one reads.
+        let mut lines = Vec::new();
+        let mut err = None;
+        for bytes in &files {
+            let pdf = strip_wrapper(bytes);
+            match std::panic::catch_unwind(|| pdf_lines(pdf)).map_err(|_| anyhow!("PDF reader crashed")) {
+                Ok(Ok(l)) => lines.extend(l),
+                Ok(Err(e)) | Err(e) => err = err.or(Some(e)),
+            }
+        }
+        match err {
+            Some(e) if lines.is_empty() => Err(e),
+            _ => parse_report(&lines),
+        }
     })
     .await
     .context("report parse task")??;
-    Ok(Snapshot { year: r.year, month: r.month, index: r.index, published: r.published.clone(), report })
+    Ok(Snapshot {
+        year: r.year,
+        month: r.month,
+        weekly: r.weekly,
+        index: r.index,
+        published: r.published.clone(),
+        report,
+    })
 }
 
 /// Load a fund: the disk copy while fresh, else KAP (the profile, the two newest monthly reports;
@@ -1669,6 +1773,7 @@ FON TOPLAM DEĞERİ  2,429,017,049.68  100.00
         let snap = |m: u32, w: f64| Snapshot {
             year: 2026,
             month: m,
+            weekly: false,
             index: 1,
             published: String::new(),
             report: Report {
@@ -1761,10 +1866,31 @@ FON TOPLAM DEĞERİ  2,429,017,049.68  100.00
           {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":10,"year":2026,"donem":7,"publishDate":"03.08.2026 10:00:00"}}]"#;
         let refs = parse_report_refs(json).unwrap();
         assert_eq!(refs.iter().map(|r| (r.month, r.index)).collect::<Vec<_>>(), [(9, 31), (8, 20), (7, 10)]);
+        assert!(refs.iter().all(|r| !r.weekly));
         assert_eq!(parse_prospectus_refs(json), [99, 50, 120]);
+        // A serbest fund filing every week: KAP's period is the week number.
+        let weekly = r#"[
+          {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":2,"year":2026,"donem":5,"publishDate":"10.02.2026 16:00:00"}},
+          {"disclosureBasic":{"title":"Portföy Dağılım Raporu","disclosureIndex":1,"year":2026,"donem":4,"publishDate":"03.02.2026 16:00:00"}}]"#;
+        let refs = parse_report_refs(weekly).unwrap();
+        assert!(refs.iter().all(|r| r.weekly));
+        let s = Snapshot {
+            year: 2026,
+            month: 40,
+            weekly: false,
+            index: 1,
+            published: String::new(),
+            report: Report::default(),
+        };
+        assert_eq!(s.label(), "Week 40 2026");
+        assert_eq!(Snapshot { month: 9, ..s.clone() }.label(), "Sep 2026");
+        assert_eq!(Snapshot { month: 5, weekly: true, ..s }.label(), "Week 5 2026");
         let att =
             r#"[{"disclosure":{},"attachments":[{"objId":"abc123","fileName":"TTE.pdf","fileExtension":"pdf"}]}]"#;
         assert_eq!(parse_attachment(att).unwrap(), "abc123");
+        let two = r#"[{"attachments":[{"objId":"a","fileExtension":"pdf"},{"objId":"x","fileExtension":"xlsx"},{"objId":"b","fileExtension":"PDF"}]}]"#;
+        assert_eq!(parse_attachments(two).unwrap(), ["a", "b"]);
+        assert_eq!(fix_turkish("III-FON PORTFÖY DEĞERĠ, KuruluĢ, A.ġ".into()), "III-FON PORTFÖY DEĞERİ, Kuruluş, A.Ş");
         assert!(parse_attachment("[]").is_err());
     }
 }

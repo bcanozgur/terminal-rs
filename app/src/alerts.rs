@@ -107,8 +107,18 @@ fn finite(v: Option<f64>) -> Option<f64> {
 }
 
 /// `250`, `250.5`, `0.0012`: the shortest form of a level.
+/// A level as typed (`250`, `250.5`), with float noise from older chart-made alerts
+/// (`101.75463664`) rounded off for display.
 fn num(x: f64) -> String {
-    format!("{x}")
+    let d = if x.abs() >= 100.0 {
+        2
+    } else if x.abs() >= 1.0 {
+        4
+    } else {
+        6
+    };
+    let s = format!("{x:.d$}");
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
 fn signed_pct(x: f64) -> String {
@@ -790,6 +800,8 @@ mod tests {
     fn labels() {
         assert_eq!(spec("AAPL > 250").unwrap().cond.label(), "Last >= 250");
         assert_eq!(spec("AAPL > 250.5").unwrap().cond.label(), "Last >= 250.5");
+        assert_eq!(spec("SOXL > 101.75463664").unwrap().cond.label(), "Last >= 101.75");
+        assert_eq!(spec("EURUSD > 1.123456").unwrap().cond.label(), "Last >= 1.1235");
         assert_eq!(spec("NVDA RSI > 70").unwrap().cond.label(), "RSI(14) >= 70");
         assert_eq!(spec("MSFT < SMA 50").unwrap().cond.label(), "Last crosses below SMA(50)");
         assert_eq!(spec("TSLA CHG > 5").unwrap().cond.label(), "Chg% >= +5%");

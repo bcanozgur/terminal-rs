@@ -315,13 +315,18 @@ pub fn status(ex: Exchange, now: DateTime<Utc>) -> MarketStatus {
         Exchange::Bist => (t(9, 40), t(10, 0), close),
     };
     let early = if info.is_some() { " (early close)" } else { "" };
+    // Times are the exchange's own wall clock, which is not necessarily the viewer's.
+    let zone = match ex {
+        Exchange::Nyse => "ET",
+        Exchange::Bist => "Istanbul time",
+    };
     if time < pre_open {
-        result(Phase::Closed, format!("{name} is closed until {} local time", pre_open.format("%H:%M")))
+        result(Phase::Closed, format!("{name} is closed until {} {zone}", pre_open.format("%H:%M")))
     } else if time < open {
         let what = if ex == Exchange::Nyse { "pre-market" } else { "its opening session" };
-        result(Phase::Pre, format!("{name} is in {what}; regular trading starts at {}", open.format("%H:%M")))
+        result(Phase::Pre, format!("{name} is in {what}; regular trading starts at {} {zone}", open.format("%H:%M")))
     } else if time < close {
-        result(Phase::Regular, format!("{name} is open{early}, closing at {}", close.format("%H:%M")))
+        result(Phase::Regular, format!("{name} is open{early}, closing at {} {zone}", close.format("%H:%M")))
     } else if time < after_end {
         result(Phase::After, format!("{name} is in after-hours trading{early}"))
     } else {

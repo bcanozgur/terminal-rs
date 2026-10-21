@@ -8,6 +8,32 @@ use crate::theme::{amber, dp, mono, muted, text, ui_font};
 /// Release days, newest first: date, headline, items.
 const ENTRIES: &[(&str, &str, &[&str])] = &[
     (
+        "2026-10-22",
+        "Fixes, data quality and search",
+        &[
+            "Search button on the TR Funds, ETF and Economic Calendar pane headers: filters the fund list, every \
+             holding of the open fund (not only the top 10), its buys and sells, reverse search hits and overlap \
+             rows.",
+            "The sidebar watchlist folds like BIST 30: click its header; the choice is remembered.",
+            "TRF: reads more managers' reports (garbled Turkish letters, reports split over several PDFs, rows with \
+             only nominal and value), fixes fund sizes read from the wrong line and labels weekly reports \
+             (Week 41 2026). A scanned report without text now says so.",
+            "ETF: issuer names matched to tickers far more often (VOO 498 of 513), with share classes kept apart \
+             (GOOGL / GOOG, TAP / TAP-A).",
+            "OMON: Yahoo's placeholder IVs are dropped and solved from the quote instead (shown as ≈); the default \
+             expiry skips a same-day expiry that has already closed.",
+            "RISK: series in another currency (XU100 in TRY) are converted at daily FX rates instead of mixed in as \
+             is.",
+            "FUT: expired contracts no longer show as the front month.",
+            "MOST: says whether the market is open, pre-market or after hours, and which session the changes are \
+             from.",
+            "ERN: report history falls back to the calendar when Nasdaq's history is empty, sessions come from \
+             EDGAR filing times and EPS is adjusted for stock splits.",
+            "ECO and the yield curve load again (FRED stopped answering the app's requests); market status names \
+             the exchange's time zone; chart alert levels are rounded to the instrument's precision.",
+        ],
+    ),
+    (
         "2026-10-16",
         "Research, data quality and alerts",
         &[

@@ -192,6 +192,7 @@ impl TreasuryProvider {
         let resp = self
             .client
             .get(FRED)
+            .header(reqwest::header::USER_AGENT, crate::eco::FRED_USER_AGENT)
             .query(&[("id", series.to_string()), ("cosd", format!("{from_year}-01-01"))])
             .send()
             .await?;

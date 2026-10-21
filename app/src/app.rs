@@ -164,7 +164,20 @@ impl OptionsPane {
     }
 
     /// Store a chain and derive greeks from each contract's implied volatility.
-    pub fn set_chain(&mut self, chain: Box<tr_data::OptionChain>, rate: f64, now: i64) {
+    pub fn set_chain(&mut self, mut chain: Box<tr_data::OptionChain>, rate: f64, now: i64) {
+        // Expiry at the 16:00 New York close (≈ 20:00 UTC) of the expiration date.
+        let t = ((chain.expiration + 20 * 3600 - now) as f64 / (365.0 * 86_400.0)).max(0.5 / 365.0);
+        // Yahoo keeps listing a same-day expiry after the close; the nearest one still trading
+        // is the useful default.
+        if self.expiration.is_none()
+            && chain.expiration + 20 * 3600 <= now
+            && let Some(&live) = chain.expirations.iter().find(|&&e| e + 20 * 3600 > now)
+        {
+            self.expiration = Some(live);
+            self.fetched = None;
+            return;
+        }
+        solve_missing_ivs(&mut chain, t, rate);
         self.an.cache.insert(chain.expiration, chain.clone());
         if !self.an.queue.is_empty() {
             self.fetched = None; // load the next queued expiration right away
@@ -176,8 +189,6 @@ impl OptionsPane {
             }
             return;
         }
-        // Expiry at the 16:00 New York close (≈ 20:00 UTC) of the expiration date.
-        let t = ((chain.expiration + 20 * 3600 - now) as f64 / (365.0 * 86_400.0)).max(0.5 / 365.0);
         let g = |call: bool, c: &tr_data::OptionContract| {
             tr_core::options::black_scholes(call, chain.spot, c.strike, t, rate, chain.dividend_yield, c.iv?)
                 .map(|(_, g)| g)
@@ -191,6 +202,25 @@ impl OptionsPane {
         self.chain = Some(chain);
         self.error = None;
         self.loading = false;
+    }
+}
+
+/// Fill in implied volatilities the source left out (Yahoo's placeholders are dropped when the
+/// chain is parsed) from each contract's own price: the bid/ask midpoint when both sides are
+/// quoted, else the last trade. Contracts whose price no volatility explains stay without one.
+fn solve_missing_ivs(chain: &mut tr_data::OptionChain, t: f64, rate: f64) {
+    let (spot, q) = (chain.spot, chain.dividend_yield);
+    for (call, side) in [(true, &mut chain.calls), (false, &mut chain.puts)] {
+        for c in side.iter_mut().filter(|c| c.iv.is_none()) {
+            let price = match (c.bid, c.ask) {
+                (Some(b), Some(a)) if b > 0.0 && a >= b => Some((a + b) / 2.0),
+                _ => c.last.filter(|_| c.volume.is_some_and(|v| v > 0)),
+            };
+            if let Some(iv) = price.and_then(|p| tr_core::options::implied_vol(call, spot, c.strike, t, rate, q, p)) {
+                c.iv = Some(iv);
+                c.iv_solved = true;
+            }
+        }
     }
 }
 
@@ -487,6 +517,9 @@ impl PaneKind {
             PaneKind::News(_) => "Filter headlines…",
             PaneKind::Portfolio(_) => "Filter by symbol…",
             PaneKind::Earnings(_) => "Filter by ticker or company…",
+            PaneKind::Eco(_) => "Filter by event or code…",
+            PaneKind::Etf(_) => "Find an ETF, or a holding by ticker or name…",
+            PaneKind::TrFunds(_) => "Find a fund, or a stock in it…",
             _ => return None,
         })
     }
@@ -689,6 +722,9 @@ struct Settings {
     wl_columns: BTreeMap<String, crate::wlcols::ListCols>,
     #[serde(default = "default_true")]
     sidebar: bool,
+    /// The sidebar's watchlist section is unfolded.
+    #[serde(default = "default_true")]
+    watchlist_open: bool,
     /// Name of the layout to restore on launch.
     #[serde(default)]
     active_layout: Option<String>,
@@ -823,6 +859,8 @@ pub struct TerminalApp {
     wei_order: Vec<String>,
     /// Extra sidebar lists under the watchlist.
     groups: Vec<WatchGroup>,
+    /// The sidebar's watchlist section is unfolded (the extra lists keep their own flag).
+    watchlist_open: bool,
     /// Watchlist column settings and their statistics.
     wl: crate::wlcols::State,
     /// Latest network search results and the query they answer.
@@ -988,6 +1026,7 @@ impl TerminalApp {
             wei_updated: None,
             wei_order: Vec::new(),
             groups: vec![WatchGroup::bist30()],
+            watchlist_open: true,
             wl: Default::default(),
             net_hits: (String::new(), Vec::new()),
             search_pending: None,
@@ -1041,6 +1080,7 @@ impl TerminalApp {
                 app.groups = g.clone();
             }
             app.sidebar_open = s.sidebar;
+            app.watchlist_open = s.watchlist_open;
             if let Some(name) = &s.active_layout {
                 match app.store.load(name) {
                     Ok(d) => doc = Some(d),
@@ -1075,6 +1115,7 @@ impl TerminalApp {
             groups: Some(self.groups.clone()),
             wl_columns: self.wl.lists.clone(),
             sidebar: self.sidebar_open,
+            watchlist_open: self.watchlist_open,
             active_layout: Some(self.layout_name.clone()),
             layout: None,
             panes: None,

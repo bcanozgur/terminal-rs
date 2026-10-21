@@ -546,10 +546,14 @@ impl TerminalApp {
             let is_focused = |k: &PaneKind| focused == Some(std::mem::discriminant(k));
 
             let now = quote_tag::now();
-            section(ui, "Watchlist");
+            if fold_section(ui, "Watchlist", self.watchlist_open, self.watchlist.len()).clicked() {
+                self.watchlist_open = !self.watchlist_open;
+                self.save_settings();
+            }
             let mut remove = None;
             let mut reorder = widgets::Reorder::new(egui::Id::new("wl-sidebar-reorder"));
-            for key in &self.watchlist {
+            let shown: &[String] = if self.watchlist_open { &self.watchlist } else { &[] };
+            for key in shown {
                 let sec = tr_data::security(key);
                 let resp = row_frame(ui, false);
                 let r = resp.rect;
@@ -1091,6 +1095,27 @@ fn section(ui: &mut Ui, label: &str) {
     ui.add_space(10.0);
     ui.label(RichText::new(label).font(ui_font(11.0)).color(muted()));
     ui.add_space(2.0);
+}
+
+/// A section title that folds its rows away: a disclosure arrow, the label and the row count.
+fn fold_section(ui: &mut Ui, label: &str, open: bool, n: usize) -> egui::Response {
+    ui.add_space(10.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), theme::dp(18.0)), Sense::click());
+    widgets::hover_wash(ui, r, &resp, false);
+    let pt = ui.painter();
+    pt.text(
+        pos2(r.left() + 2.0, r.center().y),
+        Align2::LEFT_CENTER,
+        if open { "▾" } else { "▸" },
+        ui_font(11.0),
+        muted(),
+    );
+    pt.text(pos2(r.left() + 14.0, r.center().y), Align2::LEFT_CENTER, label, ui_font(11.0), muted());
+    if !open {
+        pt.text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), ui_font(10.5), muted());
+    }
+    ui.add_space(2.0);
+    resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if open { "Collapse" } else { "Expand" })
 }
 
 /// A full-width clickable sidebar row with hover wash; the caller paints its content.

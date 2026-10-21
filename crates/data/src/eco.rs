@@ -748,11 +748,17 @@ const CONCURRENCY: usize = 2;
 /// How long a host that timed out is skipped, so one dead host costs one timeout, not one
 /// per request.
 const DOWN_FOR: i64 = 120;
+/// The User-Agent every FRED / ALFRED request must send (see [`Eco::new`]).
+pub(crate) const FRED_USER_AGENT: &str =
+    concat!("curl/8.7.1 (compatible; terminal-rs/", env!("CARGO_PKG_VERSION"), ")");
 
 impl Eco {
     pub fn new(cache: Option<EcoCache>) -> Result<Self> {
         let client = reqwest::Client::builder()
-            .user_agent(concat!("terminal-rs/", env!("CARGO_PKG_VERSION")))
+            // FRED's edge silently stalls clients whose User-Agent does not start with a
+            // download tool's name (`terminal-rs/…` and browser strings time out on every
+            // fred/alfred host since Oct 2026); `curl/…` is let through.
+            .user_agent(FRED_USER_AGENT)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(20))
             .build()?;

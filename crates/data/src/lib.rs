@@ -241,6 +241,9 @@ pub struct OptionContract {
     pub open_interest: Option<u64>,
     /// Annualised implied volatility (0.25 = 25%).
     pub iv: Option<f64>,
+    /// `iv` was solved here from the contract's own quote because the source gave none.
+    #[serde(default)]
+    pub iv_solved: bool,
     pub in_the_money: bool,
 }
 

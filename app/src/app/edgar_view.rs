@@ -227,6 +227,26 @@ pub fn edgar_pane(ui: &mut Ui, p: &mut EdgarPane, quotes: &HashMap<String, Quote
         return out;
     }
     if let Some(e) = &p.error {
+        // ETFs and other funds file as trusts, not under their ticker: point to the ETF pane.
+        if e.contains("not an SEC registrant") {
+            let t = tr_data::security(&p.symbol).ticker;
+            note(
+                ui,
+                &format!(
+                    "{t} has no company filings on SEC EDGAR. If it is an ETF or fund, its holdings are in the \
+                     ETF pane; DES and FA cover operating companies."
+                ),
+            );
+            ui.horizontal(|ui| {
+                if ui.small_button(format!("Open ETF {t}")).clicked() {
+                    out.actions.push(Action::Command(format!("ETF {t}")));
+                }
+                if ui.small_button("Retry").clicked() {
+                    out.refetch = true;
+                }
+            });
+            return out;
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("EDGAR: {e}")).font(ui_font(12.0)).color(theme::down()));
             if ui.small_button("Retry").clicked() {

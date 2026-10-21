@@ -212,6 +212,18 @@ pub fn most(ui: &mut Ui, p: &mut MostPane) -> Vec<Action> {
     actions
 }
 
+/// Yahoo's `marketState` in words. The board ranks regular-session changes, so outside regular
+/// hours they are the last session's.
+fn market_state_text(st: &str) -> String {
+    match st.to_ascii_uppercase().as_str() {
+        "REGULAR" => "market open".into(),
+        "PRE" => "pre-market (changes are the last session's)".into(),
+        "POST" | "POSTPOST" => "after hours (changes are the regular session's)".into(),
+        "PREPRE" | "CLOSED" => "market closed (changes are the last session's)".into(),
+        other => format!("market {}", other.to_ascii_lowercase()),
+    }
+}
+
 fn status_line(ui: &mut Ui, p: &MostPane) {
     let mut s = String::from("Yahoo screener");
     if let Some(b) = &p.board {
@@ -221,7 +233,8 @@ fn status_line(ui: &mut Ui, p: &MostPane) {
             None => s.push_str(" · delayed"),
         }
         if let Some(st) = b.market_state() {
-            s.push_str(&format!(" · market {}", st.to_ascii_lowercase()));
+            s.push_str(" · ");
+            s.push_str(&market_state_text(st));
         }
         if let Some(t) = chrono::DateTime::from_timestamp(b.fetched, 0) {
             s.push_str(&format!(" · updated {}", t.with_timezone(&chrono::Local).format("%H:%M:%S")));
@@ -284,6 +297,13 @@ fn trunc(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn market_states_in_words() {
+        assert_eq!(market_state_text("PREPRE"), "market closed (changes are the last session's)");
+        assert_eq!(market_state_text("REGULAR"), "market open");
+        assert_eq!(market_state_text("HALTED"), "market halted");
+    }
 
     #[test]
     fn compact_numbers() {

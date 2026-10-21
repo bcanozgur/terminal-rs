@@ -88,7 +88,12 @@ fn cell(col: Col, c: &OptionContract, g: Option<&Greeks>) -> (String, Color32) {
             Some(ch) if ch.abs() > 1e-9 => (format!("{ch:+.2}"), if ch >= 0.0 { theme::up() } else { theme::down() }),
             _ => ("–".into(), muted()),
         },
-        Col::Iv => (c.iv.map_or_else(|| "–".into(), |v| format!("{:.1}%", v * 100.0)), theme::cyan()),
+        // `≈`: solved here from the contract's quote, Yahoo gave no usable IV.
+        Col::Iv => match c.iv {
+            Some(v) if c.iv_solved => (format!("≈{:.1}%", v * 100.0), theme::cyan()),
+            Some(v) => (format!("{:.1}%", v * 100.0), theme::cyan()),
+            None => ("–".into(), theme::cyan()),
+        },
         Col::Volume => (fmt_count(c.volume), text()),
         Col::Oi => (fmt_count(c.open_interest), muted()),
         Col::Delta => (gv(|g| g.delta, 2), text()),
@@ -218,7 +223,11 @@ pub fn options_chain(ui: &mut Ui, o: &mut OptionsPane) -> (Option<Action>, bool)
             let ivs: Vec<f64> = [atm_iv(&ch.calls), atm_iv(&ch.puts)].into_iter().flatten().collect();
             if !ivs.is_empty() {
                 let iv = ivs.iter().sum::<f64>() / ivs.len() as f64;
-                ui.label(RichText::new(format!("ATM IV {:.1}%", iv * 100.0)).font(ui_font(11.5)).color(theme::cyan()));
+                ui.label(RichText::new(format!("ATM IV {:.1}%", iv * 100.0)).font(ui_font(11.5)).color(theme::cyan()))
+                    .on_hover_text(
+                        "IV is Yahoo's; ≈ marks one solved here from the bid/ask midpoint (or the last trade) \
+                         where Yahoo gave none or a placeholder",
+                    );
             }
             ui.label(RichText::new(format!("r {:.2}%", o.rate * 100.0)).font(ui_font(11.0)).color(muted()))
                 .on_hover_text("Risk-free rate for greeks (3-month T-bill when the curve is loaded)");
@@ -422,5 +431,46 @@ mod tests {
         assert!(t.ends_with('%'));
         assert_eq!(fmt_count(Some(12_345)), "12k");
         assert_eq!(fmt_px(Some(0.0)), "–");
+    }
+
+    #[test]
+    fn missing_ivs_are_solved_from_the_quote() {
+        let mut chain = tr_data::sample::simulated_chain("AAPL US Equity", 230.0, None, 1_791_800_000);
+        let i = chain.calls.len() / 2;
+        let truth = chain.calls[i].iv.unwrap();
+        // As Yahoo leaves an unquoted contract: the placeholder was dropped, the quote remains.
+        chain.calls[i].iv = None;
+        chain.puts[i].iv = None;
+        chain.puts[i].bid = None;
+        chain.puts[i].volume = Some(0);
+        let mut o = OptionsPane::new("AAPL US Equity", 0, true);
+        o.set_chain(Box::new(chain), 0.04, 1_791_800_000);
+        let ch = o.chain.as_ref().unwrap();
+        let c = &ch.calls[i];
+        assert!(c.iv_solved && (c.iv.unwrap() - truth).abs() < 0.05, "{:?} vs {truth}", c.iv);
+        assert!(o.call_greeks[i].is_some());
+        assert!(cell(Col::Iv, c, None).0.starts_with('≈'));
+        // No two-sided quote and no trade today: nothing to solve from.
+        assert!(ch.puts[i].iv.is_none() && !ch.puts[i].iv_solved);
+    }
+
+    #[test]
+    fn an_expired_same_day_expiry_is_skipped_by_default() {
+        let mut chain = tr_data::sample::simulated_chain("AAPL US Equity", 230.0, None, 1_791_800_000);
+        let today = chain.expiration;
+        chain.expirations = vec![today, today + 2 * 86_400];
+        // Evening after today's close: the default moves on to the next expiry.
+        let mut o = OptionsPane::new("AAPL US Equity", 0, true);
+        o.set_chain(Box::new(chain.clone()), 0.04, today + 22 * 3600);
+        assert_eq!(o.expiration, Some(today + 2 * 86_400));
+        assert!(o.chain.is_none() && o.fetched.is_none());
+        // Before the close it stays; a chosen expiry is never overridden.
+        let mut o = OptionsPane::new("AAPL US Equity", 0, true);
+        o.set_chain(Box::new(chain.clone()), 0.04, today + 15 * 3600);
+        assert_eq!(o.expiration, Some(today));
+        let mut o = OptionsPane::new("AAPL US Equity", 0, true);
+        o.expiration = Some(today);
+        o.set_chain(Box::new(chain), 0.04, today + 22 * 3600);
+        assert!(o.chain.is_some());
     }
 }

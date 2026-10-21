@@ -298,15 +298,18 @@ fn dim(ui: &mut Ui, s: impl Into<String>) {
     ui.add(egui::Label::new(RichText::new(s.into()).font(ui_font(11.5)).color(muted())).wrap());
 }
 
-pub fn trfunds(ui: &mut Ui, p: &mut TrfPane) -> Vec<Action> {
+/// `q` is the pane's filter: it narrows the fund list, a fund's stock positions (all of them,
+/// not only the top ten) and its buys and sells, and the reverse search hits.
+pub fn trfunds(ui: &mut Ui, p: &mut TrfPane, q: &str) -> Vec<Action> {
     let mut actions = Vec::new();
     let mut next: Option<View> = None;
+    let q = trfunds::tr_upper(q.trim());
     header(ui, p, &mut next);
     ui.add_space(dp(4.0));
     match p.view.clone() {
-        View::List => list(ui, p, &mut next),
-        View::Detail(c) => detail(ui, p, &c, &mut next, &mut actions),
-        View::Reverse(t) => reverse(ui, p, &t, &mut next, &mut actions),
+        View::List => list(ui, p, &q, &mut next),
+        View::Detail(c) => detail(ui, p, &c, &q, &mut next, &mut actions),
+        View::Reverse(t) => reverse(ui, p, &t, &q, &mut next, &mut actions),
     }
     if let Some(v) = next {
         p.open(v);
@@ -384,7 +387,7 @@ fn status(p: &TrfPane, code: &str) -> (String, Color32) {
     }
 }
 
-fn list(ui: &mut Ui, p: &mut TrfPane, next: &mut Option<View>) {
+fn list(ui: &mut Ui, p: &mut TrfPane, pane_q: &str, next: &mut Option<View>) {
     ui.horizontal_wrapped(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut p.search)
@@ -410,6 +413,7 @@ fn list(ui: &mut Ui, p: &mut TrfPane, next: &mut Option<View>) {
     let q = trfunds::tr_upper(p.search.trim());
     let rows: Vec<usize> = (0..all.len())
         .filter(|&i| q.is_empty() || p.hay[i].contains(&q))
+        .filter(|&i| p.hay[i].contains(pane_q))
         .filter(|&i| !p.indexed_only || p.funds.contains_key(&all[i].code))
         .collect();
     dim(ui, format!("{} of {} funds. Click a code to open the fund.", rows.len(), all.len()));
@@ -451,7 +455,7 @@ fn back(ui: &mut Ui, next: &mut Option<View>) {
     }
 }
 
-fn detail(ui: &mut Ui, p: &mut TrfPane, code: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
+fn detail(ui: &mut Ui, p: &mut TrfPane, code: &str, q: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
     let fund = p.funds.get(code).cloned();
     ui.horizontal(|ui| {
         back(ui, next);
@@ -493,6 +497,13 @@ fn detail(ui: &mut Ui, p: &mut TrfPane, code: &str, next: &mut Option<View>, act
                 .color(text()),
         );
         let report = &snap.report;
+        if !q.is_empty() {
+            ui.add_space(dp(6.0));
+            matching_positions(ui, report, q, actions);
+            ui.add_space(dp(12.0));
+            changes_block(ui, &f, q, actions);
+            return;
+        }
         let wide = ui.available_width() > dp(700.0);
         let mut body = |ui: &mut Ui| {
             ui.vertical(|ui| mix_block(ui, &f));
@@ -506,7 +517,7 @@ fn detail(ui: &mut Ui, p: &mut TrfPane, code: &str, next: &mut Option<View>, act
             body(ui);
         }
         ui.add_space(dp(12.0));
-        changes_block(ui, &f, actions);
+        changes_block(ui, &f, "", actions);
         if report.positions.is_empty() {
             dim(ui, "No stock positions could be read from this report.");
         }
@@ -737,10 +748,53 @@ fn stock_block(ui: &mut Ui, f: &FundData, actions: &mut Vec<Action>) {
     }
 }
 
-fn changes_block(ui: &mut Ui, f: &FundData, actions: &mut Vec<Action>) {
-    ui.label(RichText::new("Monthly buys and sells").font(ui_font(13.0)).color(text()));
+/// Every stock position whose ticker contains `q` (upper case), by weight.
+fn matching_positions(ui: &mut Ui, r: &trfunds::Report, q: &str, actions: &mut Vec<Action>) {
+    let mut rows: Vec<(usize, &trfunds::Position)> = Vec::new();
+    let mut all: Vec<&trfunds::Position> = r.positions.iter().collect();
+    all.sort_by(|a, b| b.weight.total_cmp(&a.weight));
+    for (i, pos) in all.into_iter().enumerate() {
+        if pos.ticker.contains(q) {
+            rows.push((i, pos));
+        }
+    }
+    ui.label(
+        RichText::new(format!("{} of {} stock positions match \"{q}\"", rows.len(), r.positions.len()))
+            .font(ui_font(13.0))
+            .color(text()),
+    );
+    if rows.is_empty() {
+        dim(ui, "No position's ticker contains it.");
+        return;
+    }
+    egui::Grid::new("trf-match").num_columns(4).striped(true).spacing([dp(14.0), dp(4.0)]).show(ui, |ui| {
+        for h in ["#", "Stock", "Weight", "Shares"] {
+            ui.label(RichText::new(h).font(ui_font(11.0)).color(muted()));
+        }
+        ui.end_row();
+        for (i, pos) in rows {
+            ui.label(RichText::new((i + 1).to_string()).font(mono(11.5)).color(muted()));
+            if link(ui, &pos.ticker, amber()).on_hover_text("Open the chart").clicked() {
+                actions.push(Action::Command(format!("{}.IS", pos.ticker)));
+            }
+            let w = if r.approx_weights { format!("~{}", pct(pos.weight)) } else { pct(pos.weight) };
+            ui.label(RichText::new(w).font(mono(12.5)).color(text()));
+            ui.label(
+                RichText::new(pos.shares.map_or_else(|| "–".into(), |n| format!("{n:.0}")))
+                    .font(mono(12.0))
+                    .color(muted()),
+            );
+            ui.end_row();
+        }
+    });
+}
+
+fn changes_block(ui: &mut Ui, f: &FundData, q: &str, actions: &mut Vec<Action>) {
+    let weekly = f.latest().is_some_and(|s| s.weekly || s.month > 12);
+    let period = if weekly { "Weekly" } else { "Monthly" };
+    ui.label(RichText::new(format!("{period} buys and sells")).font(ui_font(13.0)).color(text()));
     let (Some(cur), Some(prev)) = (f.latest(), f.previous()) else {
-        dim(ui, "Needs two monthly reports; KAP returned only one for this fund.");
+        dim(ui, "Needs two portfolio reports; KAP returned only one for this fund.");
         return;
     };
     dim(
@@ -753,9 +807,14 @@ fn changes_block(ui: &mut Ui, f: &FundData, actions: &mut Vec<Action>) {
             trfunds::MIN_WEIGHT
         ),
     );
-    let changes = f.changes();
+    let mut changes = f.changes();
     if changes.is_empty() {
         dim(ui, "No significant changes.");
+        return;
+    }
+    changes.retain(|c| c.ticker.contains(q));
+    if changes.is_empty() {
+        dim(ui, format!("No buy or sell of a stock matching \"{q}\"."));
         return;
     }
     egui::Grid::new(("trf-changes", &f.info.code)).num_columns(6).striped(true).spacing([dp(14.0), dp(4.0)]).show(
@@ -795,7 +854,7 @@ fn changes_block(ui: &mut Ui, f: &FundData, actions: &mut Vec<Action>) {
     }
 }
 
-fn reverse(ui: &mut Ui, p: &mut TrfPane, t: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
+fn reverse(ui: &mut Ui, p: &mut TrfPane, t: &str, q: &str, next: &mut Option<View>, actions: &mut Vec<Action>) {
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new("Which funds hold").font(ui_font(12.5)).color(text()));
         let r = ui.add(
@@ -831,6 +890,12 @@ fn reverse(ui: &mut Ui, p: &mut TrfPane, t: &str, next: &mut Option<View>, actio
          Use 'Index curated list' for broader coverage.",
     );
     if hits.is_empty() {
+        return;
+    }
+    let hits: Vec<&Held> =
+        hits.iter().filter(|h| h.code.contains(q) || trfunds::tr_upper(&h.name).contains(q)).collect();
+    if hits.is_empty() {
+        dim(ui, format!("None of these funds matches \"{q}\"."));
         return;
     }
     egui::ScrollArea::vertical().id_salt("trf-reverse").auto_shrink([false, false]).show(ui, |ui| {
