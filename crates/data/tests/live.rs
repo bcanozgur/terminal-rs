@@ -350,3 +350,24 @@ async fn news_article_reader() {
     }
     assert!(a.blocks.len() >= 8);
 }
+
+/// Every CRYP section. Binance futures may be geo-blocked, so only the sections that must work
+/// from anywhere are asserted; the rest are printed.
+#[tokio::test]
+#[ignore = "network"]
+async fn crypto_overview_sections() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let o = tr_data::cryptomkt::fetch().await.unwrap();
+    println!("{o:#?}");
+    let g = o.global.as_ref().expect("coingecko global");
+    assert!(g.market_cap > 1e11 && g.btc_dominance > 10.0);
+    let f = o.fear_greed.as_ref().expect("fear and greed");
+    assert!(f.value <= 100 && f.history.len() >= 20);
+    let m = o.movers.as_ref().expect("binance movers");
+    assert!(!m.gainers.is_empty() && !m.losers.is_empty());
+    let t = o.turkey.as_ref().expect("btcturk");
+    assert!(t.usdt_try > 1.0);
+    if let Ok(d) = &o.derivs {
+        assert!(d.iter().any(|x| x.coin == "BTC" && x.mark > 0.0));
+    }
+}

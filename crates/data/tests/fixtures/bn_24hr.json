@@ -1,0 +1,11 @@
+[
+{"symbol":"SOLUSDT","priceChangePercent":"1.510","lastPrice":"108.21000000","quoteVolume":"201621305.47811000"},
+{"symbol":"BTCUSDT","priceChangePercent":"-0.50","lastPrice":"84000.0","quoteVolume":"900000000.0"},
+{"symbol":"BTCUPUSDT","priceChangePercent":"40.0","lastPrice":"5.0","quoteVolume":"90000000.0"},
+{"symbol":"BTCDOWNUSDT","priceChangePercent":"-40.0","lastPrice":"5.0","quoteVolume":"90000000.0"},
+{"symbol":"JUPUSDT","priceChangePercent":"12.0","lastPrice":"0.5","quoteVolume":"50000000.0"},
+{"symbol":"USDCUSDT","priceChangePercent":"0.01","lastPrice":"1.0","quoteVolume":"800000000.0"},
+{"symbol":"THINUSDT","priceChangePercent":"90.0","lastPrice":"0.1","quoteVolume":"1000.0"},
+{"symbol":"ETHBTC","priceChangePercent":"3.0","lastPrice":"0.03","quoteVolume":"700000000.0"},
+{"symbol":"WIFUSDT","priceChangePercent":"-9.25","lastPrice":"0.8","quoteVolume":"30000000.0"}
+]
