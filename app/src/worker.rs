@@ -185,6 +185,8 @@ pub enum Request {
     Fut(crate::fut::FutReq),
     /// Smart money: Form 4, 13F and FINRA short interest (`SMART`).
     Smart(crate::smart::SmartReq),
+    /// KAP disclosures: the latest feed, one company, one disclosure's text (`KAP`).
+    Kap(crate::kap::KapReq),
     /// Daily history for the portfolio risk pane (`RISK`).
     Risk(crate::risk::RiskReq),
 }
@@ -379,6 +381,7 @@ pub enum Response {
     Wl(crate::wlcols::WlResp),
     Fut(crate::fut::FutResp),
     Smart(crate::smart::SmartResp),
+    Kap(crate::kap::KapResp),
     Risk(crate::risk::RiskResp),
 }
 
@@ -1045,6 +1048,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Wl(r) => crate::wlcols::handle(r, &s.provider, &|r| s.send(Response::Wl(r))).await,
         Request::Fut(r) => crate::fut::handle(r, &|r| s.send(Response::Fut(r))).await,
         Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,
+        Request::Kap(r) => crate::kap::handle(r, &|r| s.send(Response::Kap(r))).await,
         Request::Risk(r) => crate::risk::handle(r, &s.provider, &s.cache, &|r| s.send(Response::Risk(r))).await,
     }
 }

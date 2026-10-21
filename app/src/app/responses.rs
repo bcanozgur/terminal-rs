@@ -208,6 +208,7 @@ impl TerminalApp {
                 Response::Wl(resp) => self.on_wl(resp),
                 Response::Fut(resp) => self.on_fut(resp),
                 Response::Smart(resp) => self.on_smart(resp),
+                Response::Kap(resp) => self.on_kap(resp),
                 Response::Risk(resp) => self.on_risk(resp),
             }
         }

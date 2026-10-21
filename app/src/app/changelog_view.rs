@@ -11,6 +11,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
         "2026-10-22",
         "Fixes, data quality and search",
         &[
+            "KAP: Borsa Istanbul public disclosures from kap.org.tr, newest first. Filter to your watchlists and \
+             positions, a category (dividend, buyback, capital, financial report...) or one company (THYAO KAP); \
+             read a disclosure inside the pane and get a toast for new ones of your companies.",
             "Search button on the TR Funds, ETF and Economic Calendar pane headers: filters the fund list, every \
              holding of the open fund (not only the top 10), its buys and sells, reverse search hits and overlap \
              rows.",

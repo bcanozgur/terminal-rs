@@ -307,6 +307,7 @@ impl TerminalApp {
         self.most_periodic(&visible);
         self.fut_periodic(&visible);
         self.smart_periodic(&visible);
+        self.kap_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
             && at.elapsed() > Duration::from_millis(300)
         {

@@ -285,6 +285,19 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   for its chart, right-click for more, filter by symbol or name. `MOST LOSERS` / `MOST ACTIVE` pick a
   tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
   A failed refresh shows the error and keeps the last lists, marked as old.
+- **KAP disclosures (`KAP`, `THYAO KAP`)** — the public disclosure feed of Borsa Istanbul companies
+  from kap.org.tr, newest first: time (Istanbul), ticker, company, category (Özel Durum, Finansal
+  Rapor, Temettü, Sermaye, Geri Alım, Pay Alım/Satım, Genel Kurul, Borçlanma, Diğer; derived from
+  KAP's class and the form title) and subject. Filters: all companies / your watchlists and positions
+  (your tickers in amber) / a category / one company (click a ticker, type one in the box, or
+  `THYAO KAP`; a linked pane follows its link group's symbol and lists that company's last 60 days,
+  including other filers' notices that name it). `KAP MINE`, `KAP DIVIDEND`, `KAP THYAO` combine
+  these; Ctrl/Cmd+F filters by text. Click a subject to read the disclosure's form inside the pane
+  (Back returns; attachments are listed by name), the arrow opens it on kap.org.tr; financial reports
+  (megabytes of tables) are opened on KAP instead. Refreshes every 2 minutes while visible; a new
+  disclosure of a watchlist or position company shows a toast while a KAP pane is visible. Uses the
+  JSON endpoints the KAP website calls (no login), with the same User-Agent, throttling and backoff
+  as `TRF`; the exchange's own circuit-breaker bulletins are left out. Not in the ALERTS list.
 
 - **Futures and volatility (`FUT`, `VIX`, `HEAT`)** — three tabs, all from free sources:
   - *Futures curve* (`FUT`, `FUT CL`): pick a root (ES NQ YM RTY CL NG GC SI HG ZB ZN ZC ZS ZW 6E KC).

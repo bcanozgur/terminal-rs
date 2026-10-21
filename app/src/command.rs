@@ -370,6 +370,8 @@ pub enum Function {
     Fut(String),
     /// Smart money (`SMART`, `SMART SHORT`, `SMART 13F`, `AAPL SMART`): Form 4, 13F and FINRA short interest.
     Smart(String),
+    /// KAP disclosures (`KAP`, `KAP MINE`, `KAP DIVIDEND`, `THYAO KAP`): the Borsa Istanbul disclosure feed.
+    Kap(String),
     /// Portfolio risk (`RISK`, `RISK QQQ 2Y`; `CORR` opens the correlation heatmap).
     Risk(String),
 }
@@ -504,6 +506,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "VIX" => Function::Fut("VIX".into()),
         "HEAT" | "HEATMAP" => Function::Fut(format!("HEAT {}", joined())),
         "SMART" | "SMARTMONEY" => Function::Smart(joined()),
+        "KAP" | "DISCLOSURES" | "BILDIRIM" => Function::Kap(joined()),
         "RISK" | "VAR" => Function::Risk(joined()),
         "CORR" => Function::Risk(format!("CORR {}", joined())),
         "RANGE" => Function::Range(Range::parse(rest.first()?)?),
@@ -701,6 +704,8 @@ fn describe(f: &Function) -> String {
         },
         Function::Smart(a) if a.is_empty() => "Smart money: insider trades, 13F holders, short interest".into(),
         Function::Smart(a) => format!("Smart money: {}", a.to_ascii_uppercase()),
+        Function::Kap(a) if a.trim().is_empty() => "KAP: Borsa Istanbul public disclosures, newest first".into(),
+        Function::Kap(a) => format!("KAP disclosures: {}", a.to_ascii_uppercase()),
         Function::TrFunds(a) => match a.split_whitespace().count() {
             0 => "Turkish funds (KAP): allocation, buys and sells, reverse search".into(),
             _ => format!("Turkish funds: {}", a.to_ascii_uppercase()),
@@ -1021,6 +1026,15 @@ mod tests {
             Some(Command::SymbolFunction("AAPL US Equity".into(), Function::Etf(String::new())))
         );
         assert!(hint("ETF SPY").contains("SPY"));
+    }
+
+    #[test]
+    fn kap_commands() {
+        assert_eq!(parse("KAP"), Some(Command::Function(Function::Kap(String::new()))));
+        assert_eq!(parse("kap mine dividend"), Some(Command::Function(Function::Kap("mine dividend".into()))));
+        assert!(matches!(parse("THYAO KAP"), Some(Command::SymbolFunction(_, Function::Kap(a))) if a.is_empty()));
+        assert!(hint("KAP").contains("KAP"));
+        assert!(hint("KAP THYAO").contains("THYAO"));
     }
 
     #[test]

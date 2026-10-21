@@ -23,7 +23,7 @@ use crate::widgets::{self, Icon};
 use crate::worker::{Request, Worker};
 
 /// Panels offered by the + menus: label and command word.
-pub const PANELS: [(&str, &str); 26] = [
+pub const PANELS: [(&str, &str); 27] = [
     ("Chart", "CHART"),
     ("Watchlist", "WL"),
     ("BIST 30 · by volume", "BIST30"),
@@ -43,6 +43,7 @@ pub const PANELS: [(&str, &str); 26] = [
     ("Market Movers", "MOST"),
     ("Futures & Volatility", "FUT"),
     ("Smart Money", "SMART"),
+    ("KAP Disclosures", "KAP"),
     ("Congress Feed", "CONG"),
     ("Politicians", "POL"),
     ("Alerts", "ALRT"),
@@ -429,6 +430,7 @@ impl TerminalApp {
             }
             PaneKind::Edgar(e) => e.set_symbol(&key),
             PaneKind::Smart(e) => e.set_symbol(&key),
+            PaneKind::Kap(e) => e.set_company(&tr_data::security(&key).ticker),
             PaneKind::Earnings(e) if e.symbol.is_some() => e.set_symbol(&key),
             _ => return false,
         }
@@ -699,6 +701,11 @@ impl TerminalApp {
             "FUT" | "FUTURES" => {
                 PaneKind::Fut(Box::new(super::fut_view::FutPane::new(words.get(1).copied().unwrap_or(""))))
             }
+            "KAP" | "DISCLOSURES" | "BILDIRIM" => PaneKind::Kap(Box::new(super::kap_view::KapPane::new(
+                super::kap_view::Scope::All,
+                None,
+                words.get(1).copied(),
+            ))),
             "SMART" | "SMARTMONEY" => PaneKind::Smart(Box::new(super::smart_view::SmartPane::new(
                 current.as_deref().unwrap_or("AAPL US Equity"),
                 super::smart_view::Tab::Insiders,

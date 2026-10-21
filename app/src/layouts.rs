@@ -190,6 +190,15 @@ pub enum PaneSettings {
         #[serde(default)]
         tab: String,
     },
+    /// KAP disclosures: `scope` is `all` or `mine`, `category` a category key or empty, `company` a ticker or empty.
+    Kap {
+        #[serde(default)]
+        scope: String,
+        #[serde(default)]
+        category: String,
+        #[serde(default)]
+        company: String,
+    },
     /// Portfolio risk: `tab` is `overview`, `contrib` or `corr`; `window` is trading days.
     Risk {
         #[serde(default)]
