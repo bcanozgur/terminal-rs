@@ -179,6 +179,8 @@ pub enum Request {
     TrFunds(crate::trfunds::TrfReq),
     /// US market movers: the three Yahoo screener lists (`MOST`).
     Most(crate::most::MostReq),
+    /// Crypto market overview, every section (`CRYP`).
+    Cryp(crate::cryp::CrypReq),
     /// Statistics for the watchlist's extra columns.
     Wl(crate::wlcols::WlReq),
     /// Futures curve, VIX term structure or sector heatmap (`FUT`).
@@ -376,6 +378,7 @@ pub enum Response {
     Etf(crate::etf::EtfResp),
     TrFunds(crate::trfunds::TrfResp),
     Most(crate::most::MostResp),
+    Cryp(crate::cryp::CrypResp),
     Wl(crate::wlcols::WlResp),
     Fut(crate::fut::FutResp),
     Smart(crate::smart::SmartResp),
@@ -1042,6 +1045,7 @@ async fn handle(s: &Arc<Shared>, req: Request) {
         Request::Etf(r) => crate::etf::handle(r, &|r| s.send(Response::Etf(r))).await,
         Request::TrFunds(r) => crate::trfunds::handle(r, &|r| s.send(Response::TrFunds(r))).await,
         Request::Most(r) => crate::most::handle(r, &|r| s.send(Response::Most(r))).await,
+        Request::Cryp(r) => crate::cryp::handle(r, &|r| s.send(Response::Cryp(r))).await,
         Request::Wl(r) => crate::wlcols::handle(r, &s.provider, &|r| s.send(Response::Wl(r))).await,
         Request::Fut(r) => crate::fut::handle(r, &|r| s.send(Response::Fut(r))).await,
         Request::Smart(r) => crate::smart::handle(r, &|r| s.send(Response::Smart(r))).await,

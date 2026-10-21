@@ -362,6 +362,8 @@ pub enum Function {
     TrFunds(String),
     /// US market movers (`MOST`, `MOST LOSERS`, `MOST ACTIVE`).
     Most(String),
+    /// Crypto market overview (`CRYP`).
+    Cryp,
     /// Order audit log and market holidays (`AUDIT`, `HOL`).
     Audit(String),
     /// Kill switch (`KILL`, `KILL CANCEL`, `KILL OFF`).
@@ -497,6 +499,7 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
         "ETF" | "ETFS" => Function::Etf(joined()),
         "TRF" | "TRFS" | "TRFUNDS" => Function::TrFunds(joined()),
         "MOST" | "MOVERS" => Function::Most(joined()),
+        "CRYP" => Function::Cryp,
         "AUDIT" => Function::Audit(joined()),
         "HOL" | "HOLIDAYS" => Function::Audit("hol".into()),
         "KILL" | "KILLSWITCH" => Function::Kill(joined()),
@@ -714,6 +717,7 @@ fn describe(f: &Function) -> String {
             "CANCEL" | "ALL" => "Kill switch ON and cancel all open orders".into(),
             _ => "Kill switch ON: block every new order".into(),
         },
+        Function::Cryp => "Crypto overview: market cap, sentiment, derivatives, movers, USDT/TRY premium".into(),
         Function::Most(a) => match a.split_whitespace().next().map(str::to_ascii_lowercase).as_deref() {
             Some("losers") => "Market movers: US day losers".into(),
             Some("active" | "actives" | "volume") => "Market movers: US most active by volume".into(),
@@ -1003,6 +1007,12 @@ mod tests {
         assert!(matches!(parse("HEAT"), Some(Command::Function(Function::Fut(a))) if a.trim() == "HEAT"));
         assert!(hint("FUT CL").contains("CL"));
         assert!(hint("VIX").contains("VIX"));
+    }
+
+    #[test]
+    fn cryp_command() {
+        assert_eq!(parse("CRYP"), Some(Command::Function(Function::Cryp)));
+        assert!(hint("cryp").contains("Crypto"));
     }
 
     #[test]

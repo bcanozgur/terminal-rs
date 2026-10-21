@@ -285,6 +285,15 @@ gets the native title bar with traffic lights, window vibrancy behind the sideba
   for its chart, right-click for more, filter by symbol or name. `MOST LOSERS` / `MOST ACTIVE` pick a
   tab. Refreshes every minute while visible; quotes are about 15 minutes delayed and the pane says so.
   A failed refresh shows the error and keeps the last lists, marked as old.
+- **Crypto overview (`CRYP`)** — one dense pane from free, keyless sources: total market cap, 24h
+  volume, BTC / ETH dominance and stablecoin cap (CoinGecko, cached 5 minutes), the Fear & Greed index
+  with a 30-day line (alternative.me), Binance USDⓈ-M perpetuals for BTC ETH SOL XRP BNB DOGE (mark
+  price, funding per 8h and annualised with the next payment time, open interest and its 24h change,
+  long/short account ratio), the top 10 24h gainers and losers among Binance USDT spot pairs with at
+  least $5M volume (leveraged tokens and stablecoins excluded), and the Turkish premium: BtcTurk
+  USDT/TRY against the USDTRY dollar rate, and BtcTurk BTC/TRY against Binance BTCUSDT x USDTRY. Click
+  a coin to chart it in the linked panes. Every section reports its own error, so a geo-blocked
+  `fapi.binance.com` leaves the rest working. Refreshes every minute while visible.
 
 - **Futures and volatility (`FUT`, `VIX`, `HEAT`)** — three tabs, all from free sources:
   - *Futures curve* (`FUT`, `FUT CL`): pick a root (ES NQ YM RTY CL NG GC SI HG ZB ZN ZC ZS ZW 6E KC).

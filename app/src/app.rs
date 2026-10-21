@@ -19,6 +19,7 @@ mod fut_view;
 mod hotkeys_view;
 mod input;
 mod most_view;
+mod cryp_view;
 mod options_view;
 mod palette_view;
 mod panels;
@@ -107,6 +108,8 @@ pub enum PaneKind {
     TrFunds(Box<trfunds_view::TrfPane>),
     /// US market movers (`MOST`): day gainers, losers and most active from Yahoo screeners.
     Most(Box<most_view::MostPane>),
+    /// Crypto market overview (`CRYP`): global stats, sentiment, derivatives, movers, USDT/TRY premium.
+    Cryp(Box<cryp_view::CrypPane>),
     /// Futures curve, VIX term structure and sector heatmap (`FUT`, `VIX`, `HEAT`).
     Fut(Box<fut_view::FutPane>),
     /// Smart money (`SMART`): insiders (Form 4), institutions (13F) and short interest.
@@ -317,6 +320,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.title(),
             PaneKind::TrFunds(e) => e.title(),
             PaneKind::Most(e) => e.title(),
+            PaneKind::Cryp(e) => e.title(),
             PaneKind::Fut(e) => e.title(),
             PaneKind::Smart(e) => e.title(),
             PaneKind::Risk(e) => e.title(),
@@ -349,6 +353,7 @@ impl PaneKind {
             PaneKind::Etf(e) => e.code(),
             PaneKind::TrFunds(e) => e.code(),
             PaneKind::Most(e) => e.code(),
+            PaneKind::Cryp(e) => e.code(),
             PaneKind::Fut(e) => e.code(),
             PaneKind::Smart(e) => e.code(),
             PaneKind::Risk(e) => e.code(),
@@ -443,6 +448,14 @@ impl PaneKind {
                  filing's report date, usually 2-4 months old); Yahoo supplies the top 10 for funds without N-PORT \
                  (SPY, DIA, GLD) and the sector weights. Reverse search and overlap cover the funds indexed on disk: \
                  use 'Index curated list' to fetch the popular ones."
+            }
+            PaneKind::Cryp(_) => {
+                "Crypto overview (CRYP): total market cap, BTC and ETH dominance and stablecoin cap (CoinGecko), the \
+                 Fear & Greed index with a 30-day line, Binance perpetual futures (mark price, funding with the next \
+                 payment time, open interest and its 24h change, long/short account ratio), the biggest 24h Binance \
+                 USDT movers, and the BtcTurk USDT/TRY and BTC/TRY premium over the Yahoo dollar rate. Click a coin \
+                 to chart it. Each section reports its own error, so a geo-blocked futures API does not hide the rest. \
+                 Refreshes every minute while visible; CoinGecko is cached for five minutes."
             }
             PaneKind::Most(_) => {
                 "Market movers (MOST): US stocks with the biggest day gains, biggest day losses and highest volume, from \
@@ -593,6 +606,7 @@ impl PaneKind {
                 PaneSettings::TrFunds { mode: mode.into(), a }
             }
             PaneKind::Most(e) => PaneSettings::Most { list: e.settings().into() },
+            PaneKind::Cryp(_) => PaneSettings::Cryp,
             PaneKind::Fut(e) => {
                 let (tab, root, period, world) = e.settings();
                 PaneSettings::Fut { tab: tab.into(), root, period: period.into(), world }
@@ -679,6 +693,7 @@ impl PaneKind {
             PaneSettings::Audit { tab } => PaneKind::Audit(Box::new(safety_view::AuditPane::new(&tab))),
             PaneSettings::TrFunds { mode, a } => PaneKind::TrFunds(Box::new(trfunds_view::TrfPane::new(&mode, &a))),
             PaneSettings::Most { list } => PaneKind::Most(Box::new(most_view::MostPane::new(&list))),
+            PaneSettings::Cryp => PaneKind::Cryp(Box::default()),
             PaneSettings::Fut { tab, root, period, world } => {
                 PaneKind::Fut(Box::new(fut_view::FutPane::from_settings(&tab, &root, &period, world)))
             }

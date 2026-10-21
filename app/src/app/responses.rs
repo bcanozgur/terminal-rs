@@ -205,6 +205,7 @@ impl TerminalApp {
                 Response::Etf(resp) => self.on_etf(resp),
                 Response::TrFunds(resp) => self.on_trfunds(resp),
                 Response::Most(resp) => self.on_most(resp),
+                Response::Cryp(resp) => self.on_cryp(resp),
                 Response::Wl(resp) => self.on_wl(resp),
                 Response::Fut(resp) => self.on_fut(resp),
                 Response::Smart(resp) => self.on_smart(resp),

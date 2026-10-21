@@ -158,6 +158,7 @@ const COMMANDS: &[(&str, &str, &str, Option<Action>)] = &[
         None,
     ),
     ("TRF TI2", "Turkish fund detail: TI2", "trf fon detail kap portfolio allocation", None),
+    ("CRYP", "Crypto overview: market cap, Fear & Greed, funding, movers, USDT/TRY", "cryp crypto bitcoin funding fear greed dominance usdt try premium", None),
     ("MOST", "Market movers: US gainers, losers, most active", "most movers gainers losers active volume top", None),
     ("MOST LOSERS", "Market movers: day losers", "most movers losers biggest decliners", None),
     ("MOST ACTIVE", "Market movers: most active by volume", "most movers active volume", None),

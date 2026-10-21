@@ -59,6 +59,7 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
             "Order safety: pre-trade checks with limits (Settings › Trading), a KILL switch in the toolbar (KILL / \
              KILL OFF), an append-only AUDIT log with CSV export, and a market holiday calendar (HOL) that warns \
              when you order while the exchange is closed.",
+            "CRYP: crypto overview with market cap, dominance, stablecoins, Fear & Greed, Binance funding, open interest and long/short, 24h movers and the BtcTurk USDT/TRY premium; click a coin for its chart.",
             "MOST: US day gainers, losers and most active stocks from Yahoo screeners with volume, relative volume and market cap; click a row for its chart.",
             "FUT / VIX / HEAT: futures curves (contango, backwardation, roll yield), VIX term structure with the Cboe VX settlement strip, and a sector / world heatmap by 1D, 1W, 1M and YTD.",
             "SMART: insider trades (SEC Form 4) with a 90-day net buy/sell summary, 13F holdings of ~18 famous \

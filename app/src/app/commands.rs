@@ -265,6 +265,7 @@ impl TerminalApp {
             Function::Etf(arg) => self.etf_command(&arg),
             Function::TrFunds(arg) => self.trf_command(&arg),
             Function::Most(arg) => self.most_command(&arg),
+            Function::Cryp => self.cryp_command(),
             Function::Fut(arg) => self.fut_command(&arg),
             Function::Smart(arg) => self.smart_command(&arg, None),
             Function::Risk(arg) => self.risk_command(&arg),

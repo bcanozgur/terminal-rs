@@ -305,6 +305,7 @@ impl TerminalApp {
         self.etf_periodic(&visible);
         self.trf_periodic(&visible);
         self.most_periodic(&visible);
+        self.cryp_periodic(&visible);
         self.fut_periodic(&visible);
         self.smart_periodic(&visible);
         if let Some((q, at)) = &self.search_pending
