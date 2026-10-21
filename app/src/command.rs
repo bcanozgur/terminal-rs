@@ -425,7 +425,10 @@ fn parse_function(head: &str, rest: &[&str]) -> Option<Function> {
             Some("DRAW") | Some("DRAWINGS") => Function::ClearDrawings,
             _ => Function::ClearIndicators,
         },
-        "CMP" | "COMPARE" | "COMP" => Function::Compare(rest.first().map(|s| s.to_ascii_uppercase())),
+        "CMP" | "COMPARE" | "COMP" => Function::Compare(match tr_core::formula::span(rest) {
+            Some((expr, _)) => Some(format!("={expr}")),
+            None => rest.first().map(|s| s.to_ascii_uppercase()),
+        }),
         "LOG" => Function::LogScale,
         "TL" | "TREND" | "TRENDLINE" => Function::Draw(Tool::Trendline),
         "HL" | "HLINE" => Function::Draw(Tool::Horizontal),
@@ -772,6 +775,21 @@ mod tests {
         assert_eq!(parse("LINE"), Some(Command::Function(Function::ChartType(ChartType::Line))));
         assert_eq!(parse("   "), None);
         assert_eq!(parse("123abc"), None);
+    }
+
+    #[test]
+    fn formula_symbols() {
+        let sym = |s: &str| Some(Command::Symbol(s.into()));
+        assert_eq!(parse("XU100/USDTRY"), sym("=XU100/USDTRY"));
+        assert_eq!(parse("gc1*usdtry/31.1035"), sym("=GC1*USDTRY/31.1035"));
+        assert_eq!(parse("( AAPL + MSFT ) / 2"), sym("=(AAPL+MSFT)/2"));
+        assert_eq!(parse("GRAMALTIN"), sym("GRAMALTIN Index"));
+        assert_eq!(
+            parse("SPX/XU100 1W"),
+            Some(Command::SymbolFunction("=SPX/XU100".into(), Function::Timeframe(Timeframe::W1)))
+        );
+        assert_eq!(parse("CMP XU100/USDTRY"), Some(Command::Function(Function::Compare(Some("=XU100/USDTRY".into())))));
+        assert_eq!(parse("btc/usd"), sym("BTCUSD Curncy")); // pairs keep working
     }
 
     #[test]

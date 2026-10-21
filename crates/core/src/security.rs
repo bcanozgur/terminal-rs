@@ -106,6 +106,11 @@ pub fn is_fiat(code: &str) -> bool {
     FIAT.contains(&code)
 }
 
+/// A six-letter fiat currency pair such as `EURUSD`.
+pub fn is_pair(t: &str) -> bool {
+    t.len() == 6 && t.is_ascii() && is_fiat(&t[..3]) && is_fiat(&t[3..])
+}
+
 /// A resolved security.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Security {
@@ -124,9 +129,30 @@ impl Security {
 
     /// Canonical market key, e.g. `AAPL US Equity`, `BTCUSD Curncy`.
     pub fn key(&self) -> String {
+        if self.is_formula() {
+            return self.ticker.clone();
+        }
         match self.class {
             AssetClass::Equity | AssetClass::Etf => format!("{} US Equity", self.ticker),
             c => format!("{} {}", self.ticker, c.yellow_key().label()),
+        }
+    }
+
+    /// A formula security (`=XU100/USDTRY`, see [`crate::formula`]); its market key is its ticker.
+    pub fn formula(expr: &str) -> Self {
+        Self::new(format!("={expr}"), AssetClass::Index)
+    }
+
+    pub fn is_formula(&self) -> bool {
+        self.ticker.starts_with('=')
+    }
+
+    /// The expression behind a formula security or named synthetic such as `GRAMALTIN`.
+    pub fn as_formula(&self) -> Option<crate::formula::Formula> {
+        if self.is_formula() || (self.class == AssetClass::Index && crate::formula::named(&self.ticker).is_some()) {
+            crate::formula::from_symbol(&self.key())?.ok()
+        } else {
+            None
         }
     }
 
@@ -134,6 +160,9 @@ impl Security {
     /// Returns the security and how many input tokens it consumed.
     pub fn resolve_tokens(tokens: &[&str]) -> Option<(Self, usize)> {
         let (&head, rest) = tokens.split_first()?;
+        if let Some((expr, used)) = crate::formula::span(tokens) {
+            return Some((Self::formula(&expr), used));
+        }
         // `BTC/USD` is a pair; `BRK/B` is a share class.
         let up = head.trim().to_ascii_uppercase();
         let ticker = match up.split_once('/') {
@@ -172,6 +201,9 @@ impl Security {
     }
 
     fn classify(ticker: &str, key: Option<YellowKey>) -> Self {
+        if crate::formula::named(ticker).is_some() && key.is_none_or(|k| k == YellowKey::Index) {
+            return Self::new(ticker, AssetClass::Index);
+        }
         let listed = catalog::lookup(ticker, key);
         if let Some(l) = listed {
             return Self::new(l.ticker, l.class);
@@ -196,6 +228,11 @@ impl Security {
 
     /// Display name from the catalog, if known.
     pub fn name(&self) -> Option<&'static str> {
+        if self.class == AssetClass::Index
+            && let Some(n) = crate::formula::named(&self.ticker)
+        {
+            return Some(n.name);
+        }
         catalog::lookup(&self.ticker, Some(self.class.yellow_key())).filter(|l| l.class == self.class).map(|l| l.name)
     }
 
@@ -277,6 +314,22 @@ mod tests {
         assert_eq!(r("US10Y").class, AssetClass::Govt);
         assert_eq!(r("ZZZQ").class, AssetClass::Equity);
         assert_eq!(r("PEPEUSD CRNCY").class, AssetClass::Crypto);
+        assert_eq!(r("btc/usd").ticker, "BTCUSD");
+        assert_eq!(r("brk/b").ticker, "BRK.B");
+    }
+
+    #[test]
+    fn formulas_and_named_synthetics() {
+        let x = r("xu100 / usdtry");
+        assert!(x.is_formula() && x.key() == "=XU100/USDTRY" && x.class == AssetClass::Index);
+        assert_eq!(r(&x.key()), x); // the market key round-trips
+        assert_eq!(x.as_formula().unwrap().leg_keys(), ["XU100 Index", "USDTRY Curncy"]);
+        assert_eq!(r("(AAPL+MSFT)/2").key(), "=(AAPL+MSFT)/2");
+        let g = r("gramaltin");
+        assert_eq!((g.key().as_str(), g.name()), ("GRAMALTIN Index", Some("Gram Gold (TRY)")));
+        assert_eq!(g.as_formula().unwrap().canonical(), "GC1*USDTRY/31.1035");
+        assert_eq!(r(&g.key()), g);
+        // Existing pair / share-class spellings are untouched.
         assert_eq!(r("btc/usd").ticker, "BTCUSD");
         assert_eq!(r("brk/b").ticker, "BRK.B");
     }

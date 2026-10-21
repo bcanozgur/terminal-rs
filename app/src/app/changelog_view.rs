@@ -41,6 +41,9 @@ const ENTRIES: &[(&str, &str, &[&str])] = &[
              EDGAR filing times and EPS is adjusted for stock splits.",
             "ECO and the yield curve load again (FRED stopped answering the app's requests); market status names \
              the exchange's time zone; chart alert levels are rounded to the instrument's precision.",
+            "Formula charts: type an expression as the security, e.g. XU100/USDTRY (BIST 100 in USD), \
+             GC1*USDTRY/31.1035, BTCUSD*USDTRY, SPX/XU100, (AAPL+MSFT)/2 or CL1-CO1. Built-in GRAMALTIN, XU100USD, \
+             BTCTRY and CEYREK; works with indicators, drawings, CMP and saved layouts.",
         ],
     ),
     (
