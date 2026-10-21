@@ -456,15 +456,17 @@ pub fn span(tokens: &[&str]) -> Option<(String, usize)> {
     }
     let f = Formula::parse(&expr).ok()?;
     // A lone `A/B` or `A-B` between two plain tickers may be a pair or a share class.
-    if !explicit && !expr.contains(['(', '+', '*']) && f.legs.len() == 2 && expr.matches(['/', '-']).count() == 1 {
-        if let Expr::Bin(op, a, b) = &f.expr
-            && matches!((&**a, &**b), (Expr::Leg(_), Expr::Leg(_)))
-        {
-            let (x, y) = (&f.legs[0], &f.legs[1]);
-            let pair = format!("{x}{y}");
-            if !(known(x) && known(y)) || (*op == Op::Div && (known(&pair) || crate::security::is_pair(&pair))) {
-                return None;
-            }
+    if !explicit
+        && !expr.contains(['(', '+', '*'])
+        && f.legs.len() == 2
+        && expr.matches(['/', '-']).count() == 1
+        && let Expr::Bin(op, a, b) = &f.expr
+        && matches!((&**a, &**b), (Expr::Leg(_), Expr::Leg(_)))
+    {
+        let (x, y) = (&f.legs[0], &f.legs[1]);
+        let pair = format!("{x}{y}");
+        if !(known(x) && known(y)) || (*op == Op::Div && (known(&pair) || crate::security::is_pair(&pair))) {
+            return None;
         }
     }
     Some((f.canonical(), used))

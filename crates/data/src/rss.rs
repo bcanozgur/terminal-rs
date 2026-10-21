@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn parses_bloomberght_fixture() {
         let n = fx(include_str!("../tests/fixtures/bloomberght_rss.xml"), "Bloomberg HT");
-        assert!(n.iter().any(|x| x.title.chars().any(|c| !c.is_ascii())));
+        assert!(n.iter().any(|x| !x.title.is_ascii()));
     }
 
     #[test]

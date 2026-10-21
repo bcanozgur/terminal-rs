@@ -926,6 +926,9 @@ impl EcoCache {
 
 /// Fetches and caches calendar data. Cheap to share; the key is passed per call so a key
 /// saved in the settings applies immediately.
+/// A body validator and how many seconds to leave the URL alone after a body fails it.
+type BodyCheck = (fn(&str) -> bool, i64);
+
 pub struct Eco {
     client: reqwest::Client,
     cache: Option<EcoCache>,
@@ -974,7 +977,7 @@ impl Eco {
         label: &str,
         now: i64,
         max_age: Option<i64>,
-        check: Option<(fn(&str) -> bool, i64)>,
+        check: Option<BodyCheck>,
     ) -> Result<String> {
         let ok = |b: &String| check.is_none_or(|(v, _)| v(b));
         if let Some(body) = self.cache.as_ref().and_then(|c| c.get(label, now, max_age)).filter(ok) {
